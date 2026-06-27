@@ -117,13 +117,15 @@ x 模计两次重建全谱）相对误差 4.5e-8；CTest 2/2 通过；
 
 ---
 
-## Step 7: 源/场容器（`sources.hpp` / `fields.hpp`）
+## Step 7: 源/场容器（`sources.hpp` / `fields.hpp`）✅
 
-- [ ] `SourceViews` / `Sources`（rho、`zero()`、`views()`）
-- [ ] `FieldViews` / `Fields`（Ex,Ey、`views()`）
-- [ ] 预留（先不分配）Darwin 字段注释
+- [x] `SourceViews` / `Sources`（rho、`zero()`、`views()`）—— ctor(Grid) + `allocate()`
+- [x] `FieldViews` / `Fields`（Ex,Ey、`views()`）—— ctor(Grid) + `allocate()` + `zero()`
+- [x] 预留（先不分配）Darwin 字段注释（jx/jy/jz/dcu/amu；Ez/Bx/By/Bz）
 
-**验证**：分配/置零/views 打包正确；编译通过。
+**验证** ✅：nvcc 编译通过；`zero()` 后拷回全 0；kernel 经 `views()` 写入
+`rho=3i`、`Ex=i`、`Ey=-2i` 拷回校验；`allocate()`（build-empty-then-size）路径 OK；
+`SourceViews/FieldViews` 均 `trivially_copyable`。
 
 ---
 
@@ -211,5 +213,5 @@ x 模计两次重建全谱）相对误差 4.5e-8；CTest 2/2 通过；
 
 ## 进度
 
-- 当前：**Step 7**（Step 0、1、2、3、4、5、6 已完成）
+- 当前：**Step 8**（Step 0、1、2、3、4、5、6、7 已完成）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。
