@@ -85,13 +85,18 @@ host `g++ -std=c++20`（头文件不依赖 CUDA 也能编译）。
 
 ---
 
-## Step 5: 网格 `grid.hpp`
+## Step 5: 网格 `grid.hpp` ✅
 
-- [ ] `Grid`（nx,ny,dx,dy,Lx,Ly,`__host__ __device__ idx`，几何唯一真源）
-- [ ] `KGrid`（nkx=nx/2+1，`kx/ky/k2`，注意 ky 在 j>ny/2 取负）
-- [ ] 顶部注释：写死 R2C layout 约定
+- [x] `Grid`（nx,ny,dx,dy,Lx,Ly,`__host__ __device__ idx`，几何唯一真源）
+      —— 加 `real_size()`、`wrap()`、`idx_periodic()`，ctor 从 (nx,ny,Lx,Ly) 算 dx,dy
+- [x] `KGrid`（nkx=nx/2+1，`kx/ky/k2`，注意 ky 在 j>ny/2 取负）
+      —— 加 `kidx()`、`complex_size()`；方法标 `__host__ __device__` 便于 host 单测
+- [x] 顶部注释：写死 R2C layout 约定（real [ny][nx] / cufftPlan2d(ny,nx) / R2C [ny][nkx]）
 
-**验证**：单元测试 `kx/ky/k2` 与 Nyquist/负频索引正确；`idx` 周期一致。
+**验证** ✅：host 单测全过 —— `idx`/`idx_periodic`（i=nx→0、i=-1→nx-1、j 同理、in-range 不变）；
+`kx`（reduced 轴全非负 i·dkx）；`ky`（DC=0、+1、Nyquist j=ny/2 取正、j>ny/2 取负）；
+`k2(0,0)==0`（solver 依赖）；`Grid/KGrid` 均 `trivially_copyable`。
+两路编译通过：`g++ -std=c++20` 与 nvcc 13.3 `-arch=sm_120 -x cu`。
 
 ---
 
@@ -201,5 +206,5 @@ host `g++ -std=c++20`（头文件不依赖 CUDA 也能编译）。
 
 ## 进度
 
-- 当前：**Step 5**（Step 0、1、2、3、4 已完成）
+- 当前：**Step 6**（Step 0、1、2、3、4、5 已完成）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。
