@@ -15,6 +15,7 @@
 
 #include <nvml.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -22,6 +23,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <numeric>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -71,27 +74,45 @@ struct GpuMonitor {
     void shutdown() { if (ok) nvmlShutdown(); }
 };
 
-// Copy a strided subsample of particles to the host and write (x_physical, vx).
-static void dump_phase(const Particles& P, const Grid& g, const std::string& path) {
+// Deterministic per-particle display jitter in [-0.5, 0.5) (cell units), constant
+// across frames (hash of index) so the movie doesn't jiggle.
+__host__ static inline float disp_jitter(int i) {
+    unsigned h = static_cast<unsigned>(i) * 2654435761u + 1013904223u;
+    h ^= h >> 15;
+    return static_cast<float>(h >> 8) * (1.0f / 16777216.0f) - 0.5f;
+}
+
+// Copy particles to the host and write (x_physical, vx) for the given indices.
+// Notes:
+//  - a RANDOM index subset (not a stride) is used: the quiet start lays positions
+//    on a base-2 bit-reversal grid, so any fixed stride aliases into stripes.
+//  - x gets a DISPLAY-ONLY +/-0.5-cell jitter. The deposited density is uniform,
+//    but the deterministic sub-cell quiet-start pattern is identical in every cell
+//    and scatter-plots as a faint comb; the jitter smears that sub-cell lattice so
+//    the plot shows the true (uniform-x, warm-beam) distribution. It does NOT touch
+//    the simulation — only the dumped coordinate.
+static void dump_phase(const Particles& P, const Grid& g, const std::string& path,
+                       const std::vector<int>& idx) {
     CUDA_CHECK(cudaDeviceSynchronize());
     const int N = static_cast<int>(P.n);
     std::vector<float> x(N), vx(N);
     CUDA_CHECK(cudaMemcpy(x.data(),  P.x.data(),  P.x.bytes(),  cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(vx.data(), P.ux.data(), P.ux.bytes(), cudaMemcpyDeviceToHost));
-    // Odd stride: the two beams are assigned by within-cell index parity, so an
-    // even stride would sample only one beam. Odd keeps both represented.
-    int stride = (N > DUMP_CAP) ? (N / DUMP_CAP) : 1;
-    if (stride % 2 == 0) ++stride;
     std::ofstream f(path);
     f << "x,vx\n";
-    for (int i = 0; i < N; i += stride) f << x[i] * g.dx << ',' << vx[i] << '\n';
+    for (int i : idx) {
+        float xd = x[i] + disp_jitter(i);
+        if (xd < 0.0f) xd += g.nx; else if (xd >= g.nx) xd -= g.nx;  // keep in [0,nx)
+        f << xd * g.dx << ',' << vx[i] << '\n';
+    }
 }
 
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
     const std::string outdir = (argc > 1) ? argv[1] : "phase_frames";
-    const int ppc            = (argc > 2) ? std::atoi(argv[2]) : 4096;
-    const int frame_every    = (argc > 3) ? std::atoi(argv[3]) : 10;
+    const int    ppc         = (argc > 2) ? std::atoi(argv[2]) : 4096;
+    const int    frame_every = (argc > 3) ? std::atoi(argv[3]) : 10;
+    const double vth         = (argc > 4) ? std::atof(argv[4]) : 0.1;  // beam thermal width
     fs::create_directories(outdir);
 
     // ---- two-stream setup (matches test_two_stream; larger ppc) ----
@@ -102,7 +123,7 @@ int main(int argc, char** argv) {
 
     RunParams rp;
     rp.n0 = 1.0; rp.qm = -1.0; rp.eps0 = 1.0;
-    rp.vth = 0.0; rp.vd = v0; rp.two_stream = true;
+    rp.vth = vth; rp.vd = v0; rp.two_stream = true;   // warm beams: each a Maxwellian of width vth
     rp.ppc = ppc;
     rp.weight = rp.n0 * g.dx * g.dy / rp.ppc;
     rp.dt = 0.05;
@@ -117,8 +138,19 @@ int main(int argc, char** argv) {
     Simulation<> sim(g, rp);
     sim.init();
     const long long N = static_cast<long long>(sim.particles().n);
-    std::printf("ArcWarden two-stream: %lld particles (ppc=%d, %dx%d grid)  on %s\n",
-                N, ppc, g.nx, g.ny, prop.name);
+    std::printf("ArcWarden two-stream: %lld particles (ppc=%d, %dx%d grid)  "
+                "beams v0=%.2f, vth=%.2f  on %s\n",
+                N, ppc, g.nx, g.ny, v0, vth, prop.name);
+
+    // ---- fixed random sample of particle indices (same set every frame) ----
+    std::vector<int> sample(N);
+    std::iota(sample.begin(), sample.end(), 0);
+    if (N > DUMP_CAP) {
+        std::mt19937 rng(12345);
+        std::shuffle(sample.begin(), sample.end(), rng);
+        sample.resize(DUMP_CAP);
+        std::sort(sample.begin(), sample.end());
+    }
 
     // ---- movie frames ----
     std::ofstream man(outdir + "/manifest.csv");
@@ -127,7 +159,7 @@ int main(int argc, char** argv) {
     char name[64];
     auto write_frame = [&](long step) {
         std::snprintf(name, sizeof(name), "frame_%04d.csv", frame);
-        dump_phase(sim.particles(), g, outdir + "/" + name);
+        dump_phase(sim.particles(), g, outdir + "/" + name, sample);
         man << frame << ',' << step << ',' << step * rp.dt << ',' << name << '\n';
         man.flush();
         ++frame;

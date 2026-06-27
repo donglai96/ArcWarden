@@ -131,8 +131,8 @@ def main():
     render_frame(axe, xe, ve, beam, xlim, vlim, f"end   t = {rows[-1][2]:.2f}")
     trap_b = np.mean(np.abs(vb) < 0.5 * V0)
     trap_e = np.mean(np.abs(ve) < 0.5 * V0)
-    fig.suptitle("Two-stream instability: cold beams (left) wind into phase-space "
-                 f"vortices (right)\ntrapped fraction (|$v_x$|<{0.5*V0:.1f}): "
+    fig.suptitle("Two-stream instability: counter-streaming beams (left) wind into "
+                 f"phase-space vortices (right)\ntrapped fraction (|$v_x$|<{0.5*V0:.1f}): "
                  f"{trap_b:.3f} -> {trap_e:.3f}", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     cmp_path = os.path.join(frames_dir, "begin_vs_end.png")

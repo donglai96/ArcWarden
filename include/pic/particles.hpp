@@ -68,7 +68,12 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
     const int i   = c % g.nx;
     const int j   = c / g.nx;
 
-    // stratified sub-cell offset (van der Corput base 2 / 3) -> fills the cell
+    // Stratified sub-cell offset (van der Corput base 2 / 3) -> fills the cell.
+    // NOTE: every cell deliberately uses the SAME sub-cell pattern. That coherence
+    // is what makes the deposited rho perfectly flat (the residual structure lands
+    // at the grid-Nyquist scale, which the spectral solver zeros). It also shows
+    // up as a faint "comb" if you scatter-plot individual particles — that is a
+    // visualization effect, not density structure (see tools/two_stream_movie).
     const float fx = static_cast<float>(radical_inverse(s + 1, 2));
     const float fy = static_cast<float>(radical_inverse(s + 1, 3));
     float x = static_cast<float>(i) + fx;     // cell units, in [0,nx)
@@ -90,9 +95,15 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
 
     // quiet Maxwellian: u = drift + sqrt(2)*vth * erfinv(2q-1), q from low-discrepancy.
     // two-stream: alternate beam sign by within-cell parity (co-located, balanced).
-    const double qx = radical_inverse(t + 1, 2);
-    const double qy = radical_inverse(t + 1, 3);
-    const double qz = radical_inverse(t + 1, 5);
+    //
+    // IMPORTANT: the velocity bases (5,7,11) must differ from the position bases
+    // (2,3) AND be coprime to ppc, or position and velocity correlate. With ppc a
+    // power of two, using base 2 here makes radical_inverse(t+1,2) ≈ the base-2
+    // position offset (the low bits of t = c*ppc+s are s), so vx would track x —
+    // the beams come out scalloped instead of uniform. Coprime bases decorrelate.
+    const double qx = radical_inverse(t + 1, 5);
+    const double qy = radical_inverse(t + 1, 7);
+    const double qz = radical_inverse(t + 1, 11);
     const double s2 = 1.41421356237309515 * rp.vth;   // sqrt(2) * vth
     const double drift = rp.two_stream ? ((s & 1) ? -rp.vd : rp.vd) : rp.vd;
     p.ux[t] = static_cast<float>(drift + s2 * erfinv(2.0 * qx - 1.0));
