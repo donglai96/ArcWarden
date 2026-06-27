@@ -100,15 +100,20 @@ host `g++ -std=c++20`（头文件不依赖 CUDA 也能编译）。
 
 ---
 
-## Step 6: FFT + 谱引擎（`fft.hpp` / `spectral.hpp`）+ 往返测试 [S1]
+## Step 6: FFT + 谱引擎（`fft.hpp` / `spectral.hpp`）+ 往返测试 [S1] ✅
 
-- [ ] `CufftPlan2D`（按 `(ny,nx)` 建 plan，r2c/c2r，不重建）
-- [ ] `SpectralWorkspace`（rho_k/phi_k/Ex_k/Ey_k）
-- [ ] `SpectralFormFactor`（v1 `s(k)=1, g(k)=1/(eps0 k²)`）
-- [ ] `SpectralEngine`（持有 plan + workspace + KGrid + formfactor；r2c/c2r 封装 + 归一化）
-- [ ] `tests/test_fft_roundtrip.cu`
+- [x] `CufftPlan2D`（按 `(ny,nx)` 建 plan，r2c/c2r，不重建）—— RAII move-only，
+      持 R2C+C2R 一对 plan，`created_` 显式有效位（0 非安全 handle 哨兵），best-effort dtor
+- [x] `SpectralWorkspace`（rho_k/phi_k/Ex_k/Ey_k）—— 一次按 `complex_size()` 分配
+- [x] `SpectralFormFactor`（v1 `s(k)=1, g(k)=1/(eps0 k²)`）—— `__host__ __device__`，
+      `green(k2)` 在 k2==0 返回 0（DC 不除零）
+- [x] `SpectralEngine`（持有 plan + workspace + KGrid + formfactor；r2c/c2r 封装 + 归一化）
+      —— `c2r` 后用模板 scale kernel 乘 `1/(nx·ny)`
+- [x] `tests/test_fft_roundtrip.cu`（已接 CTest：`fft_roundtrip`）
 
-**验证**：`c2r(r2c(f))≈f`（含 1/(nx·ny) 归一化）；**Parseval** 能量一致。
+**验证** ✅：`c2r(r2c(f))≈f` —— max|·|=4.8e-7；**Parseval**（R2C 半谱按非 DC/非 Nyquist
+x 模计两次重建全谱）相对误差 4.5e-8；CTest 2/2 通过；
+`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 errors**。
 
 ---
 
@@ -206,5 +211,5 @@ host `g++ -std=c++20`（头文件不依赖 CUDA 也能编译）。
 
 ## 进度
 
-- 当前：**Step 6**（Step 0、1、2、3、4、5 已完成）
+- 当前：**Step 7**（Step 0、1、2、3、4、5、6 已完成）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。

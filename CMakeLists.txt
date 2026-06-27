@@ -43,6 +43,12 @@ add_executable(arcwarden src/main.cpp)
 target_include_directories(arcwarden PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(arcwarden PRIVATE CUDA::cudart CUDA::cufft)
 
-# ---- tests (placeholder smoke test; real test exes added in later steps) ----
+# ---- tests ----
 enable_testing()
 add_test(NAME smoke_device COMMAND arcwarden)
+
+# Step 6 [S1]: FFT round trip + Parseval (links cuFFT).
+add_executable(test_fft_roundtrip tests/test_fft_roundtrip.cu)
+target_include_directories(test_fft_roundtrip PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_fft_roundtrip PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME fft_roundtrip COMMAND test_fft_roundtrip)
