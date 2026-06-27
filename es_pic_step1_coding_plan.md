@@ -129,14 +129,18 @@ x 模计两次重建全谱）相对误差 4.5e-8；CTest 2/2 通过；
 
 ---
 
-## Step 8: 静电谱求解器 `solver_es` + 正弦模式测试 [S5]
+## Step 8: 静电谱求解器 `solver_es` + 正弦模式测试 [S5] ✅
 
-- [ ] k-space Poisson kernel：`phi_k=rho_k/(eps0 k²)`，**k=0 与 Nyquist 置零**
-- [ ] `Ex_k=-i kx phi_k`，`Ey_k=-i ky phi_k`
-- [ ] `ElectrostaticSpectralSolver::solve(sources, fields, spectral, rp, stream)`：完整 rho→E
-- [ ] `tests/test_poisson_sine.cu`
+- [x] k-space Poisson kernel：`phi_k=rho_k/(eps0 k²)`，**k=0 与 Nyquist 置零**
+      —— green(k2) 在 DC 返回 0；Nyquist（偶 nx→i=nx/2 或偶 ny→j=ny/2）力置零
+- [x] `Ex_k=-i kx phi_k`，`Ey_k=-i ky phi_k`（复数 -i k(a+ib)=(k b,-k a)）
+- [x] `ElectrostaticSpectralSolver::solve(sources, fields, spectral, rp, stream)`：完整 rho→E
+      —— r2c → k-space kernel（模板化 ODR-safe）→ c2r×2（归一化）；借用 engine 不拥有
+- [x] `tests/test_poisson_sine.cu`（已接 CTest：`poisson_sine`）
 
-**验证**：`rho=sin(2πx/Lx)` → `Ex` 幅值/相位对解析；`Ey≈0`。
+**验证** ✅：`rho=sin(2πx/Lx)`（Lx=2π→k1=1）→ `Ex` vs 解析 `-cos(x)`：
+max|·|=9.2e-8、peak|Ex|=1.0000；`Ey`=0（恒等）；CTest 3/3 通过；
+`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 errors**。
 
 ---
 
@@ -213,5 +217,5 @@ x 模计两次重建全谱）相对误差 4.5e-8；CTest 2/2 通过；
 
 ## 进度
 
-- 当前：**Step 8**（Step 0、1、2、3、4、5、6、7 已完成）
+- 当前：**Step 9**（Step 0、1、2、3、4、5、6、7、8 已完成）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。

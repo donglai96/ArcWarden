@@ -52,3 +52,9 @@ add_executable(test_fft_roundtrip tests/test_fft_roundtrip.cu)
 target_include_directories(test_fft_roundtrip PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_fft_roundtrip PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME fft_roundtrip COMMAND test_fft_roundtrip)
+
+# Step 8 [S5]: spectral Poisson on a single sine mode.
+add_executable(test_poisson_sine tests/test_poisson_sine.cu)
+target_include_directories(test_poisson_sine PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_poisson_sine PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME poisson_sine COMMAND test_poisson_sine)
