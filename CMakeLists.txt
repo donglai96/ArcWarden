@@ -43,6 +43,11 @@ add_executable(arcwarden src/main.cpp)
 target_include_directories(arcwarden PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(arcwarden PRIVATE CUDA::cudart CUDA::cufft)
 
+# ---- visualization tools (not tests) ----
+add_executable(two_stream_movie tools/two_stream_movie.cu)
+target_include_directories(two_stream_movie PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(two_stream_movie PRIVATE CUDA::cudart CUDA::cufft)
+
 # ---- tests ----
 enable_testing()
 add_test(NAME smoke_device COMMAND arcwarden)

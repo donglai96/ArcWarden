@@ -88,11 +88,11 @@ int main() {
     if (frac_trapped < 0.10) { std::printf("FAIL: no trapping/vortex\n"); ok = false; }
 
     // ---- 3. dump phase space (x in cell units -> physical) for plotting ----
+    // All particles, so the saturated vortices are fully resolved.
     {
         std::ofstream f("two_stream_phase.csv");
         f << "x,vx\n";
-        const int stride = std::max(1, N / 20000);   // cap rows
-        for (int i = 0; i < N; i += stride) f << x[i] * g.dx << ',' << vx[i] << '\n';
+        for (int i = 0; i < N; ++i) f << x[i] * g.dx << ',' << vx[i] << '\n';
     }
 
     if (ok) std::printf("PASS\n");

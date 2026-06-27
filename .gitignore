@@ -6,6 +6,8 @@ build/
 # Test / diagnostic outputs
 *.csv
 *.png
+*.mp4
+phase_frames/
 __pycache__/
 
 # Editor / OS cruft (keep shared .vscode/tasks.json; drop user-local settings)
