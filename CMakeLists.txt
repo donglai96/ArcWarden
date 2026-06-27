@@ -70,3 +70,9 @@ add_executable(test_charge_conservation tests/test_charge_conservation.cu)
 target_include_directories(test_charge_conservation PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_charge_conservation PRIVATE CUDA::cudart)
 add_test(NAME charge_conservation COMMAND test_charge_conservation)
+
+# Step 11 [S6]: single-particle Boris trajectories (uniform E; gyration).
+add_executable(test_single_particle tests/test_single_particle.cu)
+target_include_directories(test_single_particle PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_single_particle PRIVATE CUDA::cudart)
+add_test(NAME single_particle COMMAND test_single_particle)

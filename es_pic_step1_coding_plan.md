@@ -176,14 +176,21 @@ CTest 5/5 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 
 
 ---
 
-## Step 11: gather + Boris 推进 `pusher` + 单粒子测试 [S6]
+## Step 11: gather + Boris 推进 `pusher` + 单粒子测试 [S6] ✅
 
-- [ ] gather（收 `Grid`，与 deposit **同一套 CIC 权重**）
-- [ ] `boris_push_kernel<Cfg>`：half-E → B 旋转(`if constexpr Cfg::has_b0`) → half-E → 位置更新
-- [ ] `u=γv` 语义（v1 γ≡1）；`Pusher<Cfg>::boris(particles, fields, grid, rp, stream)`
-- [ ] `tests/test_single_particle.cu`
+- [x] gather（收 `Grid`，与 deposit **同一套 `cic_stencil`** —— grid.hpp 单一定义）
+- [x] `boris_push_kernel<Cfg>`：half-E → B 旋转(`if constexpr Cfg::has_b0`) → half-E → 位置更新
+      —— 速度更新抽成 `boris_velocity_update<Cfg>(dt_eff)` 复用给回退
+- [x] `u=γv` 语义（v1 γ≡1）；`Pusher<Cfg>::boris(particles, fields, grid, rp, stream)`
+      —— 位置 cell 单位 `x += v·dt/dx`；wrap/cell 由 `migrate` 善后
+- [x] **Step 9 半步回退落地**：`Pusher<Cfg>::half_step_back`（`boris_velocity_update(-dt/2)`，
+      只动速度；B0=0 退化为 ES kick，B0≠0 即 backward half Boris）
+- [x] `tests/test_single_particle.cu`（已接 CTest：`single_particle`）
 
-**验证**：已知均匀 E 下单粒子轨迹对解析；B0≠0 时回旋频率/半径对解析。
+**验证** ✅：A 均匀 E（B0=0）—— `ux=qm·E·t=-0.5`（恰等）、uy=0；
+B 回旋（E=0,Bz=1,qm=-1→ω_c=1）—— 每步转角=2·atan(ω_c·dt/2)（Boris 精确，差<1e-6）、
+ω_eff=0.99999、`|u|` 守恒（max dev 3.6e-7）、回旋半径=1.0000（解析 v⊥/ω_c）；
+CTest 6/6 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 errors**。
 
 ---
 
@@ -227,5 +234,5 @@ CTest 5/5 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 
 
 ## 进度
 
-- 当前：**Step 11**（Step 0–10 已完成；Step 9 的半步回退随 Step 11 Pusher 一并落地）
+- 当前：**Step 12**（Step 0–11 已完成；Step 9 半步回退已随 Step 11 Pusher 落地）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。
