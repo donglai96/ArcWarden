@@ -88,3 +88,15 @@ add_executable(test_langmuir tests/test_langmuir.cu)
 target_include_directories(test_langmuir PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_langmuir PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME langmuir COMMAND test_langmuir)
+
+# Step 14 [S9]: two-stream instability growth rate + trapping.
+add_executable(test_two_stream tests/test_two_stream.cu)
+target_include_directories(test_two_stream PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_two_stream PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME two_stream COMMAND test_two_stream)
+
+# Step 14 [S8]: long-run energy/charge conservation.
+add_executable(test_conservation_longrun tests/test_conservation_longrun.cu)
+target_include_directories(test_conservation_longrun PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_conservation_longrun PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME conservation_longrun COMMAND test_conservation_longrun)

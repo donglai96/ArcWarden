@@ -221,12 +221,18 @@ time=step·dt；CSV 行写出正确；CTest 7/7 通过；`compute-sanitizer`：*
 
 ---
 
-## Step 14: 物理验证 [S8/S9]
+## Step 14: 物理验证 [S8/S9] ✅
 
-- [ ] 能量/电荷守恒长程曲线（S8）
-- [ ] **two-stream 不稳定性**：早期增长率对解析；相空间涡旋（S9）
+- [x] 能量/电荷守恒长程曲线（S8）—— `test_conservation_longrun`：warm Debye-resolved
+      等离子体跑 1000 步
+- [x] **two-stream 不稳定性**：早期增长率对解析；相空间涡旋（S9）—— 加 `RunParams.two_stream`
+      （按 cell 内奇偶分 ±vd 双束），盒长取使基模 = 最不稳定模 `(k v0)²=3/8`
+- [x] 相空间 (x,vx) dump（`two_stream_phase.csv`）供可视化
 
-**验证**：增长率与理论一致；相空间形成 vortex。
+**验证** ✅：S9 —— γ=0.3631（解析 γ_max=ωpe/(2√2)=0.3536，误差 2.7%）、
+trapped fraction(|vx|<v0/2)=0.345（冷束起始 0 → 形成 BGK 涡旋/捕获）；
+S8 —— 电荷 = -39.4784（=N·q·weight，相对变化 3.9e-8）、总能量漂移 (max-min)/mean<0.05%；
+CTest 10/10 通过；`compute-sanitizer`：**0 errors**。
 
 ---
 
@@ -241,5 +247,5 @@ time=step·dt；CSV 行写出正确；CTest 7/7 通过；`compute-sanitizer`：*
 
 ## 进度
 
-- 当前：**Step 14**（Step 0–13 已完成；端到端冷 Langmuir 振荡已验证 ω_pe=0.9996）
+- 当前：**Step 15**（Step 0–14 已完成；two-stream γ=0.3631、长程守恒已验证）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。

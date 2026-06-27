@@ -88,12 +88,14 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
     p.y[t]    = y;
     p.cell[t] = g.idx(ci, j);
 
-    // quiet Maxwellian: u = vd + sqrt(2)*vth * erfinv(2q-1), q from low-discrepancy
+    // quiet Maxwellian: u = drift + sqrt(2)*vth * erfinv(2q-1), q from low-discrepancy.
+    // two-stream: alternate beam sign by within-cell parity (co-located, balanced).
     const double qx = radical_inverse(t + 1, 2);
     const double qy = radical_inverse(t + 1, 3);
     const double qz = radical_inverse(t + 1, 5);
     const double s2 = 1.41421356237309515 * rp.vth;   // sqrt(2) * vth
-    p.ux[t] = static_cast<float>(rp.vd + s2 * erfinv(2.0 * qx - 1.0));
+    const double drift = rp.two_stream ? ((s & 1) ? -rp.vd : rp.vd) : rp.vd;
+    p.ux[t] = static_cast<float>(drift + s2 * erfinv(2.0 * qx - 1.0));
     p.uy[t] = static_cast<float>(        s2 * erfinv(2.0 * qy - 1.0));
     p.uz[t] = static_cast<float>(        s2 * erfinv(2.0 * qz - 1.0));
 }

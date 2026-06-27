@@ -131,6 +131,10 @@ struct RunParams {
     // Default 0 → uniform load (all earlier tests unaffected).
     double perturb_amp = 0.0;
     int    perturb_kx  = 1;
+
+    // —— two-stream load: split each cell's particles into counter-streaming beams
+    // ±vd along x (default false → single Maxwellian drifting at vd). ——
+    bool two_stream = false;
 };
 
 } // namespace arc

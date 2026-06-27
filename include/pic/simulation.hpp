@@ -72,6 +72,8 @@ public:
 
     const Diagnostics& diagnostics() const { return diag_; }
     const RunParams&   params() const { return p_; }
+    const Particles&   particles() const { return particles_; }
+    const Grid&        grid() const { return grid_; }
 
 private:
     RunParams      p_;
