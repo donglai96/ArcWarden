@@ -82,3 +82,9 @@ add_executable(test_diagnostics tests/test_diagnostics.cu)
 target_include_directories(test_diagnostics PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_diagnostics PRIVATE CUDA::cudart)
 add_test(NAME diagnostics COMMAND test_diagnostics)
+
+# Step 13 [S7]: end-to-end cold Langmuir oscillation (links cuFFT).
+add_executable(test_langmuir tests/test_langmuir.cu)
+target_include_directories(test_langmuir PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_langmuir PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME langmuir COMMAND test_langmuir)

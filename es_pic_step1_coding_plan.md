@@ -209,13 +209,15 @@ time=step·dt；CSV 行写出正确；CTest 7/7 通过；`compute-sanitizer`：*
 
 ---
 
-## Step 13: 主循环 `simulation` 接通 [S7]
+## Step 13: 主循环 `simulation` 接通 [S7] ✅
 
-- [ ] `Simulation` 持有 grid/particles/sources/fields/spectral/solver(concrete)/diag/stream
-- [ ] `step()`：zero→deposit→solve→push→migrate→diag（按设计 §10）
-- [ ] `init()` / `run()`
+- [x] `Simulation<Cfg>` 持有 grid/particles/sources/fields/spectral/solver(concrete)/diag/stream
+- [x] `step()`：zero→deposit→solve→push→migrate→diag（按设计 §10；rho→E 全收进 solver_）
+- [x] `init()`（加载 + 首次 deposit/solve + `half_step_back` 半步回退）/ `run()`
 
-**验证**：**冷 Langmuir 振荡** ω≈ω_pe；KE↔EE 交换；总能量有界。
+**验证** ✅：**冷 Langmuir 振荡**（vth=0、单 k 扰动、ωpe=1 归一）—— EE 峰间距测得
+ω_pe=0.9996（解析 1.0，误差 0.04%）；KE↔EE 反相关 corr=-0.9988；
+总能量有界 (max-min)/mean=5.1%；CTest 8/8 通过；`compute-sanitizer`：**0/0**。
 
 ---
 
@@ -239,5 +241,5 @@ time=step·dt；CSV 行写出正确；CTest 7/7 通过；`compute-sanitizer`：*
 
 ## 进度
 
-- 当前：**Step 13**（Step 0–12 已完成；Step 9 半步回退已随 Step 11 Pusher 落地）
+- 当前：**Step 14**（Step 0–13 已完成；端到端冷 Langmuir 振荡已验证 ω_pe=0.9996）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。
