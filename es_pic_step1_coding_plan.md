@@ -144,14 +144,21 @@ max|·|=9.2e-8、peak|Ex|=1.0000；`Ey`=0（恒等）；CTest 3/3 通过；
 
 ---
 
-## Step 9: 粒子 `particles.hpp` + 加载
+## Step 9: 粒子 `particles.hpp` + 加载 ✅
 
-- [ ] `ParticleViews` / `Particles`（SoA：x,y,ux,uy,uz,cell；`views()`）
-- [ ] `initialize`：Maxwellian + **quiet start**（分层加载 + 单 k 扰动）
-- [ ] leapfrog 半步回退（B0=0 静电 kick；B0≠0 backward half Boris 占位）
-- [ ] `migrate`：周期 wrap + 重算 cell
+- [x] `ParticleViews` / `Particles`（SoA：x,y,ux,uy,uz,cell；`views()`）—— 位置存 cell 单位，
+      `u=γv`(γ≡1)；`allocate(g,ppc)`，n=ppc·nx·ny
+- [x] `initialize`：Maxwellian + **quiet start**（分层加载：ppc/cell + van der Corput 子格点；
+      速度：低差异 quantile 上反 Maxwellian CDF `u=vd+√2·vth·erfinv(2q-1)`）
+      —— 单 k 扰动 hook 已注释（默认均匀；two-stream/Langmuir 播种留 Step 13–14）
+- [~] leapfrog 半步回退 —— 接口预留；实现挪到 **Step 11**（需与 Pusher 共用同一套 CIC gather，
+      避免重复 gather 引经典 bug，plan §16）；B0=0 ES kick / B0≠0 backward half Boris 分支在那里落地
+- [x] `migrate`：周期 wrap（`fmodf` 容多周期）+ 重算 cell
 
-**验证**：速度直方图≈解析；位置在 `[0,nx)×[0,ny)`；总动量/能量初值合理。
+**验证** ✅：分层 —— 每 cell 计数恒 = ppc；位置 ∈ [0,nx)×[0,ny)，cell==idx(⌊x⌋,⌊y⌋)；
+速度统计 vx/vy/vz：mean≈-1e-4、std=0.9999、`frac(|v|<vth)`=0.6827（解析 0.6827）；
+KE/粒子=1.4992（解析 1.5 vth²）；migrate 推移后仍在域内且 cell 一致；
+CTest 4/4 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 errors**。
 
 ---
 
@@ -217,5 +224,5 @@ max|·|=9.2e-8、peak|Ex|=1.0000；`Ey`=0（恒等）；CTest 3/3 通过；
 
 ## 进度
 
-- 当前：**Step 9**（Step 0、1、2、3、4、5、6、7、8 已完成）
+- 当前：**Step 10**（Step 0–9 已完成；Step 9 的半步回退随 Step 11 Pusher 一并落地）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。

@@ -58,3 +58,9 @@ add_executable(test_poisson_sine tests/test_poisson_sine.cu)
 target_include_directories(test_poisson_sine PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_poisson_sine PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME poisson_sine COMMAND test_poisson_sine)
+
+# Step 9: particle loading (quiet Maxwellian) + migrate.
+add_executable(test_particle_load tests/test_particle_load.cu)
+target_include_directories(test_particle_load PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_particle_load PRIVATE CUDA::cudart)
+add_test(NAME particle_load COMMAND test_particle_load)
