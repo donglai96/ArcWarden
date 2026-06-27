@@ -125,6 +125,12 @@ struct RunParams {
     double   k_filter = 0.0; // spectral filter cutoff (plan §4.2)
 
     unsigned long rng_seed = 0;  // reproducible particle loading
+
+    // —— single-k initial perturbation (quiet-start seed for Langmuir / two-stream) ——
+    // x-displacement (cell units) applied at load: x += perturb_amp·sin(2π·perturb_kx·x/nx).
+    // Default 0 → uniform load (all earlier tests unaffected).
+    double perturb_amp = 0.0;
+    int    perturb_kx  = 1;
 };
 
 } // namespace arc

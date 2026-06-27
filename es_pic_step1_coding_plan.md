@@ -194,13 +194,18 @@ CTest 6/6 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 
 
 ---
 
-## Step 12: 诊断 `diagnostics`
+## Step 12: 诊断 `diagnostics` ✅
 
-- [ ] `Diagnostics::maybe_compute(step, pviews, sources, fields, rp, stream)`
-- [ ] double 归约：动能、场能（`0.5 eps0 ΣE² dx dy`）、总电荷、max|E|
-- [ ] CSV 输出 `step,time,ke,ee,total,charge,max_e`
+- [x] `Diagnostics::maybe_compute(step, pviews, sources, fields, rp, stream)`
+      —— 解耦（不收 `Simulation&`）；`compute()` 始终算并入 history，`maybe_compute` 按 `dump_every` 写 CSV
+- [x] double 归约：动能（`weight·½Σu²`）、场能（`½ eps0 ΣE² dx dy`）、总电荷（`Σρ dx dy`）、max|E|
+      —— v1 拷回 host 用 double 累加（infrequent；GPU 融合归约留作优化）；`set_geometry(dx,dy)` 注入面积
+- [x] CSV 输出 `step,time,ke,ee,total,charge,max_e`
 
-**验证**：静止均匀等离子体能量≈0 漂移；ρ 谱可输出。
+**验证** ✅：已知态对解析 —— Ex=a/Ey=b 均匀 → EE=½eps0(a²+b²)·Ncell·dxdy、max|E|=√(a²+b²)；
+ρ=c → charge=c·Ncell·dxdy；Maxwellian 加载 KE≈weight·½·N·3vth²（11.99 vs 12.00）；
+time=step·dt；CSV 行写出正确；CTest 7/7 通过；`compute-sanitizer`：**0/0**。
+（"静止均匀能量≈0 漂移" 在 Step 13 的端到端测试中一并覆盖。）
 
 ---
 
@@ -234,5 +239,5 @@ CTest 6/6 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 
 
 ## 进度
 
-- 当前：**Step 12**（Step 0–11 已完成；Step 9 半步回退已随 Step 11 Pusher 落地）
+- 当前：**Step 13**（Step 0–12 已完成；Step 9 半步回退已随 Step 11 Pusher 落地）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。

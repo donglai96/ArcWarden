@@ -71,9 +71,22 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
     // stratified sub-cell offset (van der Corput base 2 / 3) -> fills the cell
     const float fx = static_cast<float>(radical_inverse(s + 1, 2));
     const float fy = static_cast<float>(radical_inverse(s + 1, 3));
-    p.x[t]    = static_cast<float>(i) + fx;   // cell units, in [0,nx)
-    p.y[t]    = static_cast<float>(j) + fy;
-    p.cell[t] = g.idx(i, j);
+    float x = static_cast<float>(i) + fx;     // cell units, in [0,nx)
+    const float y = static_cast<float>(j) + fy;
+
+    // optional single-k density seed: displace x by amp·sin(2π·kx·x/nx), then wrap.
+    if (rp.perturb_amp != 0.0) {
+        const float kx = 6.28318530717958648f * rp.perturb_kx / static_cast<float>(g.nx);
+        x += static_cast<float>(rp.perturb_amp) * sinf(kx * x);
+        x = fmodf(x, static_cast<float>(g.nx));
+        if (x < 0.0f) x += static_cast<float>(g.nx);
+    }
+    int ci = static_cast<int>(x);
+    if (ci >= g.nx) ci = g.nx - 1;
+
+    p.x[t]    = x;
+    p.y[t]    = y;
+    p.cell[t] = g.idx(ci, j);
 
     // quiet Maxwellian: u = vd + sqrt(2)*vth * erfinv(2q-1), q from low-discrepancy
     const double qx = radical_inverse(t + 1, 2);

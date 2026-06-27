@@ -76,3 +76,9 @@ add_executable(test_single_particle tests/test_single_particle.cu)
 target_include_directories(test_single_particle PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_single_particle PRIVATE CUDA::cudart)
 add_test(NAME single_particle COMMAND test_single_particle)
+
+# Step 12: diagnostic reductions (energy/charge/max|E|).
+add_executable(test_diagnostics tests/test_diagnostics.cu)
+target_include_directories(test_diagnostics PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_diagnostics PRIVATE CUDA::cudart)
+add_test(NAME diagnostics COMMAND test_diagnostics)
