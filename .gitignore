@@ -1,0 +1,10 @@
+# Build output
+build/
+*.o
+*.obj
+
+# Editor / OS cruft (keep shared .vscode/tasks.json; drop user-local settings)
+.vscode/*
+!.vscode/tasks.json
+*.swp
+.DS_Store
