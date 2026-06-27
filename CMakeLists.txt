@@ -46,7 +46,7 @@ target_link_libraries(arcwarden PRIVATE CUDA::cudart CUDA::cufft)
 # ---- visualization tools (not tests) ----
 add_executable(two_stream_movie tools/two_stream_movie.cu)
 target_include_directories(two_stream_movie PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(two_stream_movie PRIVATE CUDA::cudart CUDA::cufft)
+target_link_libraries(two_stream_movie PRIVATE CUDA::cudart CUDA::cufft CUDA::nvml)
 
 # ---- tests ----
 enable_testing()
