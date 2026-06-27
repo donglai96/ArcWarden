@@ -162,14 +162,17 @@ CTest 4/4 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 
 
 ---
 
-## Step 10: 电荷沉积 `depositor` + 电荷守恒测试 [S4]
+## Step 10: 电荷沉积 `depositor` + 电荷守恒测试 [S4] ✅
 
-- [ ] `deposit_charge_kernel<Cfg>`（写 `SourceViews`，CIC，global atomicAdd）
-- [ ] `Depositor<Cfg>::charge(particles, sources, grid, rp, stream)`
-- [ ] 归一化按 contract（`q·weight·CIC/(dx·dy)`）
-- [ ] `tests/test_charge_conservation.cu`
+- [x] `deposit_charge_kernel<Cfg>`（写 `SourceViews`，CIC，global atomicAdd）
+      —— 共享 `cic_stencil`（grid.hpp，与 gather 同一套权重）；`if constexpr` policy seam
+- [x] `Depositor<Cfg>::charge(particles, sources, grid, rp, stream)`（不清零，调用方每步 zero）
+- [x] 归一化按 contract（`coef = q·weight/(dx·dy)`，q=rp.qm；ωpe=1 下 me=1 故 q=q/m）
+- [x] `tests/test_charge_conservation.cu`（已接 CTest：`charge_conservation`）
 
-**验证**：`sum(rho)·dx·dy == N·q·weight`（单/多/边界粒子）；均匀分布 ρ≈常数。
+**验证** ✅：单粒子 Q=q·weight（恰 4 cell）；边界粒子跨周期 wrap 仍守恒（wrap cell 非空）；
+均匀 quiet load：Q=-1=N·q·weight、ρ 平直 = -1.00000（min==max，quiet 零 ripple，=q·n0）；
+CTest 5/5 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 errors**。
 
 ---
 
@@ -224,5 +227,5 @@ CTest 4/4 通过；`compute-sanitizer --leak-check full`：**0 bytes leaked / 0 
 
 ## 进度
 
-- 当前：**Step 10**（Step 0–9 已完成；Step 9 的半步回退随 Step 11 Pusher 一并落地）
+- 当前：**Step 11**（Step 0–10 已完成；Step 9 的半步回退随 Step 11 Pusher 一并落地）
 - 完成即在对应 subtitle 勾选，并在此更新「当前」指针。

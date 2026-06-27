@@ -64,3 +64,9 @@ add_executable(test_particle_load tests/test_particle_load.cu)
 target_include_directories(test_particle_load PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_particle_load PRIVATE CUDA::cudart)
 add_test(NAME particle_load COMMAND test_particle_load)
+
+# Step 10 [S4]: charge conservation (CIC deposit).
+add_executable(test_charge_conservation tests/test_charge_conservation.cu)
+target_include_directories(test_charge_conservation PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_charge_conservation PRIVATE CUDA::cudart)
+add_test(NAME charge_conservation COMMAND test_charge_conservation)

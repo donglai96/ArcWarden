@@ -112,6 +112,35 @@ struct KGrid {
     }
 };
 
+// ---- CIC interpolation stencil (the ONE definition deposit & gather share) --
+
+// The 4 cloud-in-cell cells touched by a particle and their bilinear weights.
+// Deposit (scatter q -> rho) and gather (interp E -> particle) MUST use the same
+// weights; defining the stencil once here is what guarantees that (plan §16, the
+// classic PIC bug source). Positions are in cell units, already wrapped to
+// [0,nx)×[0,ny) by migrate/init, so floor == truncation (x >= 0).
+struct CicStencil {
+    int   cell[4];   // 4 wrapped flat cell indices (j*nx+i)
+    float w[4];      // 4 weights, sum == 1
+};
+
+__host__ __device__ inline CicStencil cic_stencil(const Grid& g, float x, float y) {
+    const int   i0 = static_cast<int>(x);     // floor for x >= 0
+    const int   j0 = static_cast<int>(y);
+    const float fx = x - static_cast<float>(i0);
+    const float fy = y - static_cast<float>(j0);
+
+    const int wi0 = Grid::wrap(i0,     g.nx), wi1 = Grid::wrap(i0 + 1, g.nx);
+    const int wj0 = Grid::wrap(j0,     g.ny), wj1 = Grid::wrap(j0 + 1, g.ny);
+
+    CicStencil s;
+    s.cell[0] = wj0 * g.nx + wi0;  s.w[0] = (1.0f - fx) * (1.0f - fy);
+    s.cell[1] = wj0 * g.nx + wi1;  s.w[1] =         fx  * (1.0f - fy);
+    s.cell[2] = wj1 * g.nx + wi0;  s.w[2] = (1.0f - fx) *         fy;
+    s.cell[3] = wj1 * g.nx + wi1;  s.w[3] =         fx  *         fy;
+    return s;
+}
+
 } // namespace arc
 
 #endif // ARC_PIC_GRID_HPP
