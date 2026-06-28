@@ -38,7 +38,9 @@ static double deposit_points(const Grid& g, const RunParams& rp,
     Sources src(g);
     CudaStream stream;
     src.zero(stream);
-    deposit_charge_kernel<Cfg><<<1, 256, 0, stream>>>(pv, src.views(), g, rp);
+    // Test the CIC deposit math directly via the per-particle (global-atomic) kernel;
+    // it is policy-independent, so pin the policy regardless of the default Cfg.
+    deposit_charge_kernel<Cfg, AtomicGlobalDeposit><<<1, 256, 0, stream>>>(pv, src.views(), g, rp);
     CUDA_CHECK(cudaPeekAtLastError());
     stream.synchronize();
 

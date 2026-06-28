@@ -81,9 +81,11 @@ struct SimConfig {
     static_assert(VelDim >= Dim, "SimConfig: vdim must be >= dim");
 };
 
-// Default v1 configuration: 2D3V, CIC, float, magnetized-capable, global-atomic
-// deposit. Components reach for `arc::Cfg` unless they need a different policy.
-using Cfg = SimConfig<2, 3, ShapeOrder::CIC, float, true, AtomicGlobalDeposit>;
+// Default v1 configuration: 2D3V, CIC, float, magnetized-capable, shared-tile
+// deposit (per-block privatized rho; ~7-34x faster than global atomics at high
+// ppc, falls back to global if the grid exceeds shared-memory opt-in). Components
+// reach for `arc::Cfg` unless they need a different policy.
+using Cfg = SimConfig<2, 3, ShapeOrder::CIC, float, true, SharedTileDeposit>;
 
 // Compile-time guarantees the hot path is locked to 2D3V (plan Step 4 check).
 static_assert(Cfg::dim == 2,  "Cfg must be 2D");
