@@ -11,8 +11,9 @@
 // correct; a fused GPU reduction is a later optimization (diagnostics are
 // infrequent, gated by dump_every).
 //
-// UNITS (config.hpp contract, ωpe=1): a macro-particle represents `weight`
-// physical particles of mass me=1, so kinetic energy = weight·Σ ½(ux²+uy²+uz²).
+// UNITS (config.hpp contract, ωpe=1): a macro-particle i represents `w[i]`
+// physical particles of mass me=1, so kinetic energy = Σ w[i]·½(ux²+uy²+uz²)
+// (per-particle weight; multi-species safe).
 // Field energy = ½·eps0·Σ(Ex²+Ey²)·dx·dy. Total charge = Σ rho·dx·dy.
 
 #ifndef ARC_PIC_DIAGNOSTICS_HPP
@@ -58,19 +59,25 @@ public:
                        const Fields& f, const RunParams& rp, cudaStream_t s) {
         CUDA_CHECK(cudaStreamSynchronize(s));   // results must be ready before copy
 
-        // ---- kinetic energy (particles) ----
+        // ---- kinetic energy (particles): Σ wᵢ·½(ux²+uy²+uz²) ----
+        // Uses the PER-PARTICLE weight so multi-species runs (species with
+        // different weights) are correct; for a uniform single-species load this
+        // equals the old rp.weight·½·Σu².
         const int n = p.n;
-        std::vector<float> h(n);
-        double sum_u2 = 0.0;
-        auto add_sq = [&](const float* dptr) {
-            CUDA_CHECK(cudaMemcpy(h.data(), dptr, std::size_t(n) * sizeof(float),
+        std::vector<float> hux(n), huy(n), huz(n), hw(n);
+        auto copy_down = [&](std::vector<float>& dst, const float* dptr) {
+            CUDA_CHECK(cudaMemcpy(dst.data(), dptr, std::size_t(n) * sizeof(float),
                                   cudaMemcpyDeviceToHost));
-            double acc = 0.0;
-            for (int i = 0; i < n; ++i) acc += double(h[i]) * h[i];
-            sum_u2 += acc;
         };
-        add_sq(p.ux.ptr); add_sq(p.uy.ptr); add_sq(p.uz.ptr);
-        const double ke = rp.weight * 0.5 * sum_u2;
+        copy_down(hux, p.ux.ptr); copy_down(huy, p.uy.ptr);
+        copy_down(huz, p.uz.ptr); copy_down(hw,  p.w.ptr);
+        double ke = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double u2 = double(hux[i]) * hux[i] + double(huy[i]) * huy[i]
+                            + double(huz[i]) * huz[i];
+            ke += double(hw[i]) * u2;
+        }
+        ke *= 0.5;
 
         // ---- field energy + max|E| (grid) ----
         const int ncell = src.rho.size() ? int(src.rho.size()) : 0;

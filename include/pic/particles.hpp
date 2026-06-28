@@ -170,6 +170,7 @@ __global__ void particle_migrate_kernel(ParticleViews p, Grid g) {
 // POD describing one species' slice for the device init kernel (passed by value).
 struct SpeciesInit {
     int           ppc    = 0;
+    int           index  = 0;     // species ordinal (decorrelates quiet positions)
     long          base   = 0;     // write offset into the global arrays
     long          count  = 0;     // ppc * ncell
     float         weight = 0.0f;  // macro weight = density·dx·dy/ppc
@@ -191,12 +192,21 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
     const int  i = c % g.nx;
     const int  j = c / g.nx;
 
-    // sub-cell offset: quiet (van der Corput) or noisy (hashed RNG, distinct per
-    // species since t spans a unique slice). Density structure stays at Nyquist.
-    const float fx = sp.noisy ? static_cast<float>(rng_uniform(static_cast<int>(t), 0, sp.seed))
-                              : static_cast<float>(radical_inverse(s + 1, 2));
-    const float fy = sp.noisy ? static_cast<float>(rng_uniform(static_cast<int>(t), 1, sp.seed))
-                              : static_cast<float>(radical_inverse(s + 1, 3));
+    // sub-cell offset: noisy (hashed RNG, distinct per species since t spans a
+    // unique slice) or quiet (van der Corput + a per-species golden-ratio phase so
+    // distinct species do NOT load coincident positions — radical_inverse(s+1,·) is
+    // otherwise identical across species. The phase is constant within a species, so
+    // rho stays flat per species; index 0 is unshifted). Structure stays at Nyquist.
+    float fx, fy;
+    if (sp.noisy) {
+        fx = static_cast<float>(rng_uniform(static_cast<int>(t), 0, sp.seed));
+        fy = static_cast<float>(rng_uniform(static_cast<int>(t), 1, sp.seed));
+    } else {
+        const float px = sp.index * 0.6180339887498949f;   // golden ratio (φ−1)
+        const float py = sp.index * 0.7548776662466927f;   // a second irrational
+        fx = static_cast<float>(radical_inverse(s + 1, 2)) + px; fx -= floorf(fx);
+        fy = static_cast<float>(radical_inverse(s + 1, 3)) + py; fy -= floorf(fy);
+    }
     float x = static_cast<float>(i) + fx;
     const float y = static_cast<float>(j) + fy;
     int ci = static_cast<int>(x);
@@ -273,9 +283,11 @@ struct Particles {
         allocate_n(total);
 
         long base = 0;
+        int  idx  = 0;
         for (const auto& q : sp) {
             detail::SpeciesInit si{};
             si.ppc    = q.ppc;
+            si.index  = idx++;
             si.base   = base;
             si.count  = static_cast<long>(q.ppc) * ncell;
             si.weight = static_cast<float>(q.density * g.dx * g.dy / q.ppc);

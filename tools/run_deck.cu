@@ -54,9 +54,17 @@ int main(int argc, char** argv) {
         return 1;
     }
     const std::string outdir = (argc > 2) ? argv[2] : d.outdir;
+    const bool do_frames = d.dump_every > 0;
+
+    // Diagnostics cadence: compute (and CSV-log) energy at the frame cadence.
+    // Without this, dump_every<=0 makes Diagnostics run a full-particle reduction
+    // EVERY step (it would otherwise dominate run time and be discarded).
+    if (do_frames) { fs::create_directories(outdir); d.rp.dump_every = d.dump_every; }
+    else           { d.rp.dump_every = (1L << 30); }   // effectively disabled
+    const std::string energy_csv = do_frames ? (outdir + "/energy.csv") : "";
 
     Grid g(d.nx, d.ny, d.Lx, d.Ly);
-    Simulation<> sim(g, d.rp, d.species);
+    Simulation<> sim(g, d.rp, d.species, energy_csv);
     sim.init();
     const long long N = static_cast<long long>(sim.particles().n);
 
@@ -82,12 +90,10 @@ int main(int argc, char** argv) {
         std::sort(sample.begin(), sample.end());
     }
 
-    const bool do_frames = d.dump_every > 0;
     int frame = 0;
     std::ofstream man;
     char name[64];
     if (do_frames) {
-        fs::create_directories(outdir);
         man.open(outdir + "/manifest.csv");
         man << "frame,step,time,file\n";
     }
