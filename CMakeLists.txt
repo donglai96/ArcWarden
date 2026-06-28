@@ -57,6 +57,11 @@ add_executable(run_deck tools/run_deck.cu)
 target_include_directories(run_deck PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(run_deck PRIVATE CUDA::cudart CUDA::cufft)
 
+# ---- deposit microbenchmark (atomic-global vs shared-tile) ----
+add_executable(deposit_bench tools/deposit_bench.cu)
+target_include_directories(deposit_bench PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(deposit_bench PRIVATE CUDA::cudart CUDA::cufft)
+
 # ---- tests ----
 enable_testing()
 add_test(NAME smoke_device COMMAND arcwarden)
