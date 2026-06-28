@@ -31,6 +31,7 @@ struct Deck {
     RunParams   rp;
     SpeciesList species;
     long        dump_every = 0;          // runner frame cadence (0 = no frames)
+    long        field_history_every = 0; // E(x,t) sample cadence in steps (0 = off)
     std::string outdir     = "deck_frames";
 };
 
@@ -108,6 +109,7 @@ inline Deck load_deck(const std::string& path) {
             if      (key == "dt")         d.rp.dt = dv();
             else if (key == "nsteps")     d.rp.nsteps = iv();
             else if (key == "dump_every") d.dump_every = iv();
+            else if (key == "field_history_every") d.field_history_every = iv();
         } else if (section == "plasma") {
             if      (key == "qm")    d.rp.qm = dv();
             else if (key == "eps0")  d.rp.eps0 = dv();

@@ -7,6 +7,7 @@
 // Two-stream / bump-on-tail / single-Maxwellian are all just different decks.
 
 #include "pic/deck.hpp"
+#include "pic/fields.hpp"
 #include "pic/grid.hpp"
 #include "pic/simulation.hpp"
 
@@ -38,6 +39,28 @@ static void dump_phase(const Particles& P, const Grid& g, const std::string& pat
         if (xd < 0.0f) xd += g.nx; else if (xd >= g.nx) xd -= g.nx;
         f << xd * g.dx << ',' << vx[i] << '\n';
     }
+}
+
+// Longitudinal field profile Ex(x), averaged over y (the setup is 1D along x).
+static std::vector<float> field_profile(const Fields& F, const Grid& g) {
+    CUDA_CHECK(cudaDeviceSynchronize());
+    std::vector<float> ex(g.real_size());
+    CUDA_CHECK(cudaMemcpy(ex.data(), F.Ex.data(), F.Ex.bytes(), cudaMemcpyDeviceToHost));
+    std::vector<float> prof(g.nx);
+    for (int ix = 0; ix < g.nx; ++ix) {
+        double s = 0.0;
+        for (int iy = 0; iy < g.ny; ++iy) s += ex[g.idx(ix, iy)];
+        prof[ix] = static_cast<float>(s / g.ny);
+    }
+    return prof;
+}
+
+// Write Ex(x) for one frame, so it can be plotted under the phase space.
+static void dump_field(const Fields& F, const Grid& g, const std::string& path) {
+    const std::vector<float> prof = field_profile(F, g);
+    std::ofstream f(path);
+    f << "x,Ex\n";
+    for (int ix = 0; ix < g.nx; ++ix) f << (ix + 0.5) * g.dx << ',' << prof[ix] << '\n';
 }
 
 int main(int argc, char** argv) {
@@ -92,25 +115,48 @@ int main(int argc, char** argv) {
 
     int frame = 0;
     std::ofstream man;
-    char name[64];
+    char name[64], fname[64];
     if (do_frames) {
         man.open(outdir + "/manifest.csv");
-        man << "frame,step,time,file\n";
+        man << "frame,step,time,file,field\n";
     }
     auto write_frame = [&](long step) {
         if (!do_frames) return;
-        std::snprintf(name, sizeof(name), "frame_%04d.csv", frame);
-        dump_phase(sim.particles(), g, outdir + "/" + name, sample);
-        man << frame << ',' << step << ',' << step * d.rp.dt << ',' << name << '\n';
+        std::snprintf(name,  sizeof(name),  "frame_%04d.csv", frame);
+        std::snprintf(fname, sizeof(fname), "field_%04d.csv", frame);
+        dump_phase(sim.particles(), g, outdir + "/" + name,  sample);
+        dump_field(sim.fields(),    g, outdir + "/" + fname);
+        man << frame << ',' << step << ',' << step * d.rp.dt << ',' << name << ',' << fname << '\n';
         man.flush();
         ++frame;
     };
 
+    // Dense E(x,t) history for an omega-k spectrum (field is tiny, sampled often).
+    // One row per sample = Ex(x) averaged over y; header carries dx and dt_sample.
+    const bool do_hist = d.field_history_every > 0;
+    std::ofstream hist;
+    long hist_rows = 0;
+    if (do_hist) {
+        fs::create_directories(outdir);
+        hist.open(outdir + "/field_xt.csv");
+        hist << "# dx=" << g.dx << " dt=" << d.field_history_every * d.rp.dt
+             << " nx=" << g.nx << "\n";
+    }
+    auto write_hist = [&] {
+        if (!do_hist) return;
+        const std::vector<float> prof = field_profile(sim.fields(), g);
+        for (int ix = 0; ix < g.nx; ++ix) hist << (ix ? "," : "") << prof[ix];
+        hist << '\n';
+        ++hist_rows;
+    };
+
     write_frame(0);
+    write_hist();
     const auto t0 = std::chrono::steady_clock::now();
     for (long n = 0; n < d.rp.nsteps; ++n) {
         sim.step(n);
         if (do_frames && (n + 1) % d.dump_every == 0) write_frame(n + 1);
+        if (do_hist   && (n + 1) % d.field_history_every == 0) write_hist();
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     const auto t1 = std::chrono::steady_clock::now();
@@ -118,6 +164,9 @@ int main(int argc, char** argv) {
 
     if (do_frames)
         std::printf("wrote %d frames to %s/ (<= %d pts/frame)\n", frame, outdir.c_str(), DUMP_CAP);
+    if (do_hist)
+        std::printf("wrote field_xt.csv (%ld samples x %d cells, dt=%.3g)\n",
+                    hist_rows, g.nx, d.field_history_every * d.rp.dt);
     std::printf("ran %ld steps in %.3f s (%.3f ms/step, %.1f M particle-updates/s)\n",
                 d.rp.nsteps, secs, 1e3 * secs / d.rp.nsteps,
                 double(N) * d.rp.nsteps / secs / 1e6);
