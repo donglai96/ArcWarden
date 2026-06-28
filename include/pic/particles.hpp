@@ -37,7 +37,6 @@
 #include "pic/species.hpp"
 
 #include <cstddef>
-#include <utility>
 
 namespace arc {
 
@@ -227,50 +226,6 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
     p.uz[t] = static_cast<float>(sp.ufl[2] + r2 * sp.uth[2] * erfinv(2.0 * qz - 1.0));
 }
 
-// ---- counting sort of particles by cell (no external deps; ncell is small) ----
-
-// 1. histogram: count[cell[i]]++   (counts must be pre-zeroed).
-template<class Dummy = void>
-__global__ void cell_count_kernel(const int* __restrict cell, int n, int* __restrict count) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) atomicAdd(&count[cell[i]], 1);
-}
-
-// 2. exclusive prefix sum over counts -> per-cell start offsets. Single thread:
-// ncell is modest (nx*ny) so this is cheap and avoids a scan dependency.
-template<class Dummy = void>
-__global__ void cell_offsets_kernel(const int* __restrict count, int ncell, int* __restrict off) {
-    int acc = 0;
-    for (int c = 0; c < ncell; ++c) { off[c] = acc; acc += count[c]; }
-}
-
-// 3. scatter: each particle claims the next slot in its cell's range -> perm.
-// (cursor starts as a copy of the offsets and is advanced atomically.)
-template<class Dummy = void>
-__global__ void cell_scatter_kernel(const int* __restrict cell, int n,
-                                    int* __restrict cursor, int* __restrict perm) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) perm[atomicAdd(&cursor[cell[i]], 1)] = i;
-}
-
-// 4. gather the SoA arrays (incl. cell) through the permutation: out[i] = in[perm[i]].
-template<class Dummy = void>
-__global__ void gather_by_perm_kernel(
-        float* __restrict ox, float* __restrict oy, float* __restrict oux,
-        float* __restrict ouy, float* __restrict ouz, float* __restrict ow,
-        int* __restrict ocell,
-        const float* __restrict ix, const float* __restrict iy,
-        const float* __restrict iux, const float* __restrict iuy,
-        const float* __restrict iuz, const float* __restrict iw,
-        const int* __restrict icell, const int* __restrict perm, int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    const int q = perm[i];
-    ox[i] = ix[q]; oy[i] = iy[q];
-    oux[i] = iux[q]; ouy[i] = iuy[q]; ouz[i] = iuz[q];
-    ow[i] = iw[q]; ocell[i] = icell[q];
-}
-
 } // namespace detail
 
 struct Particles {
@@ -279,22 +234,6 @@ struct Particles {
     DeviceArray<float> w;           // per-particle macro weight (rho scale)
     DeviceArray<int>   cell;        // owning cell index
     std::size_t        n = 0;
-
-    // Cell-sort (opt-in): reorder particles by cell so the deposit/gather are
-    // locality-friendly. sort_every>0 sorts every N migrate calls; 0 disables.
-    //
-    // DEFAULT OFF after profiling: for ArcWarden's regime (high ppc ~1e3, tiny
-    // grid) sorting is a NET LOSS — it makes all same-cell particles adjacent, so
-    // a warp pounds the same 4 rho addresses at once and the atomic deposit gets
-    // ~2.7x SLOWER (plus the sort cost). Random order spreads the atomics. Sorting
-    // helps the opposite regime (low ppc, large grid). The real fix for the deposit
-    // bottleneck here is shared-memory privatization (SharedTileDeposit), not this.
-    // (Also note: sorting permutes array indices, breaking index-colored movies.)
-    int  sort_every   = 0;
-    long migrate_calls = 0;
-    DeviceArray<float> sx, sy, sux, suy, suz, sw;   // ping-pong gather targets
-    DeviceArray<int>   scell, sperm;                // sorted cells + permutation
-    DeviceArray<int>   cnt, off;                    // per-cell counts + cursor (size ncell)
 
     Particles() = default;
 
@@ -363,49 +302,13 @@ struct Particles {
         }
     }
 
-    // Periodic wrap + recompute cell, then (every sort_every-th call) reorder the
-    // particles by cell so the deposit/gather are locality-friendly.
+    // Periodic wrap + recompute cell (v1 migrate; chunk-pool reshuffle later).
     void migrate(const Grid& g, cudaStream_t s) {
         if (n == 0) return;
         constexpr int threads = 256;
         const int blocks = (static_cast<int>(n) + threads - 1) / threads;
         detail::particle_migrate_kernel<><<<blocks, threads, 0, s>>>(views(), g);
         CUDA_CHECK(cudaPeekAtLastError());
-        if (sort_every > 0 && (++migrate_calls % sort_every == 0)) sort_by_cell(g, s);
-    }
-
-    // Counting sort by cell (histogram -> offsets -> scatter -> gather), ping-ponged
-    // into lazily-allocated scratch so there is no per-step malloc. NOTE: this
-    // permutes array indices, so particle i is not the same particle across steps
-    // (movie scripts that color by initial index should set sort_every=0).
-    void sort_by_cell(const Grid& g, cudaStream_t s) {
-        if (n == 0) return;
-        const int N     = static_cast<int>(n);
-        const int ncell = g.real_size();
-        if (sx.size() != n) {
-            sx = DeviceArray<float>(n); sy = DeviceArray<float>(n);
-            sux = DeviceArray<float>(n); suy = DeviceArray<float>(n); suz = DeviceArray<float>(n);
-            sw = DeviceArray<float>(n); scell = DeviceArray<int>(n); sperm = DeviceArray<int>(n);
-        }
-        if (cnt.size() != static_cast<std::size_t>(ncell)) {
-            cnt = DeviceArray<int>(ncell); off = DeviceArray<int>(ncell);
-        }
-
-        constexpr int threads = 256;
-        const int blocks  = (N + threads - 1) / threads;
-        CUDA_CHECK(cudaMemsetAsync(cnt.data(), 0, cnt.bytes(), s));
-        detail::cell_count_kernel<><<<blocks, threads, 0, s>>>(cell.data(), N, cnt.data());
-        detail::cell_offsets_kernel<><<<1, 1, 0, s>>>(cnt.data(), ncell, off.data());
-        detail::cell_scatter_kernel<><<<blocks, threads, 0, s>>>(cell.data(), N, off.data(), sperm.data());
-        detail::gather_by_perm_kernel<><<<blocks, threads, 0, s>>>(
-            sx.data(), sy.data(), sux.data(), suy.data(), suz.data(), sw.data(), scell.data(),
-            x.data(), y.data(), ux.data(), uy.data(), uz.data(), w.data(), cell.data(),
-            sperm.data(), N);
-        CUDA_CHECK(cudaPeekAtLastError());
-
-        std::swap(x, sx); std::swap(y, sy);
-        std::swap(ux, sux); std::swap(uy, suy); std::swap(uz, suz);
-        std::swap(w, sw); std::swap(cell, scell);
     }
 };
 

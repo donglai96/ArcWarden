@@ -56,14 +56,21 @@ __global__ void deposit_charge_kernel(ParticleViews p, SourceViews src,
     }
 }
 
-// SharedTileDeposit (Tier 1): each RESIDENT block privatizes the deposit grid in
+// SharedTileDeposit: each RESIDENT block privatizes the WHOLE deposit grid in
 // dynamic shared memory, accumulates its share of particles there (fast shared
-// atomics; contention is low because particles are spread over many blocks, so a
-// block sees only ~N/nblocks of them), then flushes once per cell to global. The
-// shared region is the "tile" — here the whole grid (it fits in <99KB). The same
-// structure generalizes to spatial per-block / cluster tiles once particles are
-// binned by tile (EM, large grids). Cuts global atomic traffic from 4*N to
+// atomics; contention is low because particles are spread over many blocks), then
+// flushes once per cell to global. Cuts global atomic traffic from 4*N to
 // ncell*nblocks and moves per-particle atomics from L2 to shared memory.
+//
+// SCOPE / KNOWN-INTERIM: this is whole-grid privatization, so it only works while
+// the grid fits the shared opt-in (<99KB on sm_120) AND stays small enough for
+// good occupancy. Profiling shows it is a big win for small grids (16KB: 7-34x)
+// but DEGRADES as the grid grows — at 64KB only 1 block/SM is resident, so
+// parallelism and contention both worsen (128x128: ~5x), and it falls back to the
+// global kernel past 99KB. It does NOT scale to large 2D/3D EM grids; the general
+// solution is a FIXED-SIZE spatial-tile deposit with particle binning (bounded
+// shared footprint regardless of grid size), which will be a separate policy
+// plugged in at this same Cfg::deposit seam.
 template<class Cfg>
 __global__ void deposit_charge_shared_kernel(ParticleViews p, SourceViews src,
                                              Grid g, RunParams rp) {
@@ -116,14 +123,17 @@ struct Depositor {
                                          static_cast<int>(shbytes)); return true; }();
                 (void)once;
             }
-            // one resident block per available slot -> each holds a private copy
-            static const int sms = [] { int v = 0;
-                cudaDeviceGetAttribute(&v, cudaDevAttrMultiProcessorCount, 0); return v; }();
-            int bpsm = 0;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, kern, threads, shbytes);
-            int nblocks = bpsm * sms;
+            // one resident block per available slot -> each holds a private copy.
+            // Cache the occupancy-derived block count once (host call is not free;
+            // grid/shbytes are fixed within a run).
+            static const int resident = [&] {
+                int v = 0; cudaDeviceGetAttribute(&v, cudaDevAttrMultiProcessorCount, 0);
+                int bpsm = 0;
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, kern, threads, shbytes);
+                return (bpsm * v < 1) ? 1 : bpsm * v;
+            }();
+            int nblocks = resident;
             const int maxb = (n + threads - 1) / threads;
-            if (nblocks < 1)     nblocks = 1;
             if (nblocks > maxb)  nblocks = maxb;
             kern<<<nblocks, threads, shbytes, s>>>(parts.views(), src.views(), g, rp);
             CUDA_CHECK(cudaPeekAtLastError());
