@@ -26,13 +26,15 @@ static double deposit_points(const Grid& g, const RunParams& rp,
                              const std::vector<float>& xs, const std::vector<float>& ys,
                              std::vector<float>& rho_out) {
     const int np = static_cast<int>(xs.size());
-    DeviceArray<float> x(np), y(np), ux(np), uy(np), uz(np);
+    DeviceArray<float> x(np), y(np), ux(np), uy(np), uz(np), w(np);
     DeviceArray<int>   cell(np);
     CUDA_CHECK(cudaMemcpy(x.data(), xs.data(), x.bytes(), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(y.data(), ys.data(), y.bytes(), cudaMemcpyHostToDevice));
+    std::vector<float> ws(np, static_cast<float>(rp.weight));   // uniform weight
+    CUDA_CHECK(cudaMemcpy(w.data(), ws.data(), w.bytes(), cudaMemcpyHostToDevice));
 
     ParticleViews pv{ x.view(), y.view(), ux.view(), uy.view(), uz.view(),
-                      cell.view(), np };
+                      w.view(), cell.view(), np };
     Sources src(g);
     CudaStream stream;
     src.zero(stream);

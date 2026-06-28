@@ -40,7 +40,8 @@ __global__ void deposit_charge_kernel(ParticleViews p, SourceViews src,
     const CicStencil st = cic_stencil(g, p.x[t], p.y[t]);
 
     // charge density contributed per macro-particle = q*weight / cell area
-    const float coef = static_cast<float>(rp.qm * rp.weight / (g.dx * g.dy));
+    // (weight is per-particle so species can carry different densities; q/m global)
+    const float coef = static_cast<float>(rp.qm * static_cast<double>(p.w[t]) / (g.dx * g.dy));
 
     if constexpr (std::is_same_v<DepositPolicy, AtomicGlobalDeposit>) {
         // v0: one particle per thread, global atomicAdd into rho.

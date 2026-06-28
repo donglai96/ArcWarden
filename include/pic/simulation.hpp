@@ -41,10 +41,19 @@ public:
         diag_.set_geometry(g.dx, g.dy);
     }
 
+    // Multi-species overload (OSIRIS/UPIC style): init() loads from the species list
+    // instead of the single-Maxwellian RunParams path.
+    Simulation(const Grid& g, const RunParams& rp, const SpeciesList& species,
+               const std::string& csv = "")
+        : p_(rp), grid_(g), species_(species), spectral_(g), diag_(csv) {
+        diag_.set_geometry(g.dx, g.dy);
+    }
+
     // Load particles, allocate grid containers, compute the t=0 field, and roll
     // velocities back half a step (leapfrog start).
     void init() {
-        particles_.initialize(p_, grid_, stream_);
+        if (!species_.empty()) particles_.initialize(species_, grid_, p_, stream_);
+        else                   particles_.initialize(p_, grid_, stream_);
         sources_.allocate(grid_);
         fields_.allocate(grid_);
 
@@ -78,6 +87,7 @@ public:
 private:
     RunParams      p_;
     Grid           grid_;
+    SpeciesList    species_;
     Particles      particles_;
     Sources        sources_;
     Fields         fields_;

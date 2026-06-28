@@ -135,6 +135,23 @@ struct RunParams {
     // —— two-stream load: split each cell's particles into counter-streaming beams
     // ±vd along x (default false → single Maxwellian drifting at vd). ——
     bool two_stream = false;
+
+    // —— bump-on-tail load: a warm bulk Maxwellian (width vth, no drift) plus a
+    // small beam in the tail. A fraction beam_frac of each cell's particles is
+    // loaded as the beam (drift beam_vd, width beam_vth); the rest is the bulk.
+    // Takes priority over two_stream when true. The positive slope ∂f/∂v on the
+    // beam's inner edge is the free energy that drives the Langmuir instability. ——
+    bool   bump_on_tail = false;
+    double beam_frac    = 0.0;   // fraction of ppc placed in the beam (e.g. 0.08)
+    double beam_vd      = 0.0;   // beam drift velocity (where the bump sits)
+    double beam_vth     = 0.0;   // beam thermal width
+
+    // —— noisy load: random within-cell positions + random Maxwellian velocities
+    // (per-particle hashed RNG, seeded by rng_seed) instead of the quiet-start
+    // van der Corput lattice. This restores physical shot noise so instabilities
+    // self-excite from fluctuations — no perturb_amp seed needed. Default false
+    // keeps the quiet start (flat rho) used by all earlier tests. ——
+    bool noisy_load = false;
 };
 
 } // namespace arc

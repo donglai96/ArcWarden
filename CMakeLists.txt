@@ -48,6 +48,15 @@ add_executable(two_stream_movie tools/two_stream_movie.cu)
 target_include_directories(two_stream_movie PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(two_stream_movie PRIVATE CUDA::cudart CUDA::cufft CUDA::nvml)
 
+add_executable(bump_on_tail_movie tools/bump_on_tail_movie.cu)
+target_include_directories(bump_on_tail_movie PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(bump_on_tail_movie PRIVATE CUDA::cudart CUDA::cufft CUDA::nvml)
+
+# ---- deck-driven runner (physics from a text input deck, no recompile) ----
+add_executable(run_deck tools/run_deck.cu)
+target_include_directories(run_deck PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(run_deck PRIVATE CUDA::cudart CUDA::cufft)
+
 # ---- tests ----
 enable_testing()
 add_test(NAME smoke_device COMMAND arcwarden)

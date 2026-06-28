@@ -34,6 +34,7 @@
 #include "pic/cuda_utils.hpp"
 #include "pic/device_array.hpp"
 #include "pic/grid.hpp"
+#include "pic/species.hpp"
 
 #include <cstddef>
 
@@ -41,6 +42,7 @@ namespace arc {
 
 struct ParticleViews {
     DeviceView<float> x, y, ux, uy, uz;
+    DeviceView<float> w;        // per-particle macro weight (sets rho scale)
     DeviceView<int>   cell;
     int n = 0;
 };
@@ -54,6 +56,22 @@ __host__ __device__ inline double radical_inverse(unsigned int i, unsigned int b
     double inv = 1.0 / double(base), f = inv, r = 0.0;
     while (i > 0) { r += double(i % base) * f; i /= base; f *= inv; }
     return r;
+}
+
+// Stateless hashed RNG for the noisy load: a per-particle uniform in (0,1), open
+// interval (so erfinv never sees 0 or 1). `stream` picks an independent draw
+// (position-x, position-y, vx, vy, vz). This restores genuine shot noise, the
+// opposite of radical_inverse — used only when RunParams::noisy_load is set.
+__host__ __device__ inline unsigned int hash_u32(unsigned int x) {
+    x ^= x >> 16; x *= 0x7feb352dU;
+    x ^= x >> 15; x *= 0x846ca68bU;
+    x ^= x >> 16; return x;
+}
+__host__ __device__ inline double rng_uniform(int t, unsigned int stream, unsigned long seed) {
+    unsigned int h = hash_u32(static_cast<unsigned int>(t) * 0x9e3779b9U
+                              + stream * 0x85ebca6bU
+                              + static_cast<unsigned int>(seed));
+    return (double(h) + 0.5) * (1.0 / 4294967296.0);   // (0,1), open
 }
 
 // One particle per thread. Stratified position + quiet Maxwellian velocity.
@@ -74,8 +92,12 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
     // at the grid-Nyquist scale, which the spectral solver zeros). It also shows
     // up as a faint "comb" if you scatter-plot individual particles — that is a
     // visualization effect, not density structure (see tools/two_stream_movie).
-    const float fx = static_cast<float>(radical_inverse(s + 1, 2));
-    const float fy = static_cast<float>(radical_inverse(s + 1, 3));
+    // sub-cell offset: quiet (van der Corput, flat rho) or noisy (hashed RNG ->
+    // physical shot noise, so instabilities self-excite without a perturb seed).
+    const float fx = rp.noisy_load ? static_cast<float>(rng_uniform(t, 0, rp.rng_seed))
+                                   : static_cast<float>(radical_inverse(s + 1, 2));
+    const float fy = rp.noisy_load ? static_cast<float>(rng_uniform(t, 1, rp.rng_seed))
+                                   : static_cast<float>(radical_inverse(s + 1, 3));
     float x = static_cast<float>(i) + fx;     // cell units, in [0,nx)
     const float y = static_cast<float>(j) + fy;
 
@@ -91,6 +113,7 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
 
     p.x[t]    = x;
     p.y[t]    = y;
+    p.w[t]    = static_cast<float>(rp.weight);   // single-species: uniform weight
     p.cell[t] = g.idx(ci, j);
 
     // quiet Maxwellian: u = drift + sqrt(2)*vth * erfinv(2q-1), q from low-discrepancy.
@@ -101,14 +124,26 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
     // power of two, using base 2 here makes radical_inverse(t+1,2) ≈ the base-2
     // position offset (the low bits of t = c*ppc+s are s), so vx would track x —
     // the beams come out scalloped instead of uniform. Coprime bases decorrelate.
-    const double qx = radical_inverse(t + 1, 5);
-    const double qy = radical_inverse(t + 1, 7);
-    const double qz = radical_inverse(t + 1, 11);
-    const double s2 = 1.41421356237309515 * rp.vth;   // sqrt(2) * vth
-    const double drift = rp.two_stream ? ((s & 1) ? -rp.vd : rp.vd) : rp.vd;
-    p.ux[t] = static_cast<float>(drift + s2 * erfinv(2.0 * qx - 1.0));
-    p.uy[t] = static_cast<float>(        s2 * erfinv(2.0 * qy - 1.0));
-    p.uz[t] = static_cast<float>(        s2 * erfinv(2.0 * qz - 1.0));
+    const double qx = rp.noisy_load ? rng_uniform(t, 2, rp.rng_seed) : radical_inverse(t + 1, 5);
+    const double qy = rp.noisy_load ? rng_uniform(t, 3, rp.rng_seed) : radical_inverse(t + 1, 7);
+    const double qz = rp.noisy_load ? rng_uniform(t, 4, rp.rng_seed) : radical_inverse(t + 1, 11);
+
+    // ux population: bump-on-tail (warm bulk + small tail beam) takes priority;
+    // else two-stream counter-streaming beams; else a single drifting Maxwellian.
+    // Perp directions (uy,uz) always use the bulk width — B0=0 makes them passive.
+    double drift_x = rp.vd, width_x = rp.vth;
+    if (rp.bump_on_tail) {
+        const int  n_beam  = static_cast<int>(rp.beam_frac * ppc + 0.5);
+        const bool is_beam = (s < n_beam);
+        drift_x = is_beam ? rp.beam_vd  : 0.0;
+        width_x = is_beam ? rp.beam_vth : rp.vth;
+    } else if (rp.two_stream) {
+        drift_x = (s & 1) ? -rp.vd : rp.vd;
+    }
+    const double s2 = 1.41421356237309515 * rp.vth;   // sqrt(2) * vth (perp dirs)
+    p.ux[t] = static_cast<float>(drift_x + 1.41421356237309515 * width_x * erfinv(2.0 * qx - 1.0));
+    p.uy[t] = static_cast<float>(s2 * erfinv(2.0 * qy - 1.0));
+    p.uz[t] = static_cast<float>(s2 * erfinv(2.0 * qz - 1.0));
 }
 
 // Periodic wrap of positions (cell units) + recompute the owning cell.
@@ -132,41 +167,127 @@ __global__ void particle_migrate_kernel(ParticleViews p, Grid g) {
     p.cell[t] = g.idx(ci, cj);
 }
 
+// POD describing one species' slice for the device init kernel (passed by value).
+struct SpeciesInit {
+    int           ppc    = 0;
+    long          base   = 0;     // write offset into the global arrays
+    long          count  = 0;     // ppc * ncell
+    float         weight = 0.0f;  // macro weight = density·dx·dy/ppc
+    double        uth[3] = {0, 0, 0};
+    double        ufl[3] = {0, 0, 0};
+    bool          noisy  = false;
+    unsigned long seed   = 0;
+};
+
+// Load one species into [base, base+count). Same position/velocity machinery as
+// particle_init_kernel, but drift/width/weight come from the species, not RunParams.
+template<class Dummy = void>
+__global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
+    const long l = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (l >= sp.count) return;
+    const long t = sp.base + l;        // global particle index
+    const int  c = static_cast<int>(l / sp.ppc);   // cell within this species
+    const int  s = static_cast<int>(l % sp.ppc);   // particle within the cell
+    const int  i = c % g.nx;
+    const int  j = c / g.nx;
+
+    // sub-cell offset: quiet (van der Corput) or noisy (hashed RNG, distinct per
+    // species since t spans a unique slice). Density structure stays at Nyquist.
+    const float fx = sp.noisy ? static_cast<float>(rng_uniform(static_cast<int>(t), 0, sp.seed))
+                              : static_cast<float>(radical_inverse(s + 1, 2));
+    const float fy = sp.noisy ? static_cast<float>(rng_uniform(static_cast<int>(t), 1, sp.seed))
+                              : static_cast<float>(radical_inverse(s + 1, 3));
+    float x = static_cast<float>(i) + fx;
+    const float y = static_cast<float>(j) + fy;
+    int ci = static_cast<int>(x);
+    if (ci >= g.nx) ci = g.nx - 1;
+
+    p.x[t]    = x;
+    p.y[t]    = y;
+    p.w[t]    = sp.weight;
+    p.cell[t] = g.idx(ci, j);
+
+    const double qx = sp.noisy ? rng_uniform(static_cast<int>(t), 2, sp.seed) : radical_inverse(static_cast<unsigned>(t) + 1, 5);
+    const double qy = sp.noisy ? rng_uniform(static_cast<int>(t), 3, sp.seed) : radical_inverse(static_cast<unsigned>(t) + 1, 7);
+    const double qz = sp.noisy ? rng_uniform(static_cast<int>(t), 4, sp.seed) : radical_inverse(static_cast<unsigned>(t) + 1, 11);
+    const double r2 = 1.41421356237309515;   // sqrt(2)
+    p.ux[t] = static_cast<float>(sp.ufl[0] + r2 * sp.uth[0] * erfinv(2.0 * qx - 1.0));
+    p.uy[t] = static_cast<float>(sp.ufl[1] + r2 * sp.uth[1] * erfinv(2.0 * qy - 1.0));
+    p.uz[t] = static_cast<float>(sp.ufl[2] + r2 * sp.uth[2] * erfinv(2.0 * qz - 1.0));
+}
+
 } // namespace detail
 
 struct Particles {
     DeviceArray<float> x, y;        // position (cell units)
     DeviceArray<float> ux, uy, uz;  // momentum u = γv (γ≡1 in v1)
+    DeviceArray<float> w;           // per-particle macro weight (rho scale)
     DeviceArray<int>   cell;        // owning cell index
     std::size_t        n = 0;
 
     Particles() = default;
 
-    // Allocate for ppc particles per cell (n = ppc * nx * ny).
-    void allocate(const Grid& g, int ppc) {
-        n   = static_cast<std::size_t>(g.real_size()) * static_cast<std::size_t>(ppc);
+    // Allocate for n_total particles (caller sets the count).
+    void allocate_n(std::size_t n_total) {
+        n   = n_total;
         x   = DeviceArray<float>(n);
         y   = DeviceArray<float>(n);
         ux  = DeviceArray<float>(n);
         uy  = DeviceArray<float>(n);
         uz  = DeviceArray<float>(n);
+        w   = DeviceArray<float>(n);
         cell = DeviceArray<int>(n);
+    }
+
+    // Allocate for ppc particles per cell (n = ppc * nx * ny).
+    void allocate(const Grid& g, int ppc) {
+        allocate_n(static_cast<std::size_t>(g.real_size()) * static_cast<std::size_t>(ppc));
     }
 
     ParticleViews views() {
         return ParticleViews{ x.view(), y.view(), ux.view(), uy.view(), uz.view(),
-                              cell.view(), static_cast<int>(n) };
+                              w.view(), cell.view(), static_cast<int>(n) };
     }
 
     // Load positions (stratified quiet) + velocities (quiet Maxwellian) + cell.
     // Allocates from rp.ppc if not already sized. Field-free (see header note on
-    // the half-step rollback).
+    // the half-step rollback). Single-species legacy path (uniform weight).
     void initialize(const RunParams& rp, const Grid& g, cudaStream_t s) {
         if (n == 0) allocate(g, rp.ppc);
         constexpr int threads = 256;
         const int blocks = (static_cast<int>(n) + threads - 1) / threads;
         detail::particle_init_kernel<><<<blocks, threads, 0, s>>>(views(), g, rp);
         CUDA_CHECK(cudaPeekAtLastError());
+    }
+
+    // Multi-species load (OSIRIS/UPIC style): each species fills a contiguous slice
+    // of the arrays with its own count, drift (ufl), thermal spread (uth) and macro
+    // weight (= density·dx·dy/ppc). rp supplies the global normalization + noisy_load
+    // / rng_seed. Two-stream / bump-on-tail are expressed purely as species lists.
+    void initialize(const SpeciesList& sp, const Grid& g, const RunParams& rp,
+                    cudaStream_t s) {
+        const long ncell = static_cast<long>(g.real_size());
+        std::size_t total = 0;
+        for (const auto& q : sp) total += static_cast<std::size_t>(q.ppc) * ncell;
+        if (total == 0) return;
+        allocate_n(total);
+
+        long base = 0;
+        for (const auto& q : sp) {
+            detail::SpeciesInit si{};
+            si.ppc    = q.ppc;
+            si.base   = base;
+            si.count  = static_cast<long>(q.ppc) * ncell;
+            si.weight = static_cast<float>(q.density * g.dx * g.dy / q.ppc);
+            for (int d = 0; d < 3; ++d) { si.uth[d] = q.uth[d]; si.ufl[d] = q.ufl[d]; }
+            si.noisy = rp.noisy_load;
+            si.seed  = rp.rng_seed;
+            constexpr int threads = 256;
+            const int blocks = static_cast<int>((si.count + threads - 1) / threads);
+            detail::species_init_kernel<><<<blocks, threads, 0, s>>>(views(), g, si);
+            CUDA_CHECK(cudaPeekAtLastError());
+            base += si.count;
+        }
     }
 
     // Periodic wrap + recompute cell (v1 migrate; chunk-pool reshuffle later).
