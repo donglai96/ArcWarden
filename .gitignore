@@ -15,8 +15,8 @@ whistler_*.bin
 whistler_*.meta
 whistler_vid/
 
-# Saved session transcripts: keep the readable .md, drop the large raw .jsonl
-sessions/*.jsonl
+# Saved session transcripts (local record only; not tracked)
+sessions/
 
 # Editor / OS cruft (keep shared .vscode/tasks.json; drop user-local settings)
 .vscode/*
