@@ -10,6 +10,14 @@ build/
 phase_frames/
 __pycache__/
 
+# Simulation data dumps (regenerable; large)
+whistler_*.bin
+whistler_*.meta
+whistler_vid/
+
+# Saved session transcripts: keep the readable .md, drop the large raw .jsonl
+sessions/*.jsonl
+
 # Editor / OS cruft (keep shared .vscode/tasks.json; drop user-local settings)
 .vscode/*
 !.vscode/tasks.json

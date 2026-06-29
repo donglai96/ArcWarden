@@ -56,8 +56,22 @@ enum class ShapeOrder {
 // so going v0 -> v1 -> v2 changes ONE Cfg type argument and nothing else
 // (design §8). They carry no state — only their identity matters.
 struct AtomicGlobalDeposit {};  // v0: one particle per thread + global atomicAdd
-struct SharedTileDeposit   {};  // v1: one CTA per tile + shared-memory atomics
+struct SharedTileDeposit   {};  // v1: WHOLE-grid privatized rho (small grids only)
 struct CellOwnedDeposit    {};  // v2: one warp per cell, high-PPC reduction
+// v3: fixed-size SPATIAL tile (TX*TY cells + 1-cell halo) privatized in shared,
+// fed by a coarse per-tile particle binning (counting sort). Shared footprint is
+// (TX+1)(TY+1)*4B — CONSTANT in the grid size — so unlike SharedTileDeposit it
+// scales to large 2D/3D grids without falling back to global atomics. This is the
+// OSIRIS-style deposit (per-block tiles + binning + shared accumulate + flush).
+struct TiledBinnedDeposit  {};  // v3: spatial-tile + binning, grid-size-independent
+
+// ---- field model: compile-time selector (electrostatic vs spectral Darwin) --
+//
+// Picks which spectral field solve + step ordering the simulation runs. ES is
+// the v1 default (ρ→E_L only); Darwin adds the magnetic field B(J) and the
+// retained transverse inductive field E_T (UPIC mpdbeps2). Compile-time so the
+// main loop specializes with `if constexpr` and the ES path pays nothing.
+enum class FieldModel { Electrostatic, Darwin };
 
 // ---- SimConfig: the compile-time configuration ----------------------------
 //
@@ -66,12 +80,14 @@ struct CellOwnedDeposit    {};  // v2: one warp per cell, high-PPC reduction
 // the simplest correct implementation (v0).
 template<int Dim, int VelDim, ShapeOrder Shape,
          typename Real, bool HasB0,
-         class DepositPolicy = AtomicGlobalDeposit>
+         class DepositPolicy = AtomicGlobalDeposit,
+         FieldModel Model = FieldModel::Electrostatic>
 struct SimConfig {
     static constexpr int        dim    = Dim;      // spatial dims (2)
     static constexpr int        vdim   = VelDim;   // velocity dims (3 -> 2D3V)
     static constexpr ShapeOrder shape  = Shape;    // CIC
     static constexpr bool       has_b0 = HasB0;    // magnetized electrostatic?
+    static constexpr FieldModel field_model = Model;  // ES or Darwin spectral solve
     using real    = Real;                          // particle/field precision (float)
     using deposit = DepositPolicy;                 // swap impl: change only this
 
@@ -86,6 +102,12 @@ struct SimConfig {
 // ppc, falls back to global if the grid exceeds shared-memory opt-in). Components
 // reach for `arc::Cfg` unless they need a different policy.
 using Cfg = SimConfig<2, 3, ShapeOrder::CIC, float, true, SharedTileDeposit>;
+
+// Spectral Darwin EM configuration: 2D3V, CIC, float, magnetized, tiled deposit
+// (J/dcu/amu reuse it), Darwin field model. Opt-in — components stay on `Cfg`
+// (ES) unless they explicitly want the EM path.
+using CfgDarwin = SimConfig<2, 3, ShapeOrder::CIC, float, true,
+                            TiledBinnedDeposit, FieldModel::Darwin>;
 
 // Compile-time guarantees the hot path is locked to 2D3V (plan Step 4 check).
 static_assert(Cfg::dim == 2,  "Cfg must be 2D");
@@ -121,6 +143,28 @@ struct RunParams {
     NormMode norm   = NormMode::OmegaPeUnity;
     double   eps0   = 1.0;   // vacuum permittivity (= 1)
     double   qm     = -1.0;  // q/m (electron = -1)
+
+    // —— spectral Darwin (FieldModel::Darwin) ——
+    // c = speed of light in code units; the Darwin coupling μ₀ = 1/(eps0·c²)
+    // scales B and E_T. ndc = transverse-field inner iterations (E_T depends on
+    // dcu which depends on E_total = E_L + E_T → solved by ndc fixed-point sweeps;
+    // UPIC default 1–2). Unused by the ES path.
+    double   c      = 1.0;
+    int      ndc    = 1;
+
+    // —— external pump field (whistler driver, An et al. 2019, Eq. S1/S2) ——
+    // E_pump_α(x,t) = Re{ Ẽ_α e^{i(k0·x − w0·t)} } · ramp(t), added to the total E
+    // used in the dcu deposit + push (the whistler B then forms self-consistently
+    // via the Darwin solve). Complex amps: Ex real, Ey purely imaginary (90° shift),
+    // Ez real. Code units already (caller converts the paper's Ẽ normalization).
+    bool   pump      = false;
+    double pump_ex   = 0.0;   // Re(Ẽx)  [code E units]
+    double pump_ey   = 0.0;   // Im(Ẽy)  (Ey contributes −pump_ey·sinθ)
+    double pump_ez   = 0.0;   // Re(Ẽz)
+    double pump_k0   = 0.0;   // wavenumber 2πM/Lx
+    double pump_w0   = 0.0;   // frequency ω0
+    double pump_trmp = 0.0;   // linear ramp up/down duration
+    double pump_toff = 0.0;   // pump turn-off time
     double   weight = 1.0;   // macro weight = n0·dx·dy/ppc; sets rho scale
     double   ax = 0.0;       // particle-shape smoothing scale: s(k)=exp(-(kx·ax)²/2 …)
     double   ay = 0.0;

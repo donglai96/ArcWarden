@@ -18,15 +18,21 @@
 
 namespace arc {
 
-// Kernel-facing handle bundle (trivially copyable; no ownership).
+// Kernel-facing handle bundle (trivially copyable; no ownership). In Darwin mode
+// (Ex,Ey,Ez) hold the TOTAL electric field E_total = E_L + E_T that the push
+// gathers; B{x,y,z} is the magnetic field. ES mode uses only Ex,Ey.
 struct FieldViews {
-    DeviceView<float> Ex, Ey;
-    // Darwin later: Ez, Bx, By, Bz
+    DeviceView<float> Ex, Ey, Ez;     // ES: Ex,Ey. Darwin: E_total components.
+    DeviceView<float> Bx, By, Bz;     // Darwin magnetic field
 };
 
 struct Fields {
     DeviceArray<float> Ex, Ey;
-    // Darwin later: Ez, Bx, By, Bz
+    // Darwin (allocated only by allocate_em):
+    DeviceArray<float> Ez, Bx, By, Bz;
+    DeviceArray<float> ELx, ELy;        // longitudinal E_L (kept to re-form E_total each ndc)
+    DeviceArray<float> ETx, ETy, ETz;   // retained transverse E_T (carried across steps)
+    bool em = false;
 
     Fields() = default;
     explicit Fields(const Grid& g) : Ex(g.real_size()), Ey(g.real_size()) {}
@@ -36,6 +42,18 @@ struct Fields {
         Ey = DeviceArray<float>(g.real_size());
     }
 
+    // Darwin extra fields. E_T arrays are zeroed (the ndc iteration starts from
+    // the retained E_T; at t=0 it is 0).
+    void allocate_em(const Grid& g, cudaStream_t stream = nullptr) {
+        const int n = g.real_size();
+        Ez = DeviceArray<float>(n);
+        Bx = DeviceArray<float>(n); By = DeviceArray<float>(n); Bz = DeviceArray<float>(n);
+        ELx = DeviceArray<float>(n); ELy = DeviceArray<float>(n);
+        ETx = DeviceArray<float>(n); ETy = DeviceArray<float>(n); ETz = DeviceArray<float>(n);
+        ETx.zero(stream); ETy.zero(stream); ETz.zero(stream);
+        em = true;
+    }
+
     // Optional: clear before a solve (the solver overwrites E, so not required
     // every step, but handy for init / tests).
     void zero(cudaStream_t stream = nullptr) {
@@ -43,7 +61,15 @@ struct Fields {
         Ey.zero(stream);
     }
 
-    FieldViews views() { return FieldViews{ Ex.view(), Ey.view() }; }
+    FieldViews views() {
+        FieldViews v;
+        v.Ex = Ex.view(); v.Ey = Ey.view();
+        if (em) {
+            v.Ez = Ez.view();
+            v.Bx = Bx.view(); v.By = By.view(); v.Bz = Bz.view();
+        }
+        return v;
+    }
 };
 
 } // namespace arc

@@ -37,12 +37,27 @@ struct SpectralWorkspace {
     DeviceArray<cufftComplex> rho_k;
     DeviceArray<cufftComplex> phi_k;
     DeviceArray<cufftComplex> Ex_k, Ey_k;
-    // Darwin later: jx_k.., bx_k..
+    // Darwin k-space (allocated only by allocate_em): current, magnetic field,
+    // transverse E, and the dcu/amu transforms used to build E_T.
+    DeviceArray<cufftComplex> Jx_k, Jy_k, Jz_k;
+    DeviceArray<cufftComplex> Bx_k, By_k, Bz_k;
+    DeviceArray<cufftComplex> ETx_k, ETy_k, ETz_k;
+    DeviceArray<cufftComplex> dcux_k, dcuy_k, dcuz_k;
+    DeviceArray<cufftComplex> amu0_k, amu1_k, amu2_k, amu3_k;
 
     SpectralWorkspace() = default;
     explicit SpectralWorkspace(int complex_size)
         : rho_k(complex_size), phi_k(complex_size),
           Ex_k(complex_size), Ey_k(complex_size) {}
+
+    void allocate_em(int nk) {
+        Jx_k = DeviceArray<cufftComplex>(nk); Jy_k = DeviceArray<cufftComplex>(nk); Jz_k = DeviceArray<cufftComplex>(nk);
+        Bx_k = DeviceArray<cufftComplex>(nk); By_k = DeviceArray<cufftComplex>(nk); Bz_k = DeviceArray<cufftComplex>(nk);
+        ETx_k = DeviceArray<cufftComplex>(nk); ETy_k = DeviceArray<cufftComplex>(nk); ETz_k = DeviceArray<cufftComplex>(nk);
+        dcux_k = DeviceArray<cufftComplex>(nk); dcuy_k = DeviceArray<cufftComplex>(nk); dcuz_k = DeviceArray<cufftComplex>(nk);
+        amu0_k = DeviceArray<cufftComplex>(nk); amu1_k = DeviceArray<cufftComplex>(nk);
+        amu2_k = DeviceArray<cufftComplex>(nk); amu3_k = DeviceArray<cufftComplex>(nk);
+    }
 };
 
 // ---- Green's function + shape smoothing (one place) -----------------------
@@ -52,11 +67,27 @@ struct SpectralWorkspace {
 // caller never divides by zero (the k=0 mode is set to 0 anyway, design §7.2).
 struct SpectralFormFactor {
     double eps0 = 1.0;
+    double c    = 1.0;   // speed of light (Darwin); μ₀ = 1/(eps0 c²)
+    double n0   = 1.0;   // background density → ω_pe² (= n0 q²/ε₀m = n0 here)
 
     __host__ __device__ double smoothing(double /*k2*/) const { return 1.0; }
 
+    // Poisson Green's function 1/(eps0 k²) (UPIC ffc). DC → 0.
     __host__ __device__ double green(double k2) const {
         return k2 > 0.0 ? 1.0 / (eps0 * k2) : 0.0;
+    }
+
+    // Darwin magnetic Green's function μ₀/k² (B_k = i μ₀ (k×J)/k²). DC → 0.
+    __host__ __device__ double green_t(double k2) const {
+        return k2 > 0.0 ? 1.0 / (eps0 * c * c * k2) : 0.0;
+    }
+
+    // Darwin transverse-E Green's function (UPIC ffe): E_T_k = -green_et·(∂J/∂t)_T
+    // where ∂J/∂t EXCLUDES the (q/m)ρE_T self-term — that term is RESUMMED into the
+    // denominator: green_et = μ₀/(k² + μ₀ω_pe²) = 1/(ε₀c²k² + n0). Bounded by 1/n0,
+    // so the solve is stable (the naive μ₀/k² diverges at low k). DC → 0.
+    __host__ __device__ double green_et(double k2) const {
+        return k2 > 0.0 ? 1.0 / (eps0 * c * c * k2 + n0) : 0.0;
     }
 };
 
@@ -99,6 +130,9 @@ public:
         detail::scale_inplace_kernel<float><<<blocks, threads, 0, s>>>(out, n, scale);
         CUDA_CHECK(cudaPeekAtLastError());
     }
+
+    // Allocate the Darwin k-space buffers (call once for FieldModel::Darwin).
+    void enable_em() { ws_.allocate_em(kgrid_.complex_size()); }
 
     SpectralWorkspace&       ws()       { return ws_; }
     const SpectralWorkspace& ws() const { return ws_; }

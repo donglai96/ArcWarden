@@ -37,6 +37,7 @@
 #include "pic/species.hpp"
 
 #include <cstddef>
+#include <utility>   // std::swap (chunk-pool sort buffer swap)
 
 namespace arc {
 
@@ -47,7 +48,132 @@ struct ParticleViews {
     int n = 0;
 };
 
+// Per-tile particle binning (coarse counting sort) — the index structure the
+// TiledBinnedDeposit kernel consumes. `idx` lists particle indices ordered by
+// tile; tile `t` owns the slice [off[t], off[t+1]). Geometry (tx,ty,ntx,ntiles)
+// is carried so the deposit kernel maps tile id -> origin without a Grid divide.
+struct BinViews {
+    DeviceView<int> off;     // ntiles+1 prefix offsets (off[0]=0, off[ntiles]=n)
+    DeviceView<int> idx;     // n particle indices, grouped by tile
+    int ntiles = 0;
+    int ntx    = 0;          // tiles along x = ceil(nx/tx)
+    int tx = 0, ty = 0;      // tile size in cells
+};
+
 namespace detail {
+
+// tile id from a flat cell index (cell = gj*nx + gi).
+__host__ __device__ inline int tile_of(int cell, int nx, int tx, int ty, int ntx) {
+    const int gi = cell % nx, gj = cell / nx;
+    return (gj / ty) * ntx + (gi / tx);
+}
+
+// Pass 1 of the counting sort: histogram particles into per-tile counts.
+// Privatized: each (grid-stride) block tallies its particles into a shared
+// per-tile histogram (ntiles ints), then flushes once per tile to global. This
+// is essential — a direct global atomicAdd into the small count[] array funnels
+// all N particles onto ntiles addresses and serializes catastrophically.
+template<class Dummy = void>
+__global__ void bin_histogram_kernel(ParticleViews p, DeviceView<int> count,
+                                     int nx, int tx, int ty, int ntx, int ntiles) {
+    extern __shared__ int s_cnt[];
+    for (int c = threadIdx.x; c < ntiles; c += blockDim.x) s_cnt[c] = 0;
+    __syncthreads();
+    const int step = blockDim.x * gridDim.x;
+    for (int t = blockIdx.x * blockDim.x + threadIdx.x; t < p.n; t += step)
+        atomicAdd(&s_cnt[tile_of(p.cell[t], nx, tx, ty, ntx)], 1);
+    __syncthreads();
+    for (int c = threadIdx.x; c < ntiles; c += blockDim.x)
+        if (s_cnt[c]) atomicAdd(&count[c], s_cnt[c]);
+}
+
+// Pass 2: single-block exclusive scan of count[ntiles] -> off[ntiles+1]
+// (off[ntiles]=n). Chunked with a carried prefix so any ntiles is handled.
+// Also seeds cursor=off for the scatter pass. Launch <<<1, blockDim>>>.
+template<class Dummy = void>
+__global__ void bin_scan_kernel(DeviceView<int> count, DeviceView<int> off,
+                                DeviceView<int> cursor, int ntiles, int n) {
+    extern __shared__ int s[];
+    int carry = 0;
+    for (int base = 0; base < ntiles; base += blockDim.x) {
+        const int i = base + threadIdx.x;
+        const int v = (i < ntiles) ? count[i] : 0;
+        s[threadIdx.x] = v;
+        __syncthreads();
+        // Hillis-Steele inclusive scan within the chunk.
+        for (int d = 1; d < blockDim.x; d <<= 1) {
+            const int add = (threadIdx.x >= d) ? s[threadIdx.x - d] : 0;
+            __syncthreads();
+            s[threadIdx.x] += add;
+            __syncthreads();
+        }
+        if (i < ntiles) {
+            const int excl = carry + s[threadIdx.x] - v;   // exclusive prefix
+            off[i]    = excl;
+            cursor[i] = excl;
+        }
+        carry += s[blockDim.x - 1];                          // chunk total
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) off[ntiles] = n;
+}
+
+// Pass 3: scatter each particle into its tile's slice. Privatized the same way
+// as the histogram (a global cursor would re-serialize on ntiles addresses):
+//   (A) tally this block's per-tile counts in shared,
+//   (B) reserve a contiguous global range per tile (one atomicAdd on cursor),
+//   (C) re-walk the SAME particles, handing out slots from the reserved base
+//       (shared atomic). The two walks must enumerate identical particles, so the
+//       grid-stride mapping is fixed. Order within a tile is irrelevant to deposit.
+template<class Dummy = void>
+__global__ void bin_scatter_kernel(ParticleViews p, DeviceView<int> cursor,
+                                   DeviceView<int> idx, int nx, int tx, int ty,
+                                   int ntx, int ntiles) {
+    extern __shared__ int s_cnt[];      // (A) local counts, then (B) reserved base
+    for (int c = threadIdx.x; c < ntiles; c += blockDim.x) s_cnt[c] = 0;
+    __syncthreads();
+    const int start = blockIdx.x * blockDim.x + threadIdx.x;
+    const int step  = blockDim.x * gridDim.x;
+    for (int t = start; t < p.n; t += step)
+        atomicAdd(&s_cnt[tile_of(p.cell[t], nx, tx, ty, ntx)], 1);
+    __syncthreads();
+    for (int c = threadIdx.x; c < ntiles; c += blockDim.x)
+        if (s_cnt[c]) s_cnt[c] = atomicAdd(&cursor[c], s_cnt[c]);   // base of our run
+    __syncthreads();
+    for (int t = start; t < p.n; t += step)
+        idx[atomicAdd(&s_cnt[tile_of(p.cell[t], nx, tx, ty, ntx)], 1)] = t;
+}
+
+// Physical chunk-pool sort scatter: same privatized counting-sort as above, but
+// instead of recording a permutation it MOVES the whole SoA into tile order
+// (out arrays). After this the particles of tile `t` occupy the contiguous range
+// [off[t], off[t+1]), so the deposit/push read them with COALESCED loads (no
+// bin_idx indirection — the penalty that made the ES shared-field gather lose).
+// Tile-granularity (coarse) → unlike the removed cell-sort it does not pile up
+// same-cell atomics (those go to shared in the tiled kernels).
+template<class Dummy = void>
+__global__ void tile_sort_scatter_kernel(ParticleViews p, DeviceView<int> cursor,
+                                         float* xo, float* yo, float* uxo, float* uyo,
+                                         float* uzo, float* wo, int* cello,
+                                         int nx, int tx, int ty, int ntx, int ntiles) {
+    extern __shared__ int s_cnt[];
+    for (int c = threadIdx.x; c < ntiles; c += blockDim.x) s_cnt[c] = 0;
+    __syncthreads();
+    const int start = blockIdx.x * blockDim.x + threadIdx.x;
+    const int step  = blockDim.x * gridDim.x;
+    for (int t = start; t < p.n; t += step)
+        atomicAdd(&s_cnt[tile_of(p.cell[t], nx, tx, ty, ntx)], 1);
+    __syncthreads();
+    for (int c = threadIdx.x; c < ntiles; c += blockDim.x)
+        if (s_cnt[c]) s_cnt[c] = atomicAdd(&cursor[c], s_cnt[c]);
+    __syncthreads();
+    for (int t = start; t < p.n; t += step) {
+        const int slot = atomicAdd(&s_cnt[tile_of(p.cell[t], nx, tx, ty, ntx)], 1);
+        xo[slot]  = p.x[t];  yo[slot]  = p.y[t];
+        uxo[slot] = p.ux[t]; uyo[slot] = p.uy[t]; uzo[slot] = p.uz[t];
+        wo[slot]  = p.w[t];  cello[slot] = p.cell[t];
+    }
+}
 
 // Radical inverse (van der Corput) of i in the given base, in (0,1). The basis
 // of the quiet (low-discrepancy) load: smooth, reproducible, far less noisy than
@@ -235,6 +361,17 @@ struct Particles {
     DeviceArray<int>   cell;        // owning cell index
     std::size_t        n = 0;
 
+    // Tile-binning scratch (allocated lazily by build_tile_bins; only the
+    // TiledBinnedDeposit path uses these). bin_idx is sized to n; the per-tile
+    // arrays to ntiles. Geometry of the last build is cached to skip re-sizing.
+    DeviceArray<int> bin_count, bin_off, bin_cursor, bin_idx;
+    int bin_ntiles = 0, bin_ntx = 0, bin_tx = 0, bin_ty = 0;
+    bool sorted = false;   // true after sort_by_tile (particles physically tile-ordered)
+
+    // Double-buffer scratch for the physical chunk-pool sort (allocated lazily).
+    DeviceArray<float> x2, y2, ux2, uy2, uz2, w2;
+    DeviceArray<int>   cell2;
+
     Particles() = default;
 
     // Allocate for n_total particles (caller sets the count).
@@ -309,6 +446,105 @@ struct Particles {
         const int blocks = (static_cast<int>(n) + threads - 1) / threads;
         detail::particle_migrate_kernel<><<<blocks, threads, 0, s>>>(views(), g);
         CUDA_CHECK(cudaPeekAtLastError());
+    }
+
+    BinViews bins() {
+        return BinViews{ bin_off.view(), bin_idx.view(),
+                         bin_ntiles, bin_ntx, bin_tx, bin_ty };
+    }
+
+    // Build the per-tile particle binning (coarse counting sort) the
+    // TiledBinnedDeposit kernel consumes. Reads the current cell[] (set by
+    // initialize/migrate), so it must run after positions are settled and before
+    // deposit. Re-allocates only when the tile geometry or particle count changes.
+    void build_tile_bins(const Grid& g, int tx, int ty, cudaStream_t s) {
+        if (n == 0) return;
+        const int ntx    = (g.nx + tx - 1) / tx;
+        const int nty    = (g.ny + ty - 1) / ty;
+        const int ntiles = ntx * nty;
+        if (ntiles != bin_ntiles || bin_idx.size() != n) {
+            bin_count  = DeviceArray<int>(static_cast<std::size_t>(ntiles));
+            bin_off    = DeviceArray<int>(static_cast<std::size_t>(ntiles) + 1);
+            bin_cursor = DeviceArray<int>(static_cast<std::size_t>(ntiles));
+            bin_idx    = DeviceArray<int>(n);
+        }
+        bin_ntiles = ntiles; bin_ntx = ntx; bin_tx = tx; bin_ty = ty;
+
+        bin_count.zero(s);
+        constexpr int threads = 256;
+        // Grid-stride with a capped block count so each block aggregates many
+        // particles into its shared histogram (fewer blocks -> fewer global flush
+        // atomics). ~4 blocks/SM fills the GPU without over-flushing.
+        static const int sm = [] { int v = 0;
+            cudaDeviceGetAttribute(&v, cudaDevAttrMultiProcessorCount, 0); return v; }();
+        const int maxb = (static_cast<int>(n) + threads - 1) / threads;
+        const int blocks = (maxb < 4 * sm) ? maxb : 4 * sm;
+        const std::size_t shbytes = static_cast<std::size_t>(ntiles) * sizeof(int);
+
+        detail::bin_histogram_kernel<><<<blocks, threads, shbytes, s>>>(
+            views(), bin_count.view(), g.nx, tx, ty, ntx, ntiles);
+        CUDA_CHECK(cudaPeekAtLastError());
+
+        // single-block chunked scan (counts -> offsets, seeds cursor)
+        constexpr int scan_threads = 1024;
+        detail::bin_scan_kernel<><<<1, scan_threads, scan_threads * sizeof(int), s>>>(
+            bin_count.view(), bin_off.view(), bin_cursor.view(),
+            ntiles, static_cast<int>(n));
+        CUDA_CHECK(cudaPeekAtLastError());
+
+        detail::bin_scatter_kernel<><<<blocks, threads, shbytes, s>>>(
+            views(), bin_cursor.view(), bin_idx.view(), g.nx, tx, ty, ntx, ntiles);
+        CUDA_CHECK(cudaPeekAtLastError());
+        sorted = false;   // index permutation only; SoA still in original order
+    }
+
+    // Physical chunk-pool sort (Phase D): reorder the whole SoA into tile order so
+    // the tiled deposit/push read particles with coalesced loads. Produces bin_off
+    // (tile offsets); bin_idx is unused on this path (particles ARE in tile order,
+    // so kernels read by k directly). Same histogram+scan as build_tile_bins, then
+    // the array-moving scatter + a buffer swap.
+    void sort_by_tile(const Grid& g, int tx, int ty, cudaStream_t s) {
+        if (n == 0) return;
+        const int ntx    = (g.nx + tx - 1) / tx;
+        const int nty    = (g.ny + ty - 1) / ty;
+        const int ntiles = ntx * nty;
+        if (ntiles != bin_ntiles || bin_off.size() != static_cast<std::size_t>(ntiles) + 1) {
+            bin_count  = DeviceArray<int>(static_cast<std::size_t>(ntiles));
+            bin_off    = DeviceArray<int>(static_cast<std::size_t>(ntiles) + 1);
+            bin_cursor = DeviceArray<int>(static_cast<std::size_t>(ntiles));
+        }
+        if (x2.size() != n) {
+            x2 = DeviceArray<float>(n); y2 = DeviceArray<float>(n);
+            ux2 = DeviceArray<float>(n); uy2 = DeviceArray<float>(n); uz2 = DeviceArray<float>(n);
+            w2 = DeviceArray<float>(n); cell2 = DeviceArray<int>(n);
+        }
+        bin_ntiles = ntiles; bin_ntx = ntx; bin_tx = tx; bin_ty = ty;
+
+        bin_count.zero(s);
+        constexpr int threads = 256;
+        static const int sm = [] { int v = 0;
+            cudaDeviceGetAttribute(&v, cudaDevAttrMultiProcessorCount, 0); return v; }();
+        const int maxb = (static_cast<int>(n) + threads - 1) / threads;
+        const int blocks = (maxb < 4 * sm) ? maxb : 4 * sm;
+        const std::size_t shbytes = static_cast<std::size_t>(ntiles) * sizeof(int);
+
+        detail::bin_histogram_kernel<><<<blocks, threads, shbytes, s>>>(
+            views(), bin_count.view(), g.nx, tx, ty, ntx, ntiles);
+        CUDA_CHECK(cudaPeekAtLastError());
+        constexpr int scan_threads = 1024;
+        detail::bin_scan_kernel<><<<1, scan_threads, scan_threads * sizeof(int), s>>>(
+            bin_count.view(), bin_off.view(), bin_cursor.view(), ntiles, static_cast<int>(n));
+        CUDA_CHECK(cudaPeekAtLastError());
+        detail::tile_sort_scatter_kernel<><<<blocks, threads, shbytes, s>>>(
+            views(), bin_cursor.view(),
+            x2.data(), y2.data(), ux2.data(), uy2.data(), uz2.data(), w2.data(), cell2.data(),
+            g.nx, tx, ty, ntx, ntiles);
+        CUDA_CHECK(cudaPeekAtLastError());
+
+        std::swap(x, x2);   std::swap(y, y2);
+        std::swap(ux, ux2); std::swap(uy, uy2); std::swap(uz, uz2);
+        std::swap(w, w2);   std::swap(cell, cell2);
+        sorted = true;
     }
 };
 

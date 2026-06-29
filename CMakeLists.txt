@@ -58,6 +58,10 @@ target_include_directories(run_deck PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(run_deck PRIVATE CUDA::cudart CUDA::cufft)
 
 # ---- deposit microbenchmark (atomic-global vs shared-tile) ----
+add_executable(whistler_pump tools/whistler_pump.cu)
+target_include_directories(whistler_pump PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(whistler_pump PRIVATE CUDA::cudart CUDA::cufft)
+
 add_executable(deposit_bench tools/deposit_bench.cu)
 target_include_directories(deposit_bench PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(deposit_bench PRIVATE CUDA::cudart CUDA::cufft)
@@ -119,3 +123,15 @@ add_executable(test_conservation_longrun tests/test_conservation_longrun.cu)
 target_include_directories(test_conservation_longrun PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_conservation_longrun PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME conservation_longrun COMMAND test_conservation_longrun)
+
+# Darwin GATE 1: magnetostatic B-solve (J -> B) + current deposit.
+add_executable(test_darwin_magnetostatic tests/test_darwin_magnetostatic.cu)
+target_include_directories(test_darwin_magnetostatic PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
+
+# Darwin GATE 2: Weibel/filamentation instability (full Darwin loop incl. E_T).
+add_executable(test_weibel tests/test_weibel.cu)
+target_include_directories(test_weibel PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_weibel PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME weibel COMMAND test_weibel)
