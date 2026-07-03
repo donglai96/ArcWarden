@@ -25,9 +25,20 @@ and main loop, selected at compile time:
   dropped, so there is no light-wave CFL and the FFT solver remains the engine). Validated on
   a magnetostatic current sheet and the **Weibel instability** growth rate.
 
-It reproduces Simulation 1 of An et al., *"Unified view of nonlinear wave structures
-associated with whistler-mode chorus"* (PRL/arXiv:1901.00953) — an external whistler pump
-field Landau-traps tail electrons and excites Langmuir waves.
+It reproduces **all three simulations** of An et al., *"Unified view of nonlinear wave
+structures associated with whistler-mode chorus"* (PRL/arXiv:1901.00953). An external
+whistler pump Landau-traps electrons at `v_r = ω0/k_∥`; the ratio `v_r/v_th` (set by the
+electron temperature, per their ref [37]: fix `v_r ≈ 0.04c`, vary `v_th`) selects the
+nonlinear structure that grows:
+
+| Sim | `v_r/v_th` | trapped population | nonlinear structure |
+|-----|-----------|--------------------|---------------------|
+| 1   | 3.2       | distribution tail  | beam-mode **Langmuir** waves |
+| 2   | 2.1       | mid-distribution   | electron-acoustic + **unipolar** (double layer) |
+| 3   | 1.0       | thermal core       | phase-space holes + **bipolar** fields |
+
+All three drive the whistler to `δB ≲ 0.1 B0` at 30° and match the paper's phase-space
+portraits, ω–k dispersion, and k–t spectra (`./build/whistler_pump {1,2,3}`).
 
 ## Features
 
@@ -67,9 +78,12 @@ Run a physics setup from a text deck (electrostatic by default, `--em` for Darwi
 Standalone experiments / benchmarks:
 
 ```bash
-./build/deposit_bench 256 256 64          # deposit + push microbenchmark across grids
-./build/whistler_pump 65536 7500 4096 1 6 # An et al. (2019) Simulation 1
-python3 scripts/plot_whistler_kt.py       # k-t spectrum, etc.
+./build/deposit_bench 256 256 64            # deposit + push microbenchmark across grids
+./build/whistler_pump 2 100000              # An et al. (2019) Sim {1,2,3} [ppc nsteps amp]
+python3 scripts/plot_whistler_snap.py --sim 2 --df   # fields + phase space (+ δf holes/beams)
+python3 scripts/plot_whistler_kt.py --sim 2          # k-t spectrum
+python3 scripts/plot_whistler_dispersion.py --sim 2  # ω-k dispersion
+python3 scripts/plot_whistler_video.py --sim 2       # time-evolution mp4
 ```
 
 ## Physics / numerics

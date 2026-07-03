@@ -17,24 +17,29 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
 ap = argparse.ArgumentParser()
+ap.add_argument("--sim", type=int, default=2)
 ap.add_argument("--fps", type=int, default=15)
-ap.add_argument("--outdir", default="whistler_vid")
+ap.add_argument("--outdir", default=None)
 args = ap.parse_args()
+pref = f"whistler_s{args.sim}_"
+outdir = args.outdir or f"whistler_s{args.sim}_vid"
+TAG = {1: "v_r/v_th=3.2 Langmuir", 2: "v_r/v_th=2.1 unipolar",
+       3: "v_r/v_th=1.0 bipolar"}.get(args.sim, "")
 
-m = dict(l.split() for l in open("whistler_vid.meta"))
+m = dict(l.split() for l in open(pref + "vid.meta"))
 nframe = int(m["nframe"]); nxb, nvb = int(m["nxb"]), int(m["nvb"])
 nx = int(m["nx"]); Lx = float(m["Lx"]); vlo, vhi = float(m["vlo"]), float(m["vhi"])
 toff = float(m["toff"]); dtf = float(m["dt_frame"]); vr = float(m["vr"])
 
-phase = np.fromfile("whistler_vid_phase.bin", dtype=np.float32).reshape(nframe, nvb, nxb)
-field = np.fromfile("whistler_vid_field.bin", dtype=np.float32).reshape(nframe, 3, nx)
+phase = np.fromfile(pref + "vid_phase.bin", dtype=np.float32).reshape(nframe, nvb, nxb)
+field = np.fromfile(pref + "vid_field.bin", dtype=np.float32).reshape(nframe, 3, nx)
 xf = np.linspace(0, Lx, nx)
 
 # fixed scales across frames
 pmax = phase.max()
 emax = np.abs(field[:, :2, :]).max() * 1.05
 
-imgdir = os.path.join(args.outdir, "img")
+imgdir = os.path.join(outdir, "img")
 os.makedirs(imgdir, exist_ok=True)
 for k in range(nframe):
     t = k * dtf
@@ -49,7 +54,8 @@ for k in range(nframe):
     a0.set_ylim(-emax, emax); a0.set_ylabel(r"$\delta E$"); a0.grid(alpha=.2)
     a0.legend(loc="upper right", fontsize=8, ncol=2)
     pump = "PUMP ON" if t < toff else "pump off"
-    a0.set_title(f"ArcWarden whistler-pump Sim 1   t = {t:6.1f} $\\omega_{{pe}}^{{-1}}$   [{pump}]")
+    a0.set_title(f"ArcWarden whistler-pump Sim {args.sim} ({TAG})   "
+                 f"t = {t:6.1f} $\\omega_{{pe}}^{{-1}}$   [{pump}]")
     plt.setp(a0.get_xticklabels(), visible=False)
 
     im = a1.imshow(phase[k], origin="lower", extent=[0, Lx, vlo, vhi], aspect="auto",
@@ -61,7 +67,7 @@ for k in range(nframe):
     plt.close(fig)
     if k % 20 == 0: print(f"frame {k}/{nframe}")
 
-mp4 = os.path.join(args.outdir, "whistler_sim1.mp4")
+mp4 = os.path.join(outdir, f"whistler_s{args.sim}.mp4")
 ff = shutil.which("ffmpeg")
 if ff:
     cmd = [ff, "-y", "-framerate", str(args.fps), "-i", os.path.join(imgdir, "f%04d.png"),
