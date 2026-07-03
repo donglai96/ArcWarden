@@ -62,28 +62,34 @@ static double mode_power(const std::vector<float>& ex, int nx, int m) {
 }
 
 // Per-simulation configuration (An et al. 2019, Table I + Figs 2/3/5).
+//
+// Paper normalization: v_th = 1 (λ_D = 1), Δx = 2 λ_D. Only Δx·ω_pe/c (→ the speed of
+// light c = Δx/dxwc) and the box change between sims. (nx, M, Δx·ω_pe/c, ω0) are the
+// paper's own mutually-consistent values — ω0 already sits on the whistler dispersion,
+// so NO dispersion solve is needed here. v_r/v_th = ω0/(k0 cosθ) comes out of them.
 struct SimCfg {
-    int    nx;        // grid points (chosen FFT-friendly)
-    double vth;       // electron thermal velocity = λ_D  (Δx = 2 v_th)
+    int    nx;        // grid points  (Table I, Nx)
     int    M;         // whistler mode number (wavelengths in the box)
-    double toff;      // pump turn-off time  [ω_pe^-1]
+    double dxwc;      // Δx·ω_pe/c  → c = Δx/dxwc  (per-sim; sets v_r/c ≈ 0.04)
+    double w0;        // pump frequency ω0 [ω_pe]  (Table I, on the dispersion)
+    double ex0;       // pump amplitude Ẽx0 (Table I); Ẽy0=1.81i, Ẽz0=−1.81 for all sims
+    double toff;      // pump turn-off time  [ω_pe^-1]  (Table I)
     double tsnap;     // snapshot time for the paper field+phase figure
-    int    nsteps;    // default step count
-    double amp;       // default pump amplitude scale (tuned to δB/B0 ~ 0.1)
+    int    nsteps;    // default step count  (tend = 4000 → 20000 steps at dt=0.2)
+    double amp;       // pump amplitude scale on top of Table I (tuned to δB/B0 ~ 0.1)
     int    band_lo;   // diagnostic mode band (nonlinear structure) lo..hi
     int    band_hi;
     const char* tag;  // one-line description
 };
 
 static SimCfg make_cfg(int sim) {
-    // c is fixed (speed of light): c = Δx_ref/0.0267 with Δx_ref = 2 (Sim 1). All
-    // sims share it, so v_r ≈ 0.04c is ~constant and only v_th varies (ref [37]).
+    // Values are An et al. (2019) Table I verbatim: {Nx, M, Δx·ω_pe/c, ω0, Ẽx0, t_off}.
     switch (sim) {
-        case 2:  return { 2304, 0.0, 7, 750.0, 2500.0, 20000, 6.0,  20, 250,
+        case 2:  return { 2048, 7, 0.04, 0.0194, 1.35, 750.0, 2500.0, 20000, 6.0, 20, 250,
                           "v_r/v_th=2.1  electron-acoustic + UNIPOLAR (double layer)" };
-        case 3:  return { 1152, 0.0, 7, 500.0, 1200.0, 18000, 6.0,  20, 100,
+        case 3:  return { 1024, 7, 0.08, 0.0194, 1.35, 500.0, 1200.0, 20000, 5.0, 20, 100,
                           "v_r/v_th=1.0  phase-space holes + BIPOLAR fields" };
-        default: return { 4096, 1.0, 10, 1100.0, 1540.0, 6000, 6.0, 300, 400,
+        default: return { 4096, 10, 0.0267, 0.0215, 1.39, 1100.0, 1540.0, 20000, 6.0, 300, 400,
                           "v_r/v_th=3.2  tail trapping -> LANGMUIR waves" };
     }
 }
@@ -100,18 +106,13 @@ int main(int argc, char** argv) {
     const double TwoPi = 6.28318530717958648;
     const double theta = TwoPi / 12.0;                  // 30°
     const double cost = std::cos(theta), sint = std::sin(theta);
-    const double c0   = 2.0 / 0.0267;                   // fixed speed of light ≈ 74.9
-
-    // v_th: for Sim 1 given directly (=1); for Sim 2/3 set by target R=v_r/v_th via
-    // the cold oblique-whistler dispersion  v_r = k0 c² ω_ce/(1+k0²c²),  k0 = πM/(nx·v_th).
     const double wce = 0.1;                              // ω_ce = 0.1 ω_pe
-    double vth = S.vth;
-    if (sim != 1) {
-        const double R = (sim == 2) ? 2.1 : 1.0;         // target v_r/v_th
-        const double A = M_PI * S.M / nx;                // = k0 · v_th
-        vth = c0 * std::sqrt(A * (wce / R - A));         // solves R = k0 c² ω_ce/(1+k0²c²)
-    }
-    const double dx = 2.0 * vth;                         // Δx = 2 λ_D
+
+    // Paper normalization (An et al., ref [37]): v_th = 1, Δx = 2 λ_D = 2. The speed of
+    // light is set PER SIM by Δx·ω_pe/c (c decreases with v_r so v_r/c stays ≈ 0.04).
+    const double vth = 1.0;
+    const double dx  = 2.0;                              // Δx = 2 λ_D
+    const double c0  = dx / S.dxwc;                      // c from Δx·ω_pe/c
     Grid g(nx, ny, nx * dx, ny * dx);
     const double Lx = nx * dx;
 
@@ -120,13 +121,12 @@ int main(int argc, char** argv) {
     rp.ndc = 2; rp.noisy_load = true; rp.rng_seed = 20260628UL; rp.dump_every = (1L << 30);
     // background B0 at 30° in x-z plane, |B0| = ω_ce (|qm|=1)
     rp.B0[0] = (float)(wce * cost); rp.B0[1] = 0.0f; rp.B0[2] = (float)(wce * sint);
-    // whistler pump: k0 from geometry, ω0 from cold oblique-whistler dispersion
+    // whistler pump: k0 from geometry, ω0 taken directly from the paper (on the dispersion)
     const double k0   = TwoPi * S.M / Lx;
-    const double k2c2 = k0 * k0 * c0 * c0;
-    const double w0   = (sim == 1) ? 0.0215 : k2c2 * wce * cost / (1.0 + k2c2);
+    const double w0   = S.w0;
     const double conv = amp * dx / 1e4;                  // Ẽ_α0 = 1e4·E_α0/(ω_pe²·Δx)
     rp.pump = true;
-    rp.pump_ex = 1.39 * conv; rp.pump_ey = 1.81 * conv; rp.pump_ez = -1.81 * conv;
+    rp.pump_ex = S.ex0 * conv; rp.pump_ey = 1.81 * conv; rp.pump_ez = -1.81 * conv;
     rp.pump_k0 = k0; rp.pump_w0 = w0;
     rp.pump_trmp = 62.83; rp.pump_toff = S.toff;
 
