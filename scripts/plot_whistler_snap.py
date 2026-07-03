@@ -18,12 +18,13 @@ from matplotlib.colors import LogNorm
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--sim", type=int, default=2)
+ap.add_argument("--prefix", default=None, help="output-file prefix (e.g. an2019_sim2_)")
 ap.add_argument("--out", default=None)
 ap.add_argument("--df", action="store_true",
                 help="add a signed-log perturbed density panel δf=f-<f>_x (reveals holes/beams)")
 args = ap.parse_args()
-pref = f"whistler_s{args.sim}_"
-out = args.out or f"whistler_s{args.sim}_snap.png"
+pref = args.prefix or f"whistler_s{args.sim}_"
+out = args.out or f"{pref}snap.png"
 
 TAG = {1: r"$v_r/v_{th}=3.2$ — Langmuir waves",
        2: r"$v_r/v_{th}=2.1$ — electron-acoustic + unipolar",

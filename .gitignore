@@ -14,6 +14,9 @@ __pycache__/
 whistler_*.bin
 whistler_*.meta
 whistler_vid/
+an2019_*.bin
+an2019_*.meta
+*_vid/
 
 # Saved session transcripts (local record only; not tracked)
 sessions/

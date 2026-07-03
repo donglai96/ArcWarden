@@ -18,6 +18,7 @@
 #include "pic/species.hpp"
 
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -32,6 +33,33 @@ struct Deck {
     SpeciesList species;
     long        dump_every = 0;          // runner frame cadence (0 = no frames)
     std::string outdir     = "deck_frames";
+
+    // ---- Darwin EM / whistler-pump extensions (physical/paper units) ----
+    // Raw inputs are captured during the parse and turned into code-unit RunParams
+    // fields in the finalize block (needs dx = Lx/nx, so it runs after [grid]).
+    bool   darwin    = false;            // [field] model = darwin
+    double dx_wpe_c  = 0.0;              // [field] Δx·ω_pe/c  → rp.c = dx / dx_wpe_c
+    double c_direct  = 0.0;              // [field] c = <val>  (overrides dx_wpe_c)
+    double wce       = 0.0;              // [background] ω_ce
+    double theta_deg = 0.0;             // [background] B0 angle in x-z plane (deg)
+    bool   b0_direct = false;           // [background] B0 = bx by bz given verbatim
+
+    bool   pump_enable = false;         // [pump] enable
+    int    pump_M      = 0;             // [pump] mode  → rp.pump_k0 = 2πM/Lx
+    double pump_w0     = 0.0;           // [pump] w0
+    double pump_ex0    = 1.39;          // [pump] Table-I amplitudes (ey0/ez0 shared)
+    double pump_ey0    = 1.81;
+    double pump_ez0    = -1.81;
+    double pump_amp    = 1.0;           // [pump] overall scale on top of Table I
+    double pump_trmp   = 0.0;           // [pump] ramp duration
+    double pump_toff   = 0.0;           // [pump] turn-off time
+
+    // ---- whistler-tool diagnostics ----
+    double tsnap     = 0.0;             // [diagnostics] paper snapshot time
+    int    band_lo   = 0, band_hi = 0;  // [diagnostics] nonlinear-structure mode band
+    int    kt_stride = 5;               // [diagnostics] δE_L dump cadence (steps)
+    int    n_frames  = 150;            // [diagnostics] video frame count
+    std::string prefix;                 // [diagnostics] output-file prefix (default: deck stem)
 };
 
 namespace detail {
@@ -122,6 +150,33 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "ppc")     sp.ppc = static_cast<int>(iv());
             else if (key == "uth") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.uth[i]=v[i]; }
             else if (key == "ufl") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.ufl[i]=v[i]; }
+        } else if (section == "field") {
+            if      (key == "model")    d.darwin = (val == "darwin");
+            else if (key == "dx_wpe_c") d.dx_wpe_c = dv();
+            else if (key == "c")        d.c_direct = dv();
+            else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());
+        } else if (section == "background") {
+            if      (key == "wce")       { d.wce = dv(); d.rp.wce = d.wce; }
+            else if (key == "theta_deg") d.theta_deg = dv();
+            else if (key == "B0") { auto v = detail::deck_vec3(val);
+                                    for (int i=0;i<3;++i) d.rp.B0[i]=(float)v[i]; d.b0_direct = true; }
+        } else if (section == "pump") {
+            if      (key == "enable") d.pump_enable = detail::deck_bool(val);
+            else if (key == "mode")   d.pump_M = static_cast<int>(iv());
+            else if (key == "w0")     d.pump_w0 = dv();
+            else if (key == "ex0")    d.pump_ex0 = dv();
+            else if (key == "ey0")    d.pump_ey0 = dv();
+            else if (key == "ez0")    d.pump_ez0 = dv();
+            else if (key == "amp")    d.pump_amp = dv();
+            else if (key == "trmp")   d.pump_trmp = dv();
+            else if (key == "toff")   d.pump_toff = dv();
+        } else if (section == "diagnostics") {
+            if      (key == "tsnap")     d.tsnap = dv();
+            else if (key == "band_lo")   d.band_lo = static_cast<int>(iv());
+            else if (key == "band_hi")   d.band_hi = static_cast<int>(iv());
+            else if (key == "kt_stride") d.kt_stride = static_cast<int>(iv());
+            else if (key == "n_frames")  d.n_frames = static_cast<int>(iv());
+            else if (key == "prefix")    d.prefix = val;
         }
         // unknown sections/keys are ignored (forward-compatible)
     }
@@ -130,6 +185,28 @@ inline Deck load_deck(const std::string& path) {
         throw std::runtime_error("deck: [grid] nx/ny/Lx/Ly must all be set and positive");
     if (d.species.empty())
         throw std::runtime_error("deck: at least one [species ...] block is required");
+
+    // ---- finalize: turn physical/paper inputs into code-unit RunParams (needs dx) ----
+    const double dx = d.Lx / d.nx;
+    if (d.c_direct > 0.0)        d.rp.c = d.c_direct;         // direct c wins
+    else if (d.dx_wpe_c > 0.0)   d.rp.c = dx / d.dx_wpe_c;    // c from Δx·ω_pe/c
+    if (!d.b0_direct && d.wce != 0.0) {                        // B0 at θ in the x-z plane
+        const double th = d.theta_deg * 3.14159265358979323846 / 180.0;
+        d.rp.B0[0] = (float)(d.wce * std::cos(th));
+        d.rp.B0[1] = 0.0f;
+        d.rp.B0[2] = (float)(d.wce * std::sin(th));
+    }
+    if (d.pump_enable) {                                       // whistler pump (An et al. Table I)
+        const double s = d.pump_amp * dx / 1e4;               // Ẽα0 = 1e4·eEα0/(me ωpe² Δx)
+        d.rp.pump    = true;
+        d.rp.pump_k0 = 2.0 * 3.14159265358979323846 * d.pump_M / d.Lx;
+        d.rp.pump_w0 = d.pump_w0;
+        d.rp.pump_ex = d.pump_ex0 * s;
+        d.rp.pump_ey = d.pump_ey0 * s;
+        d.rp.pump_ez = d.pump_ez0 * s;
+        d.rp.pump_trmp = d.pump_trmp;
+        d.rp.pump_toff = d.pump_toff;
+    }
     return d;
 }
 

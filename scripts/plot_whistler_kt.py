@@ -16,10 +16,11 @@ from matplotlib.colors import LogNorm
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--sim", type=int, default=2)
+ap.add_argument("--prefix", default=None, help="output-file prefix (e.g. an2019_sim2_)")
 ap.add_argument("--out", default=None)
 args = ap.parse_args()
-pref = f"whistler_s{args.sim}_"
-out = args.out or f"whistler_s{args.sim}_kt.png"
+pref = args.prefix or f"whistler_s{args.sim}_"
+out = args.out or f"{pref}kt.png"
 
 m = dict(l.split() for l in open(pref + "kt.meta"))
 nx, nsamp = int(m["nx"]), int(m["nsamp"])

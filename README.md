@@ -38,7 +38,8 @@ nonlinear structure that grows:
 | 3   | 1.0       | thermal core       | phase-space holes + **bipolar** fields |
 
 All three drive the whistler to `δB ≲ 0.1 B0` at 30° and match the paper's phase-space
-portraits, ω–k dispersion, and k–t spectra (`./build/whistler_pump {1,2,3}`).
+portraits, ω–k dispersion, and k–t spectra — each driven by an input deck
+(`./build/whistler_pump decks/an2019_sim{1,2,3}.ini`).
 
 ## Features
 
@@ -68,7 +69,10 @@ ctest            # run the validation suite (12 tests)
 
 ## Usage
 
-Run a physics setup from a text deck (electrostatic by default, `--em` for Darwin):
+Physics setups are **input decks** (INI: `[grid] [time] [plasma] [species …]`, plus
+`[field] [background] [pump] [diagnostics]` for magnetized Darwin/whistler runs) — no
+recompile per experiment. Run electrostatic / generic setups with `run_deck`
+(`--em` for Darwin), and the An et al. whistler-pump reproductions with `whistler_pump`:
 
 ```bash
 ./build/run_deck decks/bump_on_tail.ini out_dir          # electrostatic
@@ -79,11 +83,11 @@ Standalone experiments / benchmarks:
 
 ```bash
 ./build/deposit_bench 256 256 64            # deposit + push microbenchmark across grids
-./build/whistler_pump 2 100000              # An et al. (2019) Sim {1,2,3} [ppc nsteps amp]
-python3 scripts/plot_whistler_snap.py --sim 2 --df   # fields + phase space (+ δf holes/beams)
-python3 scripts/plot_whistler_kt.py --sim 2          # k-t spectrum
-python3 scripts/plot_whistler_dispersion.py --sim 2  # ω-k dispersion
-python3 scripts/plot_whistler_video.py --sim 2       # time-evolution mp4
+./build/whistler_pump decks/an2019_sim2.ini [ppc] [amp] [nsteps]   # An et al. (2019) Sim 1/2/3
+python3 scripts/plot_whistler_snap.py --prefix an2019_sim2_ --df   # fields + phase space (+ δf)
+python3 scripts/plot_whistler_kt.py --prefix an2019_sim2_          # k-t spectrum
+python3 scripts/plot_whistler_dispersion.py --prefix an2019_sim2_  # ω-k dispersion
+python3 scripts/plot_whistler_video.py --prefix an2019_sim2_       # time-evolution mp4
 ```
 
 ## Physics / numerics

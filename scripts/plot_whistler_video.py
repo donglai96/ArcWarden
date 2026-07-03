@@ -18,11 +18,12 @@ from matplotlib.colors import LogNorm
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--sim", type=int, default=2)
+ap.add_argument("--prefix", default=None, help="output-file prefix (e.g. an2019_sim2_)")
 ap.add_argument("--fps", type=int, default=15)
 ap.add_argument("--outdir", default=None)
 args = ap.parse_args()
-pref = f"whistler_s{args.sim}_"
-outdir = args.outdir or f"whistler_s{args.sim}_vid"
+pref = args.prefix or f"whistler_s{args.sim}_"
+outdir = args.outdir or f"{pref}vid"
 TAG = {1: "v_r/v_th=3.2 Langmuir", 2: "v_r/v_th=2.1 unipolar",
        3: "v_r/v_th=1.0 bipolar"}.get(args.sim, "")
 
@@ -67,7 +68,7 @@ for k in range(nframe):
     plt.close(fig)
     if k % 20 == 0: print(f"frame {k}/{nframe}")
 
-mp4 = os.path.join(outdir, f"whistler_s{args.sim}.mp4")
+mp4 = os.path.join(outdir, f"{pref.rstrip('_')}.mp4")
 ff = shutil.which("ffmpeg")
 if ff:
     cmd = [ff, "-y", "-framerate", str(args.fps), "-i", os.path.join(imgdir, "f%04d.png"),
