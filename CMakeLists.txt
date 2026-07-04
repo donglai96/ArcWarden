@@ -52,6 +52,11 @@ add_executable(bump_on_tail_movie tools/bump_on_tail_movie.cu)
 target_include_directories(bump_on_tail_movie PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(bump_on_tail_movie PRIVATE CUDA::cudart CUDA::cufft CUDA::nvml)
 
+# ---- unified deck-driven runner (physics + modular diagnostics from one .ini) ----
+add_executable(arcsim tools/arcsim.cu)
+target_include_directories(arcsim PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(arcsim PRIVATE CUDA::cudart CUDA::cufft)
+
 # ---- deck-driven runner (physics from a text input deck, no recompile) ----
 add_executable(run_deck tools/run_deck.cu)
 target_include_directories(run_deck PRIVATE ${CMAKE_SOURCE_DIR}/include)

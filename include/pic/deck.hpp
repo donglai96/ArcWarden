@@ -23,6 +23,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace arc {
 
@@ -55,6 +56,7 @@ struct Deck {
     double pump_toff   = 0.0;           // [pump] turn-off time
 
     // ---- whistler-tool diagnostics ----
+    std::vector<std::string> diag_enable;  // [diagnostics] enable = <module keys...>
     double tsnap     = 0.0;             // [diagnostics] paper snapshot time
     int    band_lo   = 0, band_hi = 0;  // [diagnostics] nonlinear-structure mode band
     int    kt_stride = 5;               // [diagnostics] δE_L dump cadence (steps)
@@ -171,7 +173,9 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "trmp")   d.pump_trmp = dv();
             else if (key == "toff")   d.pump_toff = dv();
         } else if (section == "diagnostics") {
-            if      (key == "tsnap")     d.tsnap = dv();
+            if      (key == "enable") { std::istringstream is(val); std::string m;
+                                        while (is >> m) d.diag_enable.push_back(m); }
+            else if (key == "tsnap")     d.tsnap = dv();
             else if (key == "band_lo")   d.band_lo = static_cast<int>(iv());
             else if (key == "band_hi")   d.band_hi = static_cast<int>(iv());
             else if (key == "kt_stride") d.kt_stride = static_cast<int>(iv());

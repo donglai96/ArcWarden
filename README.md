@@ -69,26 +69,35 @@ ctest            # run the validation suite (12 tests)
 
 ## Usage
 
-Physics setups are **input decks** (INI: `[grid] [time] [plasma] [species …]`, plus
+Everything is an **input deck** (INI: `[grid] [time] [plasma] [species …]`, plus
 `[field] [background] [pump] [diagnostics]` for magnetized Darwin/whistler runs) — no
-recompile per experiment. Run electrostatic / generic setups with `run_deck`
-(`--em` for Darwin), and the An et al. whistler-pump reproductions with `whistler_pump`:
+recompile per experiment. **`arcsim`** is the unified runner: it picks electrostatic vs
+spectral Darwin from `[field] model`, and its outputs are a **modular, deck-selected
+diagnostics set** — `[diagnostics] enable = spectrum kt phase_video snapshot em_energy
+phase_frames`. Adding an experiment is a new `.ini`, never a new `main()`:
 
 ```bash
-./build/run_deck decks/bump_on_tail.ini out_dir          # electrostatic
-./build/run_deck decks/bump_on_tail.ini out_dir --em     # spectral Darwin
+./build/arcsim decks/an2019_sim2.ini                       # An et al. Sim 1/2/3 (Darwin whistler)
+./build/arcsim decks/two_stream.ini out_dir                # electrostatic (phase frames + energy)
+./build/arcsim decks/an2019_sim3.ini out --ppc=262144 --amp=5 --nsteps=20000   # overrides
 ```
 
-Standalone experiments / benchmarks:
+Diagnostic modules (`include/pic/diag/`): `spectrum` (mode power + δB/B0), `kt` (δE_L(x,t)),
+`phase_video` (f(x,v∥) + fields movie), `snapshot` (paper field+phase figure at `t_snap`),
+`em_energy` (E/B/E_T energies), `phase_frames` (generic (x,vx) CSV frames + manifest).
+
+Plot the whistler outputs by prefix:
 
 ```bash
-./build/deposit_bench 256 256 64            # deposit + push microbenchmark across grids
-./build/whistler_pump decks/an2019_sim2.ini [ppc] [amp] [nsteps]   # An et al. (2019) Sim 1/2/3
 python3 scripts/plot_whistler_snap.py --prefix an2019_sim2_ --df   # fields + phase space (+ δf)
 python3 scripts/plot_whistler_kt.py --prefix an2019_sim2_          # k-t spectrum
 python3 scripts/plot_whistler_dispersion.py --prefix an2019_sim2_  # ω-k dispersion
 python3 scripts/plot_whistler_video.py --prefix an2019_sim2_       # time-evolution mp4
 ```
+
+The earlier single-purpose tools `run_deck` (`--em` for Darwin) and `whistler_pump` are
+retained for reference; `arcsim` reproduces both. `deposit_bench 256 256 64` is the
+deposit/push microbenchmark.
 
 ## Physics / numerics
 
