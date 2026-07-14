@@ -10,6 +10,7 @@
 
 #include "pic/config.hpp"
 #include "pic/deck.hpp"
+#include "pic/run_meta.hpp"
 #include "pic/diag/manager.hpp"
 #include "pic/grid.hpp"
 #include "pic/simulation.hpp"
@@ -32,11 +33,14 @@ static std::string deck_stem(const std::string& path) {
     return p;
 }
 
+static std::string g_deckfile; static int g_argc = 0; static char** g_argv = nullptr;
+
 template<class Cfg>
 static int run(Deck& d, const std::string& pref, const std::string& outdir) {
     Grid g(d.nx, d.ny, d.Lx, d.Ly);
     const std::string ecsv = outdir.empty() ? "" : (outdir + "/energy.csv");
     if (!outdir.empty()) std::filesystem::create_directories(outdir);
+    if (!outdir.empty()) write_run_meta(outdir, g_deckfile, g_argc, g_argv);
     d.rp.dump_every = ecsv.empty() ? (1L << 30)
                     : (d.dump_every > 0 ? d.dump_every : (d.rp.nsteps/100 > 0 ? d.rp.nsteps/100 : 1));
 
@@ -53,12 +57,14 @@ static int run(Deck& d, const std::string& pref, const std::string& outdir) {
 }
 
 int main(int argc, char** argv) {
+    g_argc = argc; g_argv = argv;
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     if (argc < 2) {
         std::fprintf(stderr, "usage: %s <deck.ini> [outdir] [--em] [--ppc=N] [--amp=X] [--nsteps=N]\n", argv[0]);
         return 2;
     }
     const std::string deckfile = argv[1];
+    g_deckfile = deckfile;
     std::string outdir;
     bool em = false; int ppc = 0; double amp = 0; long nsteps = 0;
     for (int i = 2; i < argc; ++i) {

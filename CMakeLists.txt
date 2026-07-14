@@ -140,6 +140,18 @@ target_include_directories(test_darwin_magnetostatic PRIVATE ${CMAKE_SOURCE_DIR}
 target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
 
+# L-shell M0: checkpoint format round-trip.
+add_executable(test_checkpoint_format tests/test_checkpoint_format.cu)
+target_include_directories(test_checkpoint_format PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_checkpoint_format PRIVATE CUDA::cudart)
+add_test(NAME checkpoint_format COMMAND test_checkpoint_format)
+
+# L-shell M0 gate: magnetized Boris (ExB drift, drift-frame mu, oblique B0).
+add_executable(test_magnetized_boris tests/test_magnetized_boris.cu)
+target_include_directories(test_magnetized_boris PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_magnetized_boris PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME magnetized_boris COMMAND test_magnetized_boris)
+
 # chirp1d gate A: single-particle mirror bounce + mu conservation in B0(h).
 add_executable(test_chirp1d_mirror tests/test_chirp1d_mirror.cu)
 target_include_directories(test_chirp1d_mirror PRIVATE ${CMAKE_SOURCE_DIR}/include)
@@ -163,3 +175,12 @@ add_executable(test_weibel tests/test_weibel.cu)
 target_include_directories(test_weibel PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_weibel PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME weibel COMMAND test_weibel)
+
+# ---- ctest labels (L-shell plan M0): unit / physics / regression ----
+set_tests_properties(smoke_device fft_roundtrip poisson_sine particle_load
+                     charge_conservation single_particle magnetized_boris
+                     checkpoint_format diagnostics PROPERTIES LABELS "unit")
+set_tests_properties(langmuir two_stream weibel darwin_magnetostatic
+                     chirp1d_mirror chirp1d_dispersion chirp1d_growth
+                     PROPERTIES LABELS "physics")
+set_tests_properties(conservation_longrun PROPERTIES LABELS "regression")

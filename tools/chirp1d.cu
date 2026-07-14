@@ -16,6 +16,7 @@
 //   prefix
 
 #include "pic/hybrid1d.hpp"
+#include "pic/run_meta.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -114,6 +115,7 @@ int main(int argc, char** argv) {
             else if (arg.rfind("--", 0) != 0)        P.outdir = arg;
         }
         ::mkdir(P.outdir.c_str(), 0755);
+        arc::write_run_meta(P.outdir, argv[1], argc, argv);
         if (P.prefix == "chirp1d") {           // default prefix = deck stem
             std::string stem = argv[1];
             const auto sl = stem.find_last_of('/');
