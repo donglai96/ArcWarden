@@ -68,7 +68,7 @@ for k in range(nframe):
     plt.close(fig)
     if k % 20 == 0: print(f"frame {k}/{nframe}")
 
-mp4 = os.path.join(outdir, f"{pref.rstrip('_')}.mp4")
+mp4 = os.path.join(outdir, f"{os.path.basename(pref.rstrip('_'))}.mp4")
 ff = shutil.which("ffmpeg")
 if ff:
     cmd = [ff, "-y", "-framerate", str(args.fps), "-i", os.path.join(imgdir, "f%04d.png"),
