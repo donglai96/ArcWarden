@@ -757,6 +757,10 @@ private:
         ++nframes_;
     }
 
+    // Phase dump record (9 floats): x-xc, ux, uy, uz, wd (0 if full-f),
+    // By, Bz, Ey, Ez interpolated to the marker position at the SAME instant —
+    // enables Tao GRL17-style (zeta, v_par) hole plots (zeta = gyrophase of
+    // u_perp relative to the local wave B_perp).
     void dump_phase(long nstep) {
         if (!phase_f_ || np_ == 0) return;
         std::vector<double> x; std::vector<float> ux, uy, uz;
@@ -767,13 +771,32 @@ private:
             CUDA_CHECK(cudaMemcpy(w.data(), wd_.data(), np_ * sizeof(float),
                                   cudaMemcpyDeviceToHost));
         }
-        const int rec = P_.deltaf ? 5 : 4;
+        std::vector<double> hby, hbz, hey(NN_), hez(NN_);
+        get_b(hby, hbz);
+        CUDA_CHECK(cudaMemcpy(hey.data(), ey_.data(), NN_ * sizeof(double), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(hez.data(), ez_.data(), NN_ * sizeof(double), cudaMemcpyDeviceToHost));
+
+        const int rec = 9;
         std::vector<float> h;
         h.reserve(rec * (x.size() / P_.phase_decim + 1));
         for (size_t p = 0; p < x.size(); p += P_.phase_decim) {
+            const double xn = x[p] / P_.dx;
+            int j = (int)std::floor(xn);
+            double f = xn - j;
+            if (j < 0) { j = 0; f = 0; }
+            if (j > NN_ - 2) { j = NN_ - 2; f = 1; }
+            const double xf = xn - 0.5;
+            int jf = (int)std::floor(xf);
+            double g = xf - jf;
+            if (jf < 0) { jf = 0; g = 0; }
+            if (jf > P_.nx - 2) { jf = P_.nx - 2; g = 1; }
             h.push_back((float)(x[p] - xc_));
             h.push_back(ux[p]); h.push_back(uy[p]); h.push_back(uz[p]);
-            if (P_.deltaf) h.push_back(w[p]);
+            h.push_back(P_.deltaf ? w[p] : 0.0f);
+            h.push_back((float)(hby[jf] * (1 - g) + hby[jf + 1] * g));
+            h.push_back((float)(hbz[jf] * (1 - g) + hbz[jf + 1] * g));
+            h.push_back((float)(hey[j] * (1 - f) + hey[j + 1] * f));
+            h.push_back((float)(hez[j] * (1 - f) + hez[j + 1] * f));
         }
         const float hdr[2] = {(float)(nstep * P_.dt), (float)(h.size() / rec)};
         std::fwrite(hdr, sizeof(float), 2, phase_f_);
@@ -798,7 +821,7 @@ private:
           << "\nnprobe=" << nprobe_
           << "\ndeltaf=" << (P_.deltaf ? 1 : 0)
           << "\nant_amp=" << P_.ant_amp << "\nant_w0=" << P_.ant_w0
-          << "\nphase_rec=" << (P_.deltaf ? 5 : 4) << "\n";
+          << "\nphase_rec=" << 9 << "\n";
         m << "probes=";
         for (size_t k = 0; k < P_.probes.size(); ++k)
             m << (k ? "," : "") << P_.probes[k];
