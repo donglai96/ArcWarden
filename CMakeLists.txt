@@ -67,6 +67,11 @@ add_executable(whistler_pump tools/whistler_pump.cu)
 target_include_directories(whistler_pump PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(whistler_pump PRIVATE CUDA::cudart CUDA::cufft)
 
+# ---- 1D field-aligned electron-hybrid chorus runner (L-shell plan, M4 gate) ----
+add_executable(chirp1d tools/chirp1d.cu)
+target_include_directories(chirp1d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(chirp1d PRIVATE CUDA::cudart CUDA::cufft)
+
 add_executable(deposit_bench tools/deposit_bench.cu)
 target_include_directories(deposit_bench PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(deposit_bench PRIVATE CUDA::cudart CUDA::cufft)
@@ -134,6 +139,24 @@ add_executable(test_darwin_magnetostatic tests/test_darwin_magnetostatic.cu)
 target_include_directories(test_darwin_magnetostatic PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
+
+# chirp1d gate A: single-particle mirror bounce + mu conservation in B0(h).
+add_executable(test_chirp1d_mirror tests/test_chirp1d_mirror.cu)
+target_include_directories(test_chirp1d_mirror PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_chirp1d_mirror PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME chirp1d_mirror COMMAND test_chirp1d_mirror)
+
+# chirp1d gate B: cold whistler eigenmode frequency vs cold dispersion.
+add_executable(test_chirp1d_dispersion tests/test_chirp1d_dispersion.cu)
+target_include_directories(test_chirp1d_dispersion PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_chirp1d_dispersion PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME chirp1d_dispersion COMMAND test_chirp1d_dispersion)
+
+# chirp1d gate C: whistler anisotropy-instability growth rate vs kinetic theory.
+add_executable(test_chirp1d_growth tests/test_chirp1d_growth.cu)
+target_include_directories(test_chirp1d_growth PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_chirp1d_growth PRIVATE CUDA::cudart CUDA::cufft)
+add_test(NAME chirp1d_growth COMMAND test_chirp1d_growth)
 
 # Darwin GATE 2: Weibel/filamentation instability (full Darwin loop incl. E_T).
 add_executable(test_weibel tests/test_weibel.cu)
