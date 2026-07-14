@@ -140,6 +140,14 @@ target_include_directories(test_darwin_magnetostatic PRIVATE ${CMAKE_SOURCE_DIR}
 target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
 
+# M1 gates: Yee vacuum dispersion / Esirkepov continuity / dual-path Langmuir.
+foreach(t yee_vacuum esirkepov_continuity yee_langmuir)
+  add_executable(test_${t} tests/test_${t}.cu)
+  target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  target_link_libraries(test_${t} PRIVATE CUDA::cudart CUDA::cufft)
+  add_test(NAME ${t} COMMAND test_${t})
+endforeach()
+
 # L-shell M0: checkpoint format round-trip.
 add_executable(test_checkpoint_format tests/test_checkpoint_format.cu)
 target_include_directories(test_checkpoint_format PRIVATE ${CMAKE_SOURCE_DIR}/include)
@@ -182,5 +190,6 @@ set_tests_properties(smoke_device fft_roundtrip poisson_sine particle_load
                      checkpoint_format diagnostics PROPERTIES LABELS "unit")
 set_tests_properties(langmuir two_stream weibel darwin_magnetostatic
                      chirp1d_mirror chirp1d_dispersion chirp1d_growth
+                     yee_vacuum esirkepov_continuity yee_langmuir
                      PROPERTIES LABELS "physics")
 set_tests_properties(conservation_longrun PROPERTIES LABELS "regression")
