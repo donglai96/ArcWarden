@@ -68,6 +68,12 @@ arc::Chirp1DParams load_chirp_deck(const std::string& path) {
         else if (key == "uth_para")      P.uth_para = dv();
         else if (key == "uth_perp")      P.uth_perp = dv();
         else if (key == "ppc")           P.ppc = (int)iv();
+        else if (key == "rep")           P.deltaf = (val == "deltaf");
+        else if (key == "ant_amp")       P.ant_amp = dv();
+        else if (key == "ant_w0")        P.ant_w0 = dv();
+        else if (key == "ant_ton")       P.ant_ton = dv();
+        else if (key == "ant_toff")      P.ant_toff = dv();
+        else if (key == "ant_trise")     P.ant_trise = dv();
         else if (key == "periodic")      P.periodic = (val == "1" || val == "true");
         else if (key == "nd")            P.nd = (int)iv();
         else if (key == "numax")         P.numax = dv();
@@ -104,6 +110,7 @@ int main(int argc, char** argv) {
             else if (arg.rfind("--nsteps=", 0) == 0) P.nsteps = std::stol(arg.substr(9));
             else if (arg.rfind("--nh=", 0) == 0)     P.nh = std::stod(arg.substr(5));
             else if (arg.rfind("--seed=", 0) == 0)   P.seed = std::stoull(arg.substr(7));
+            else if (arg == "--deltaf")              P.deltaf = true;
             else if (arg.rfind("--", 0) != 0)        P.outdir = arg;
         }
         ::mkdir(P.outdir.c_str(), 0755);
@@ -122,10 +129,10 @@ int main(int argc, char** argv) {
         std::printf("  wpe/wce=%.2f  a=%.3g  (B0 ends=%.2f)  nh/nc=%.4g\n",
                     P.wpe, P.a, 1.0 + P.a * 0.25 * P.nx * P.dx * P.nx * P.dx,
                     P.nh);
-        std::printf("  hot: uth_para=%.3f uth_perp=%.3f (A=%.2f)  ppc=%d\n",
+        std::printf("  hot: uth_para=%.3f uth_perp=%.3f (A=%.2f)  ppc=%d  rep=%s\n",
                     P.uth_para, P.uth_perp,
                     (P.uth_perp * P.uth_perp) / (P.uth_para * P.uth_para) - 1.0,
-                    P.ppc);
+                    P.ppc, P.deltaf ? "deltaf" : "fullf");
         std::printf("  boundary: %s  nd=%d numax=%.2f\n",
                     P.periodic ? "periodic" : "damped+reflect", P.nd, P.numax);
 
