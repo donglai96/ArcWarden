@@ -130,16 +130,35 @@ __device__ inline void s1_shape4(float x, int ib, float* S) {
     }
 }
 
-static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams rp) {
+__device__ inline double yee_pump_ramp(double t, double trmp, double toff) {
+    if (t >= toff) return 0.0;
+    if (t < trmp)  return t / trmp;
+    if (t > toff - trmp) return (toff - t) / trmp;
+    return 1.0;
+}
+
+static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams rp,
+                                        double tnow) {
     const int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t >= p.n) return;
 
     const float x0 = p.x[t], y0 = p.y[t];
 
     // gather staggered E, B at the particle (add uniform external B0)
-    const float Ex = gather_stag(v.ex, v, x0, y0, 0.5f, 0.f);
-    const float Ey = gather_stag(v.ey, v, x0, y0, 0.f, 0.5f);
-    const float Ez = gather_stag(v.ez, v, x0, y0, 0.f, 0.f);
+    float Ex = gather_stag(v.ex, v, x0, y0, 0.5f, 0.f);
+    float Ey = gather_stag(v.ey, v, x0, y0, 0.f, 0.5f);
+    float Ez = gather_stag(v.ez, v, x0, y0, 0.f, 0.f);
+
+    // external whistler pump (An et al. 2019), analytic at the particle:
+    // E += Re{ E~_a e^{i(k0 x - w0 t)} } * ramp  — NOT added to the evolved
+    // Yee arrays, so the stored E stays purely self-consistent.
+    if (rp.pump && tnow < rp.pump_toff) {
+        const double th = rp.pump_k0 * (double)x0 * v.dxp - rp.pump_w0 * tnow;
+        const double r  = yee_pump_ramp(tnow, rp.pump_trmp, rp.pump_toff);
+        Ex += (float)(rp.pump_ex * cos(th) * r);
+        Ey += (float)(-rp.pump_ey * sin(th) * r);
+        Ez += (float)(rp.pump_ez * cos(th) * r);
+    }
     const float Bx = gather_stag(v.bx, v, x0, y0, 0.f, 0.5f) + rp.B0[0];
     const float By = gather_stag(v.by, v, x0, y0, 0.5f, 0.f) + rp.B0[1];
     const float Bz = gather_stag(v.bz, v, x0, y0, 0.5f, 0.5f) + rp.B0[2];

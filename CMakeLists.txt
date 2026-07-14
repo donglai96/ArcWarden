@@ -72,6 +72,11 @@ add_executable(chirp1d tools/chirp1d.cu)
 target_include_directories(chirp1d PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(chirp1d PRIVATE CUDA::cudart CUDA::cufft)
 
+# An et al. 2019 on the full-Maxwell branch (M1 cross-validation vs Darwin)
+add_executable(an2019_yee tools/an2019_yee.cu)
+target_include_directories(an2019_yee PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(an2019_yee PRIVATE CUDA::cudart CUDA::cufft)
+
 add_executable(deposit_bench tools/deposit_bench.cu)
 target_include_directories(deposit_bench PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(deposit_bench PRIVATE CUDA::cudart CUDA::cufft)

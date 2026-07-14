@@ -29,7 +29,9 @@ public:
     YeeFields&  fields()    { return flds_; }
     CudaStream& stream()    { return s_; }
 
-    void step() {
+    void step() { step_at(nstep_ * rp_.dt); ++nstep_; }
+
+    void step_at(double tnow) {
         const dim3 tb(16, 16);
         const dim3 nb((g_.nx + 15) / 16, (g_.ny + 15) / 16);
         YeeViews v = flds_.views();
@@ -40,7 +42,7 @@ public:
             flds_.zero_j(s_);
             const int threads = 256;
             const int blocks = ((int)parts_.n + threads - 1) / threads;
-            yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_);
+            yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);
             parts_.migrate(g_, s_);
         }
         yee::k_faraday<<<nb, tb, 0, s_>>>(v, dt2);
@@ -65,6 +67,7 @@ private:
     YeeFields  flds_;
     CudaStream s_;
     DeviceArray<double> diag_;
+    long nstep_ = 0;
 };
 
 } // namespace arc
