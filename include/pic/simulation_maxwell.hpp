@@ -52,11 +52,12 @@ public:
                 const BinViews b = parts_.bins();
                 yee::k_push_esirkepov_tiled<16, 16, 2><<<b.ntiles * bpt, threads, 0, s_>>>(
                     parts_.views(), b, v, rp_, tnow, bpt);
+                // migrate is fused into the tiled kernel (wrap + cell recompute)
             } else {
                 const int blocks = ((int)parts_.n + threads - 1) / threads;
                 yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);
+                parts_.migrate(g_, s_);
             }
-            parts_.migrate(g_, s_);
             // binomial J smoothing (rp.jfilter passes per component; OSIRIS "smooth")
             if (rp_.jfilter > 0) {
                 float* comps[3] = {flds_.jx_.data(), flds_.jy_.data(), flds_.jz_.data()};

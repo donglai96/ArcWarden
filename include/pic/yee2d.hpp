@@ -167,7 +167,9 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
 
     x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);
     y1 = y0 + (float)(uy * rp.dt / (double)v.dyp);
-    p.x[t] = x1; p.y[t] = y1;    // periodic wrap happens in Particles::migrate
+    // position write-back is the CALLER's job: the flat kernel stores x1
+    // unwrapped (Particles::migrate wraps), the tiled kernel stores the
+    // wrapped position directly (fused migrate) — avoids a double write.
 }
 
 // Esirkepov scatter over the 4x4 union stencil, deposit target abstracted as a
@@ -234,6 +236,7 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
 
     float x0, y0, x1, y1;
     yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1);
+    p.x[t] = x1; p.y[t] = y1;    // unwrapped; Particles::migrate wraps
 
     // ---- Esirkepov CIC deposit over the union stencil ----
     // 4-node stencils {ib-1..ib+2}, ib = floor(min(x0,x1)): with |Δ| < 1 the
@@ -299,6 +302,15 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
         else                                            // stray since last sort
             esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, invdt, ib, jb,
                               GlobalJSink{v});
+
+        // fused migrate (same formula as particle_migrate_kernel): the tiled
+        // path skips the separate wrap+cell pass — a whole extra SoA sweep.
+        float xw = fmodf(x1, (float)v.nx); if (xw < 0.f) xw += (float)v.nx;
+        float yw = fmodf(y1, (float)v.ny); if (yw < 0.f) yw += (float)v.ny;
+        p.x[t] = xw; p.y[t] = yw;
+        int ci = (int)floorf(xw); if (ci >= v.nx) ci = v.nx - 1;
+        int cj = (int)floorf(yw); if (cj >= v.ny) cj = v.ny - 1;
+        p.cell[t] = cj * v.nx + ci;
     }
     __syncthreads();
 
