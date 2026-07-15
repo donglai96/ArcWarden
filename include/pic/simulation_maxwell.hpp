@@ -21,7 +21,8 @@ namespace arc {
 class MaxwellSimulation {
 public:
     MaxwellSimulation(const Grid& g, const RunParams& rp)
-        : g_(g), rp_(rp), flds_(g, rp.c, rp.dt), diag_(2) {}
+        : g_(g), rp_(rp), flds_(g, rp.c, rp.dt), diag_(2),
+          jtmp_(rp.jfilter > 0 ? g.real_size() : 0) {}
 
     Grid&       grid()      { return g_; }
     RunParams&  params()    { return rp_; }
@@ -44,6 +45,21 @@ public:
             const int blocks = ((int)parts_.n + threads - 1) / threads;
             yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);
             parts_.migrate(g_, s_);
+            // binomial J smoothing (rp.jfilter passes per component; OSIRIS "smooth")
+            if (rp_.jfilter > 0) {
+                float* comps[3] = {flds_.jx_.data(), flds_.jy_.data(), flds_.jz_.data()};
+                const size_t nb_j = (size_t)g_.real_size() * sizeof(float);
+                for (float* jc : comps) {
+                    float *src = jc, *dst = jtmp_.data();
+                    for (int pass = 0; pass < rp_.jfilter; ++pass) {
+                        yee::k_binomial3x3<<<nb, tb, 0, s_>>>(src, dst, v);
+                        float* t2 = src; src = dst; dst = t2;
+                    }
+                    if (src != jc)   // odd pass count: result sits in the scratch
+                        CUDA_CHECK(cudaMemcpyAsync(jc, src, nb_j,
+                                                   cudaMemcpyDeviceToDevice, s_));
+                }
+            }
         }
         yee::k_faraday<<<nb, tb, 0, s_>>>(v, dt2);
         yee::k_ampere<<<nb, tb, 0, s_>>>(v);
@@ -67,6 +83,7 @@ private:
     YeeFields  flds_;
     CudaStream s_;
     DeviceArray<double> diag_;
+    DeviceArray<float>  jtmp_;   // binomial-filter scratch (empty if jfilter=0)
     long nstep_ = 0;
 };
 

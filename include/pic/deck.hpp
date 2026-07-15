@@ -157,6 +157,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();
             else if (key == "c")        d.c_direct = dv();
             else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());
+            else if (key == "jfilter")  d.rp.jfilter = static_cast<int>(iv());
         } else if (section == "background") {
             if      (key == "wce")       { d.wce = dv(); d.rp.wce = d.wce; }
             else if (key == "theta_deg") d.theta_deg = dv();

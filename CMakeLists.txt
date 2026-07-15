@@ -77,6 +77,11 @@ add_executable(an2019_yee tools/an2019_yee.cu)
 target_include_directories(an2019_yee PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(an2019_yee PRIVATE CUDA::cudart CUDA::cufft)
 
+# Ma et al. PoP 2024 case 7 — 2D oblique whistler from anisotropy (M1, true 2D)
+add_executable(eaw2d_yee tools/eaw2d_yee.cu)
+target_include_directories(eaw2d_yee PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(eaw2d_yee PRIVATE CUDA::cudart)
+
 add_executable(deposit_bench tools/deposit_bench.cu)
 target_include_directories(deposit_bench PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(deposit_bench PRIVATE CUDA::cudart CUDA::cufft)

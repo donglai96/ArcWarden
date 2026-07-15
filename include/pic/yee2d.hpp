@@ -230,6 +230,24 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
     }
 }
 
+// One pass of 3×3 binomial ([1,2,1]⊗[1,2,1]/16) current smoothing — the OSIRIS
+// "smooth" block (order = number of passes). Linear + shift-invariant, so the
+// implied ∂ρ/∂t is filtered identically and Gauss consistency is preserved
+// against the equally-filtered ρ.
+static __global__ void k_binomial3x3(const float* src, float* dst, YeeViews v) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const float w[3] = {0.25f, 0.5f, 0.25f};
+    float acc = 0.f;
+    #pragma unroll
+    for (int dj = -1; dj <= 1; ++dj)
+        #pragma unroll
+        for (int di = -1; di <= 1; ++di)
+            acc += w[di + 1] * w[dj + 1] * src[v.idx(i + di, j + dj)];
+    dst[j * v.nx + i] = acc;
+}
+
 // CIC node charge deposit (for Gauss/continuity diagnostics)
 static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, double qsign) {
     const int t = blockIdx.x * blockDim.x + threadIdx.x;

@@ -152,6 +152,12 @@ struct RunParams {
     double   c      = 1.0;
     int      ndc    = 1;
 
+    // —— Yee branch (FieldModel::YeeMaxwell) ——
+    // jfilter = number of 3×3 binomial smoothing passes applied to J each step
+    // (OSIRIS "smooth" equivalent; 0 = off). Suppresses CIC deposit noise on
+    // long runs where dx ≳ λ_D.
+    int      jfilter = 0;
+
     // —— external pump field (whistler driver, An et al. 2019, Eq. S1/S2) ——
     // E_pump_α(x,t) = Re{ Ẽ_α e^{i(k0·x − w0·t)} } · ramp(t), added to the total E
     // used in the dcu deposit + push (the whistler B then forms self-consistently
