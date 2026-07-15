@@ -157,6 +157,11 @@ struct RunParams {
     // (OSIRIS "smooth" equivalent; 0 = off). Suppresses CIC deposit noise on
     // long runs where dx ≳ λ_D.
     int      jfilter = 0;
+    // tile_sort = re-sort particles into 16×16 spatial tiles every N steps and
+    // run the tiled shared-memory Esirkepov deposit (0 = flat global-atomic
+    // kernel). Particles drifting > 2 cells between sorts fall back to global
+    // atomics, so any cadence is correct; N·v_max·dt/dx ≲ 2 keeps it fast.
+    int      tile_sort = 0;
 
     // —— external pump field (whistler driver, An et al. 2019, Eq. S1/S2) ——
     // E_pump_α(x,t) = Re{ Ẽ_α e^{i(k0·x − w0·t)} } · ramp(t), added to the total E

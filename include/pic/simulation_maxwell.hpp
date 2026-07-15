@@ -42,8 +42,20 @@ public:
         if (parts_.n > 0) {
             flds_.zero_j(s_);
             const int threads = 256;
-            const int blocks = ((int)parts_.n + threads - 1) / threads;
-            yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);
+            if (rp_.tile_sort > 0) {
+                // tiled path: periodic physical sort + shared-memory deposit
+                if (nstep_ >= next_sort_) {
+                    parts_.sort_by_tile(g_, 16, 16, s_);
+                    next_sort_ = nstep_ + rp_.tile_sort;
+                }
+                constexpr int bpt = 2;   // blocks per tile (fill the GPU)
+                const BinViews b = parts_.bins();
+                yee::k_push_esirkepov_tiled<16, 16, 2><<<b.ntiles * bpt, threads, 0, s_>>>(
+                    parts_.views(), b, v, rp_, tnow, bpt);
+            } else {
+                const int blocks = ((int)parts_.n + threads - 1) / threads;
+                yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);
+            }
             parts_.migrate(g_, s_);
             // binomial J smoothing (rp.jfilter passes per component; OSIRIS "smooth")
             if (rp_.jfilter > 0) {
@@ -85,6 +97,7 @@ private:
     DeviceArray<double> diag_;
     DeviceArray<float>  jtmp_;   // binomial-filter scratch (empty if jfilter=0)
     long nstep_ = 0;
+    long next_sort_ = 0;         // next tile re-sort step (tile_sort path)
 };
 
 } // namespace arc

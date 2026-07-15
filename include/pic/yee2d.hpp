@@ -137,21 +137,18 @@ __device__ inline double yee_pump_ramp(double t, double trmp, double toff) {
     return 1.0;
 }
 
-static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams rp,
-                                        double tnow) {
-    const int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= p.n) return;
+// Boris push + move for one particle on the Yee grid (staggered gather from
+// GLOBAL memory + pump), shared verbatim by the flat and tiled deposit kernels
+// so the physics is bit-identical on both paths. Returns old/new positions.
+__device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
+                                            const RunParams& rp, double tnow, int t,
+                                            float& x0, float& y0,
+                                            float& x1, float& y1) {
+    x0 = p.x[t]; y0 = p.y[t];
 
-    const float x0 = p.x[t], y0 = p.y[t];
-
-    // gather staggered E, B at the particle (add uniform external B0)
     float Ex = gather_stag(v.ex, v, x0, y0, 0.5f, 0.f);
     float Ey = gather_stag(v.ey, v, x0, y0, 0.f, 0.5f);
     float Ez = gather_stag(v.ez, v, x0, y0, 0.f, 0.f);
-
-    // external whistler pump (An et al. 2019), analytic at the particle:
-    // E += Re{ E~_a e^{i(k0 x - w0 t)} } * ramp  — NOT added to the evolved
-    // Yee arrays, so the stored E stays purely self-consistent.
     if (rp.pump && tnow < rp.pump_toff) {
         const double th = rp.pump_k0 * (double)x0 * v.dxp - rp.pump_w0 * tnow;
         const double r  = yee_pump_ramp(tnow, rp.pump_trmp, rp.pump_toff);
@@ -168,31 +165,30 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
     detail::boris_update_full(ux, uy, uz, Ex, Ey, Ez, Bx, By, Bz, qmh);
     p.ux[t] = ux; p.uy[t] = uy; p.uz[t] = uz;
 
-    // move (cell units; non-relativistic v1, matches the spectral path)
-    const float x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);
-    const float y1 = y0 + (float)(uy * rp.dt / (double)v.dyp);
+    x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);
+    y1 = y0 + (float)(uy * rp.dt / (double)v.dyp);
     p.x[t] = x1; p.y[t] = y1;    // periodic wrap happens in Particles::migrate
+}
 
-    // ---- Esirkepov CIC deposit over the union stencil ----
-    // 4-node stencils {ib-1..ib+2}, ib = floor(min(x0,x1)): with |Δ| < 1 the
-    // union of the old and new CIC supports always fits.
-    const int ib = (int)floorf(fminf(x0, x1));
-    const int jb = (int)floorf(fminf(y0, y1));
+// Esirkepov scatter over the 4x4 union stencil, deposit target abstracted as a
+// Sink (global atomics or a shared-memory tile) so both kernels share one
+// prefix-sum implementation.
+template<class Sink>
+__device__ inline void esirkepov_scatter(float x0, float y0, float x1, float y1,
+                                         float qw, float uz, const YeeViews& v,
+                                         float invdt, int ib, int jb, Sink&& sk) {
     float Sx0[4], Sx1[4], Sy0[4], Sy1[4];
     s1_shape4(x0, ib, Sx0); s1_shape4(x1, ib, Sx1);
     s1_shape4(y0, jb, Sy0); s1_shape4(y1, jb, Sy1);
 
-    const float qw   = (float)rp.qm * p.w[t];      // q = qm (m = 1 code units)
-    const float fdt  = (float)(1.0 / rp.dt);
-    const float cJx  = -qw * fdt / v.dyp;          // prefix-sum prefactor
-    const float cJy  = -qw * fdt / v.dxp;
-    const float cJz  =  qw * (float)uz / (v.dxp * v.dyp);
+    const float cJx = -qw * invdt / v.dyp;
+    const float cJy = -qw * invdt / v.dxp;
+    const float cJz =  qw * uz / (v.dxp * v.dyp);
 
     float DSx[4], DSy[4];
     #pragma unroll
     for (int n = 0; n < 4; ++n) { DSx[n] = Sx1[n] - Sx0[n]; DSy[n] = Sy1[n] - Sy0[n]; }
 
-    // Jx: prefix sum along i for each j of Wx = DSx*(Sy0 + DSy/2)
     #pragma unroll
     for (int nj = 0; nj < 4; ++nj) {
         const float sy = Sy0[nj] + 0.5f * DSy[nj];
@@ -200,11 +196,9 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
         #pragma unroll
         for (int ni = 0; ni < 4; ++ni) {
             acc += DSx[ni] * sy;
-            if (acc != 0.f)
-                atomicAdd(&v.jx[v.idx(ib - 1 + ni, jb - 1 + nj)], cJx * acc);
+            if (acc != 0.f) sk.jx(ib - 1 + ni, jb - 1 + nj, cJx * acc);
         }
     }
-    // Jy: prefix sum along j for each i of Wy = DSy*(Sx0 + DSx/2)
     #pragma unroll
     for (int ni = 0; ni < 4; ++ni) {
         const float sx = Sx0[ni] + 0.5f * DSx[ni];
@@ -212,20 +206,109 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
         #pragma unroll
         for (int nj = 0; nj < 4; ++nj) {
             acc += DSy[nj] * sx;
-            if (acc != 0.f)
-                atomicAdd(&v.jy[v.idx(ib - 1 + ni, jb - 1 + nj)], cJy * acc);
+            if (acc != 0.f) sk.jy(ib - 1 + ni, jb - 1 + nj, cJy * acc);
         }
     }
-    // Jz: Wz weights (Esirkepov third-direction form)
     #pragma unroll
-    for (int nj = 0; nj < 4; ++nj) {
+    for (int nj = 0; nj < 4; ++nj)
         #pragma unroll
         for (int ni = 0; ni < 4; ++ni) {
             const float wz = Sx0[ni] * Sy0[nj]
                            + 0.5f * (DSx[ni] * Sy0[nj] + Sx0[ni] * DSy[nj])
                            + (1.f / 3.f) * DSx[ni] * DSy[nj];
-            if (wz != 0.f)
-                atomicAdd(&v.jz[v.idx(ib - 1 + ni, jb - 1 + nj)], cJz * wz);
+            if (wz != 0.f) sk.jz(ib - 1 + ni, jb - 1 + nj, cJz * wz);
+        }
+}
+
+struct GlobalJSink {
+    YeeViews v;
+    __device__ void jx(int i, int j, float a) { atomicAdd(&v.jx[v.idx(i, j)], a); }
+    __device__ void jy(int i, int j, float a) { atomicAdd(&v.jy[v.idx(i, j)], a); }
+    __device__ void jz(int i, int j, float a) { atomicAdd(&v.jz[v.idx(i, j)], a); }
+};
+
+static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams rp,
+                                        double tnow) {
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= p.n) return;
+
+    float x0, y0, x1, y1;
+    yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1);
+
+    // ---- Esirkepov CIC deposit over the union stencil ----
+    // 4-node stencils {ib-1..ib+2}, ib = floor(min(x0,x1)): with |Δ| < 1 the
+    // union of the old and new CIC supports always fits.
+    const int ib = (int)floorf(fminf(x0, x1));
+    const int jb = (int)floorf(fminf(y0, y1));
+    const float qw = (float)rp.qm * p.w[t];        // q = qm (m = 1 code units)
+    esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, (float)(1.0 / rp.dt),
+                      ib, jb, GlobalJSink{v});
+}
+
+// TiledBinnedDeposit for the Yee path (M9): one block per TX*TY spatial tile,
+// particles PHYSICALLY tile-ordered (Particles::sort_by_tile) so SoA reads and
+// write-backs are coalesced. J is privatized in shared memory over the tile
+// plus a (DRIFT+3)-node apron: DRIFT cells of motion since the last sort plus
+// the 4-node union stencil always fit. Gathers stay in global memory — a
+// tile's particles hit the same few field cells, so L2 serves them; the win
+// to be had is the deposit, which replaces ~20N scattered global atomics with
+// shared atomics + one apron flush per tile (~SW*SH*3 per tile, ppc-free).
+// Particles that moved beyond DRIFT cells since the last sort (or wrapped
+// periodically) fall back to global atomics — always correct.
+template<int TX, int TY, int DRIFT>
+static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
+                                              YeeViews v, RunParams rp,
+                                              double tnow, int blocks_per_tile) {
+    constexpr int PAD = DRIFT + 3;               // node reach below tile origin
+    constexpr int SW  = TX + 2 * DRIFT + 6;      // local nodes [-PAD, TX+DRIFT+2]
+    constexpr int SH  = TY + 2 * DRIFT + 6;
+    __shared__ float s_jx[SH * SW], s_jy[SH * SW], s_jz[SH * SW];
+
+    const int tile = blockIdx.x / blocks_per_tile;
+    const int lane = blockIdx.x % blocks_per_tile;
+    if (tile >= b.ntiles) return;
+    const int gi0 = (tile % b.ntx) * TX;
+    const int gj0 = (tile / b.ntx) * TY;
+
+    for (int c = threadIdx.x; c < SH * SW; c += blockDim.x)
+        s_jx[c] = s_jy[c] = s_jz[c] = 0.f;
+    __syncthreads();
+
+    struct SharedJSink {
+        float *jx_, *jy_, *jz_; int i0, j0;
+        __device__ void jx(int i, int j, float a) { atomicAdd(&jx_[(j - j0) * SW + (i - i0)], a); }
+        __device__ void jy(int i, int j, float a) { atomicAdd(&jy_[(j - j0) * SW + (i - i0)], a); }
+        __device__ void jz(int i, int j, float a) { atomicAdd(&jz_[(j - j0) * SW + (i - i0)], a); }
+    } shs{s_jx, s_jy, s_jz, gi0 - PAD, gj0 - PAD};
+
+    const float invdt = (float)(1.0 / rp.dt);
+    const int beg = b.off[tile], end = b.off[tile + 1];
+    const int step = blocks_per_tile * blockDim.x;
+    for (int t = beg + lane * blockDim.x + threadIdx.x; t < end; t += step) {
+        float x0, y0, x1, y1;
+        yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1);
+
+        const int ib = (int)floorf(fminf(x0, x1));
+        const int jb = (int)floorf(fminf(y0, y1));
+        const float qw = (float)rp.qm * p.w[t];
+        // union stencil {ib-1..ib+2} inside the shared apron?
+        const int il = ib - gi0, jl = jb - gj0;
+        if (il - 1 >= -PAD && il + 2 <= TX + DRIFT + 2 &&
+            jl - 1 >= -PAD && jl + 2 <= TY + DRIFT + 2)
+            esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, invdt, ib, jb, shs);
+        else                                            // stray since last sort
+            esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, invdt, ib, jb,
+                              GlobalJSink{v});
+    }
+    __syncthreads();
+
+    for (int c = threadIdx.x; c < SH * SW; c += blockDim.x) {
+        const float jx = s_jx[c], jy = s_jy[c], jz = s_jz[c];
+        if (jx != 0.f || jy != 0.f || jz != 0.f) {
+            const int gc = v.idx(gi0 - PAD + (c % SW), gj0 - PAD + (c / SW));
+            atomicAdd(&v.jx[gc], jx);
+            atomicAdd(&v.jy[gc], jy);
+            atomicAdd(&v.jz[gc], jz);
         }
     }
 }

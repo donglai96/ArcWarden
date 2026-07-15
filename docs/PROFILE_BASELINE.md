@@ -27,6 +27,31 @@ float roundoff (≤3.3e-6 rel).
 | δf + antenna | 11.4 M | 250 k | 3.2×10⁹ (weight update + wd traffic) |
 | two concurrent runs | — | — | ~2.1×10⁹ each (fair SM sharing) |
 
+## eaw_case7 head-to-head (2026-07-14): tiled Esirkepov (M9) vs OSIRIS-CUDA
+
+Ma et al. PoP 2024 case 7: 625² cells, 156.25M particles (ppc 400), dt 0.0145,
+206,897 steps, jfilter 3. OSIRIS 4.4.4 CUDA (prebuilt, deck-only) on the same
+RTX 5090, 25×25 tiles / 512-particle chunks, quadratic + binomial-3 smoothing,
+no diagnostics; ArcWarden linear CIC.
+
+| code / path | p-steps/s | full-run wall |
+|---|---|---|
+| ArcWarden flat + full diagnostics | 3.9×10⁹ | 8,359 s (measured) |
+| ArcWarden flat, no diag | 4.5×10⁹ | ~7,250 s |
+| OSIRIS-CUDA, no diag (52% GPU util) | 5.9×10⁹ | ~5,470 s (measured to t=836, rate flat) |
+| **ArcWarden tiled (`tile_sort=20`) + full diagnostics** | **1.46×10¹⁰** | **2,210 s (measured)** |
+| ArcWarden tiled, no diag | 1.51×10¹⁰ | ~2,140 s |
+
+The tiled path (yee2d.hpp `k_push_esirkepov_tiled`): physical 16×16-cell tile
+sort every `tile_sort` steps (existing chunk-sort), fused gather(L2)/Boris/
+Esirkepov-into-shared-apron; strays beyond the DRIFT=2 apron fall back to
+global atomics (always correct; gated by the `yee_tiled` ctest). Sort cadence
+10/20/40 → 1.45/1.51/1.54×10¹⁰ on this problem. Deposit was ~20 global
+atomics/particle; now shared atomics + a ~2k-cell apron flush per tile,
+ppc-free. Physics parity on the full case-7 run: WB identical to 4 sig figs
+through the linear phase, WNA 46.5°/44.5° vs flat 46.4°/44.3°.
+Next dials if needed: 32×16 tiles, warp aggregation, TMA bulk flushes (sm_120).
+
 ## Reading for M1/M9 planning
 
 - The 2D EM ρ+J deposit at 4.9 G/s is the number to beat; Esirkepov (M1) will
