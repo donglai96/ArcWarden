@@ -52,6 +52,24 @@ ppc-free. Physics parity on the full case-7 run: WB identical to 4 sig figs
 through the linear phase, WNA 46.5°/44.5° vs flat 46.4°/44.3°.
 Next dials if needed: 32×16 tiles, warp aggregation, TMA bulk flushes (sm_120).
 
+### 2026-07-15 confirmation: full runs, MATCHED diagnostics, same figure
+
+Both codes ran case 7 end-to-end with equivalent diagnostics (6-field 2D dumps
+every 50/ωpe + x1 lineouts every 1/ωpe), figures produced by the same 8-panel
+pipeline (`plot_eaw_case7.py` / `plot_eaw_case7_osiris.py`, ZDF reader from the
+OSIRIS source tree — that build has no HDF5):
+
+| code | wall (measured) | p-steps/s |
+|---|---|---|
+| ArcWarden tiled + migrate fusion (4825499) | **2,079.7 s** | 1.55×10¹⁰ |
+| OSIRIS-CUDA (quadratic + smooth) | 5,392.8 s | ~6.0×10⁹ |
+
+2.59× faster; physics identical (whistler kx peak 2.79 both, WNA 44–47° both,
+EAW band 4–7× noise both; saturation t≈840 vs ≈1300 — shot-noise seed level
+only, the quieter quadratic load starts lower). Comparison figure:
+`docs/figs/eaw_case7_compare_arcwarden_osiris.png`. OSIRIS deck/data:
+`~/Donglai_Ma_reborn/osiris_case7_bench/`.
+
 ## Reading for M1/M9 planning
 
 - The 2D EM ρ+J deposit at 4.9 G/s is the number to beat; Esirkepov (M1) will
