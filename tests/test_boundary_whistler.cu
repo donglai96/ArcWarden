@@ -2,9 +2,11 @@
 // off the x-end damping layers, measured in plasma, must be below 1%.
 //
 // Trimmed from tools/boundary_reflection.cu (the study tool; see
-// docs/BOUNDARY_STUDY.md for the R(ω, nd, ν_max) map). Config = the measured
-// optimum at ω = 0.4 ω_ce: hybrid masks (fields + layer-particle transverse
-// momentum), nd = 64, ν_max = 0.3 → R = 0.36% on 2026-07-17.
+// docs/BOUNDARY_STUDY.md for the R(ω, nd, ν_max) map). Config = the
+// PRODUCTION recommendation: hybrid masks (fields + layer-particle
+// transverse momentum), nd = 256, ν_max = 0.1 — R < 1% across the whole
+// 0.1–0.5 ω_ce band (0.84% at this test's 0.4 ω_ce, 2026-07-17, with the
+// honest late window opening just after the outbound pass).
 //
 // Method: antenna column at the domain center radiates an R-mode whistler
 // packet (trapezoid envelope, 6 periods); a probe column between antenna and
@@ -22,8 +24,8 @@
 using namespace arc;
 
 int main() {
-    const double w0 = 0.2, wce = 0.5, c = 10.0, numax = 0.3;
-    const int nx = 4096, ny = 1, nd = 64, ppc = 100, ncyc = 6;
+    const double w0 = 0.2, wce = 0.5, c = 10.0, numax = 0.1;
+    const int nx = 4096, ny = 1, nd = 256, ppc = 100, ncyc = 6;
     const double dx = 1.0;
     Grid g(nx, ny, nx * dx, dx);
 
@@ -45,8 +47,8 @@ int main() {
     const double d_probe_layer = (nx - nd) - xp;
     const double t_out_end = rp.ant_toff + d_ant_probe / vg + 4.0 * Tw;
     const double t_ref_beg = rp.ant_toff + (d_ant_probe + 2.0 * d_probe_layer) / vg
-                           + 6.0 * Tw;
-    const double t_end = t_ref_beg + 8.0 * Tw;
+                           + 2.0 * Tw;      // open just past the outbound pass
+    const double t_end = t_ref_beg + 14.0 * Tw;
     const long   nsteps = (long)(t_end / rp.dt);
 
     SpeciesList sp = { Species{"e", 1.0, ppc, {0.01, 0.01, 0.01}, {0, 0, 0}} };

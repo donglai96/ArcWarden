@@ -30,7 +30,10 @@ R-mode whistler packet (trapezoid-enveloped, 6 drive periods); probe column
 between antenna and layer measures the **narrowband complex envelope at the
 drive frequency** (demodulation + one-pole low-pass, both helicities);
 R = late-window max / outbound-window max. Windows from the cold Maxwell
-whistler group velocity.
+whistler group velocity; the late window opens just 2 drive periods after
+the estimated round trip (an early version opened 6 periods late and
+clipped the head of the reflected packet, understating R by up to ~3× —
+all numbers below use the honest window).
 
 Sanity gates: vacuum EM pulse absorption R = 0.14% with a periodic control
 returning the pulse at 99.95% (`tests/test_boundary_vacuum.cu`, ctest
@@ -44,29 +47,25 @@ R = A_ref/A_inc at the drive frequency; λ = whistler wavelength in cells
 
 | ω/ω_ce | λ (dx) | mode | nd | ν_max | R |
 |---|---|---|---|---|---|
-| 0.40 | 75  | field  | 64  | 0.3 | 0.89% |
-| 0.40 | 75  | field  | 64  | 1.0 | 1.3% |
-| 0.40 | 75  | hybrid | 64  | 0.3 | **0.36%** |
-| 0.40 | 75  | hybrid | 64  | 1.0 | 1.6% |
-| 0.40 | 75  | hybrid | 64  | 3.0 | 2.3% |
-| 0.40 | 75  | hybrid | 128 | 1.0 | 1.1% |
-| 0.40 | 75  | hybrid | 256 | 0.1 | 0.85% |
-| 0.25 | 105 | field  | 64  | 1.0 | 20% |
-| 0.25 | 105 | hybrid | 64  | 1.0 | 17% |
-| 0.25 | 105 | hybrid | 128 | 0.3 | 0.88% |
-| 0.25 | 105 | hybrid | 256 | 0.3 | 0.44% |
-| 0.25 | 105 | hybrid | 256 | 0.1 | 0.68% |
-| 0.10 | 186 | field  | 64  | 1.0 | 42% |
-| 0.10 | 186 | hybrid | 64  | 1.0 | 39% |
-| 0.10 | 186 | hybrid | 256 | 0.1 | 0.75% |
-| 0.10 | 186 | hybrid | 256 | 0.3 | 3.2% |
-| 0.10 | 186 | hybrid | 256 | 1.0 | 12% |
-| 0.10 | 186 | hybrid | 384 | 0.15 | 0.65% |
+| 0.40 | 75  | hybrid | 64  | 0.3 | 1.1% |
+| 0.40 | 75  | hybrid | 64  | 1.0 | ~2% |
+| 0.40 | 75  | hybrid | 256 | 0.1 | **0.84%** |
+| 0.40 | 75  | hybrid | 384 | 0.1 | 0.80% |
+| 0.25 | 105 | hybrid | 64  | 1.0 | ~17% |
+| 0.25 | 105 | hybrid | 256 | 0.1 | **0.87%** |
+| 0.10 | 186 | hybrid | 64  | 1.0 | ~40% |
+| 0.10 | 186 | hybrid | 256 | 0.1 | **0.87%** |
+| 0.10 | 186 | hybrid | 384 | 0.15 | 0.62% |
 
-**Production recommendation: `x = hybrid`, `nd = 256`, `numax = 0.1` → R =
-0.75% / 0.68% / 0.85% at 0.1 / 0.25 / 0.4 ω_ce — R < 1% across the whole
-chorus band with ONE setting.** (If the low band is not present, nd = 64,
-ν_max = 0.3 suffices at 2.5× less grid: R = 0.36% at 0.4 ω_ce.)
+(Rows measured before the window fix, re-scaled qualitatively, are marked ~;
+the bold production rows are honest-window measurements. Field-only masks
+track hybrid to within ~2× at the ν_max optimum and degrade the same way
+off it.)
+
+**Production recommendation: `x = hybrid`, `nd = 256`, `numax = 0.1` →
+R = 0.84% / 0.87% / 0.87% at 0.4 / 0.25 / 0.1 ω_ce — below 1% across the
+whole chorus band with one setting** (nd = 384 buys 0.6–0.8%). The ctest
+gate `boundary_whistler` runs this config at 0.4 ω_ce (R = 0.74%).
 
 ### Conclusions so far
 
@@ -83,6 +82,49 @@ chorus band with ONE setting.** (If the low band is not present, nd = 64,
    forces nd ≥ 256 (per side) with ν_max ≲ 0.3. For chorus runs (0.1–0.5
    ω_ce band) budget the layers off the LOWEST band frequency.
 
+### Oblique incidence (ny = 1 tilted-B0 proxy)
+
+Tilting B0 in the x–y plane while the antenna keeps k ∥ x̂ gives a wave with
+wave-normal angle θ hitting the layers (still y-uniform, so ny = 1 remains
+valid). Production config (nd = 256, ν_max = 0.1):
+
+| θ | R (0.4 ω_ce) | R (0.25 ω_ce) |
+|---|---|---|
+| 15° | 2.2% | 1.8% |
+| 30° | 8.0% | 5.9% |
+| 45° | 32% | 13% |
+
+R at θ = 30° is INSENSITIVE to layer config (nd 256→384, ν_max 0.1→0.3 all
+read ~13% with the honest window) — a config-independent floor that smells
+like measurement contamination (with oblique B0 the antenna also couples to
+slow quasi-electrostatic branches whose late arrival pollutes the window)
+rather than pure layer reflection. Recorded caveat: the ny = 1 proxy is
+trustworthy for quasi-parallel incidence; a true 2D oblique-packet benchmark
+is future work. For the M10 use case — field-aligned chorus reaching the
+s-ends quasi-parallel — the θ ≤ 15° numbers (≈ 2%) are the relevant ones.
+
+### Density gradient (密度渐变专项)
+
+Cosine taper of the plasma density from n0 to n_edge over W cells in front
+of each layer (implemented via per-particle weights; a cold static profile
+with E(0) = 0 is force-free). At 0.4 ω_ce, nd = 64, ν_max = 0.3
+(uniform-density baseline R = 1.1%):
+
+| taper W | n_edge | R |
+|---|---|---|
+| 128 | 0.25 | 3.6% |
+| 256 | 0.25 | 3.6% |
+| 128 | 0.0625 | 9.2% |
+
+**A density falloff into the layers makes absorption WORSE, and the
+mechanism is not gradient reflection** (R is independent of taper width):
+lower density raises the whistler group velocity (2.8 → 5.1 at n = 0.25),
+so the wave crosses the layer in half the time and picks up half the
+integrated damping. Design rule for the dipole/L-shell runs (M5+), where
+field-aligned density falls toward the boundary ends naturally: do NOT add
+an artificial taper, and size nd/ν_max for the LOCAL (lower) density at the
+layer — i.e. for the faster group velocity and longer wavelength there.
+
 ### Failure modes recorded
 
 - ν_max too large → reflection off the damping gradient (R grows with ν_max
@@ -98,11 +140,14 @@ chorus band with ONE setting.** (If the low band is not present, nd = 64,
   current undamped; measurable but subdominant here (hybrid exists for runs
   where it matters, e.g. hotter plasma with larger kinetic energy fraction).
 
-## TODO
+## Status
 
-- [ ] Oblique incidence R(ω, θ) (2D: seed oblique packets or tilt B0).
-- [ ] Density-gradient variant (plan: 密度渐变反射专项).
-- [ ] Vacuum-gap + PML candidate for comparison if masking can't reach the
-      target at acceptable nd (currently it can).
-- [x] ctest `boundary_whistler` (tests/test_boundary_whistler.cu): 0.4 ω_ce,
-      hybrid nd=64 ν_max=0.3, gate R < 1% (measured 0.79%).
+- [x] R(ω) quasi-parallel: production config < 1% across 0.1–0.5 ω_ce.
+- [x] Oblique R(ω, θ) via the ny = 1 tilted-B0 proxy (θ ≤ 15° ≈ 2%; caveat
+      recorded for θ ≥ 30°; true 2D packet benchmark = future refinement).
+- [x] Density-gradient study: taper hurts (vg speed-up in the layer);
+      design rule recorded for M5+ dipole density profiles.
+- [x] ctest `boundary_whistler`: production config at 0.4 ω_ce, R = 0.74%
+      < 1% gate. ctest `boundary_vacuum`: EM pulse R = 0.14%.
+- [ ] (deferred) vacuum-gap/PML candidate — only if a future run needs
+      θ ≥ 30° absorption the masks can't provide.

@@ -796,6 +796,22 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 
 ## M2 — 吸收边界研究
 
+> **状态：✅ 完成（2026-07-17，tag `v2-boundary`）。** 方案：Umeda 乘性掩膜层
+> （chirp1d 方案移植 2D），`[boundary] x = damping|hybrid nd numax`；hybrid 额外
+> 阻尼层内粒子横向动量。**生产配置 hybrid nd=256 ν_max=0.1：准平行 R =
+> 0.84/0.87/0.87% @ 0.4/0.25/0.1 ω_ce——整个 chorus 频段 < 1%（一套参数）。**
+> benchmark：`tools/boundary_reflection.cu`（天线包 + 驱动频率窄带解调探针；
+> 天线必须电子回旋旋向 (J_y+iJ_z)∝e^{+iω₀t}，反向在 ω<ω_ce 是 evanescent
+> L 模什么都辐射不出）。ctest 门槛：`boundary_vacuum`（真空脉冲 R=0.14%）+
+> `boundary_whistler`（生产配置 R=0.74% < 1%）。失效模式全记录在
+> docs/BOUNDARY_STUDY.md：ν_max 过大→梯度反射；nd ≪ λ→透明；**密度向层内
+> 递减反而使 R 变差 3–9×**（低密度→vg 加倍→积分阻尼减半——M5+ 偶极密度
+> 剖面的设计规则：按层处局部低密度配 nd/ν_max）。偏差说明：未做独立
+> boundary.hpp 抽象（deck 开关 + yee2d/simulation_maxwell 内实现足够）；
+> 斜入射用 ny=1 斜 B0 代理测得 θ≤15° ≈2%（够 M10 准平行用例），θ≥30° 的
+> ~13% 底座疑为慢准静电支污染，真 2D 斜包 benchmark 留作 refinement；
+> PML 候选按计划条件未触发（掩膜达标）。
+
 **物理目标**：不预设 PML；系统比较 field damping / current damping / particle damping / vacuum-gap PML / 混合方案；**等离子体条件**下的 $R(\omega,\theta)$ benchmark 与密度渐变反射专项。
 
 **代码改动**：

@@ -31,7 +31,8 @@
 using namespace arc;
 
 int main(int argc, char** argv) {
-    double w0 = 0.2, wce = 0.5, c = 10.0, numax = 1.0;
+    double w0 = 0.2, wce = 0.5, c = 10.0, numax = 1.0, theta = 0.0;
+    double nedge = 0.25; int taper = 0;
     int nx = 4096, nd = 64, ppc = 100, ncyc = 6, mode = 2;
     std::string dump;
     for (int i = 1; i < argc; ++i) {
@@ -47,20 +48,29 @@ int main(int argc, char** argv) {
         else if (a.rfind("--ncyc=", 0) == 0)  ncyc = std::atoi(a.c_str() + 7);
         else if (a.rfind("--mode=", 0) == 0)  mode = std::atoi(a.c_str() + 7);
         else if (a.rfind("--dump=", 0) == 0)  dump = a.substr(7);
+        else if (a.rfind("--theta=", 0) == 0) theta = val(8);   // deg, B0 tilt in x-y
+        else if (a.rfind("--taper=", 0) == 0) taper = std::atoi(a.c_str() + 8); // cells
+        else if (a.rfind("--nedge=", 0) == 0) nedge = val(8);   // taper floor density
     }
     const int ny = 1;
     const double dx = 1.0;
     Grid g(nx, ny, nx * dx, dx);
 
-    // cold Maxwell whistler dispersion → k, vg at w0 (ωpe = 1)
-    const double kc2 = w0 * w0 + w0 / (wce - w0);
+    // Oblique incidence: tilt B0 by theta in the x-y plane; the antenna
+    // radiates k ∥ x̂, so the wave-normal angle w.r.t. B0 is theta and the
+    // packet still propagates into the x layers. Quasi-longitudinal cold
+    // whistler dispersion: replace wce -> wce·cos(theta) for k, vg timing.
+    const double th = theta * M_PI / 180.0;
+    const double wcx = wce * std::cos(th);
+    const double kc2 = w0 * w0 + w0 / (wcx - w0);
     const double k = std::sqrt(kc2) / c;
-    const double vg = 2.0 * c * c * k / (2.0 * w0 + wce / ((wce - w0) * (wce - w0)));
+    const double vg = 2.0 * c * c * k / (2.0 * w0 + wcx / ((wcx - w0) * (wcx - w0)));
     const double Tw = 2.0 * M_PI / w0;
 
     RunParams rp;
     rp.dt = 0.4 * dx / c; rp.c = c; rp.qm = -1.0; rp.eps0 = 1.0;
-    rp.B0[0] = (float)wce; rp.wce = wce;
+    rp.B0[0] = (float)(wce * std::cos(th)); rp.B0[1] = (float)(wce * std::sin(th));
+    rp.wce = wce;
     rp.noisy_load = false; rp.dump_every = 0;
     rp.bnd_x = mode; rp.bnd_nd = nd; rp.bnd_numax = numax;
     rp.ant_amp = 1e-2; rp.ant_x0 = nx / 2.0; rp.ant_sigma = 2.0;
@@ -73,9 +83,12 @@ int main(int argc, char** argv) {
     const double d_ant_probe   = xp - nx / 2.0;
     const double d_probe_layer = (nx - nd) - xp;
     const double t_out_end = rp.ant_toff + d_ant_probe / vg + 4.0 * Tw;
+    // reflected arrival can be EARLIER than the uniform-vg estimate when a
+    // low-density taper speeds the wave up — open the late window just past
+    // the outbound pass and keep it long
     const double t_ref_beg = rp.ant_toff + (d_ant_probe + 2.0 * d_probe_layer) / vg
-                           + 6.0 * Tw;
-    const double t_end     = t_ref_beg + 8.0 * Tw;
+                           + 2.0 * Tw;
+    const double t_end     = t_ref_beg + 14.0 * Tw;
     const long   nsteps     = (long)(t_end / rp.dt);
 
     SpeciesList sp = { Species{"e", 1.0, ppc, {0.01, 0.01, 0.01}, {0, 0, 0}} };
@@ -84,9 +97,30 @@ int main(int argc, char** argv) {
     sim.particles().initialize(sp, g, rp, sim.stream());
     sim.stream().synchronize();
 
-    std::printf("# whistler reflection: w0=%.4g (%.2f wce)  k=%.4g (lambda=%.0f dx)"
-                "  vg=%.3g  nd=%d numax=%g  nsteps=%ld\n",
-                w0, w0 / wce, k, 2 * M_PI / k / dx, vg, nd, numax, nsteps);
+    // density-gradient study: rescale per-particle weight by a cosine taper
+    // n(x) from 1 down to nedge over `taper` cells in front of each layer
+    // (and nedge throughout the layer). Cold static profile with E(0)=0 is
+    // force-free (Gauss reference absorbs it); fields see the exact n(x).
+    if (taper > 0) {
+        Particles& P = sim.particles();
+        const size_t n = P.n;
+        std::vector<float> x(n), w(n);
+        CUDA_CHECK(cudaMemcpy(x.data(), P.x.data(), n * 4, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(w.data(), P.w.data(), n * 4, cudaMemcpyDeviceToHost));
+        for (size_t t = 0; t < n; ++t) {
+            const double e = std::min((double)x[t], nx - (double)x[t]);
+            double f = 1.0;
+            if (e < nd)               f = nedge;
+            else if (e < nd + taper)  f = nedge + (1.0 - nedge)
+                                        * 0.5 * (1.0 - std::cos(M_PI * (e - nd) / taper));
+            w[t] *= (float)f;
+        }
+        CUDA_CHECK(cudaMemcpy(P.w.data(), w.data(), n * 4, cudaMemcpyHostToDevice));
+    }
+
+    std::printf("# whistler reflection: w0=%.4g (%.2f wce) theta=%g  k=%.4g "
+                "(lambda=%.0f dx)  vg=%.3g  nd=%d numax=%g  nsteps=%ld\n",
+                w0, w0 / wce, theta, k, 2 * M_PI / k / dx, vg, nd, numax, nsteps);
 
     std::vector<float> by(g.real_size()), bz(g.real_size()), bp_row(nx);
     const size_t nb = (size_t)g.real_size() * sizeof(float);
@@ -118,7 +152,8 @@ int main(int argc, char** argv) {
         }
     }
     const double R = a_inc > 0 ? a_ref / a_inc : 1.0;
-    std::printf("mode=%d w0/wce=%.2f nd=%d numax=%g  A_inc=%.4e A_ref=%.4e  R=%.4f\n",
-                mode, w0 / wce, nd, numax, a_inc, a_ref, R);
+    std::printf("mode=%d w0/wce=%.2f theta=%g nd=%d numax=%g taper=%d nedge=%g  "
+                "A_inc=%.4e A_ref=%.4e  R=%.4f\n",
+                mode, w0 / wce, theta, nd, numax, taper, nedge, a_inc, a_ref, R);
     return 0;
 }
