@@ -153,6 +153,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "ppc")     sp.ppc = static_cast<int>(iv());
             else if (key == "uth") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.uth[i]=v[i]; }
             else if (key == "ufl") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.ufl[i]=v[i]; }
+            else if (key == "rep") sp.deltaf = (val == "deltaf");   // M3 (Yee branch)
         } else if (section == "field") {
             if      (key == "model")    { d.darwin = (val == "darwin"); d.yee = (val == "yee"); }
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();

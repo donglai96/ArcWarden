@@ -23,6 +23,7 @@ struct Species {
     int         ppc     = 0;            // macro-particles per cell for this species
     double      uth[3]  = {0.0, 0.0, 0.0};  // thermal velocity per dimension
     double      ufl[3]  = {0.0, 0.0, 0.0};  // fluid (drift) velocity per dimension
+    bool        deltaf  = false;        // M3: delta-f representation ([species] rep = deltaf)
 };
 
 using SpeciesList = std::vector<Species>;

@@ -32,7 +32,7 @@ struct OneParticle {
     DeviceArray<int>   cell;
     OneParticle() : x(1), y(1), ux(1), uy(1), uz(1), w(1), cell(1) {}
     ParticleViews views() { return ParticleViews{ x.view(), y.view(), ux.view(),
-                                                  uy.view(), uz.view(), w.view(), cell.view(), 1 }; }
+                                                  uy.view(), uz.view(), w.view(), {}, cell.view(), 1 }; }
     void set(float X, float Y, float Ux, float Uy, float Uz) {
         CUDA_CHECK(cudaMemcpy(x.data(),  &X,  4, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(y.data(),  &Y,  4, cudaMemcpyHostToDevice));

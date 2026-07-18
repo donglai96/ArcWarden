@@ -44,6 +44,7 @@ namespace arc {
 struct ParticleViews {
     DeviceView<float> x, y, ux, uy, uz;
     DeviceView<float> w;        // per-particle macro weight (sets rho scale)
+    DeviceView<float> wd;       // M3 delta-f weight (empty unless enable_deltaf)
     DeviceView<int>   cell;
     int n = 0;
 };
@@ -154,7 +155,7 @@ __global__ void bin_scatter_kernel(ParticleViews p, DeviceView<int> cursor,
 template<class Dummy = void>
 __global__ void tile_sort_scatter_kernel(ParticleViews p, DeviceView<int> cursor,
                                          float* xo, float* yo, float* uxo, float* uyo,
-                                         float* uzo, float* wo, int* cello,
+                                         float* uzo, float* wo, float* wdo, int* cello,
                                          int nx, int tx, int ty, int ntx, int ntiles) {
     extern __shared__ int s_cnt[];
     for (int c = threadIdx.x; c < ntiles; c += blockDim.x) s_cnt[c] = 0;
@@ -172,6 +173,7 @@ __global__ void tile_sort_scatter_kernel(ParticleViews p, DeviceView<int> cursor
         xo[slot]  = p.x[t];  yo[slot]  = p.y[t];
         uxo[slot] = p.ux[t]; uyo[slot] = p.uy[t]; uzo[slot] = p.uz[t];
         wo[slot]  = p.w[t];  cello[slot] = p.cell[t];
+        if (wdo) wdo[slot] = p.wd[t];
     }
 }
 
@@ -237,8 +239,16 @@ __global__ void particle_init_kernel(ParticleViews p, Grid g, RunParams rp) {
     int ci = static_cast<int>(x);
     if (ci >= g.nx) ci = g.nx - 1;
 
-    p.x[t]    = x;
-    p.y[t]    = y;
+    // cell + fraction can ROUND UP to the next integer in float; at the last
+    // cell that puts the particle at x == nx (y == ny) exactly, which sends
+    // the staggered-gather stencil TWO periods out on 1-cell-thin axes
+    // (caught by compute-sanitizer via ez[nx] on an ny = 1 delta-f run).
+    float xw = x, yw = y;
+    if (xw >= (float)g.nx) xw = nextafterf((float)g.nx, 0.f);
+    if (yw >= (float)g.ny) yw = nextafterf((float)g.ny, 0.f);
+
+    p.x[t]    = xw;
+    p.y[t]    = yw;
     p.w[t]    = static_cast<float>(rp.weight);   // single-species: uniform weight
     p.cell[t] = g.idx(ci, j);
 
@@ -283,6 +293,10 @@ __global__ void particle_migrate_kernel(ParticleViews p, Grid g) {
 
     float x = fmodf(p.x[t], nx); if (x < 0.0f) x += nx;   // robust to multi-period moves
     float y = fmodf(p.y[t], ny); if (y < 0.0f) y += ny;
+    // the += wrap of a tiny negative rounds to nx/ny EXACTLY in float, which
+    // puts the staggered gather stencil two periods out on 1-cell-thin axes
+    if (x >= nx) x = 0.0f;
+    if (y >= ny) y = 0.0f;
     p.x[t] = x;
     p.y[t] = y;
 
@@ -338,8 +352,13 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
     int ci = static_cast<int>(x);
     if (ci >= g.nx) ci = g.nx - 1;
 
-    p.x[t]    = x;
-    p.y[t]    = y;
+    // same float round-up guard as particle_init_kernel (x==nx / y==ny edge)
+    float xw = x, yw = y;
+    if (xw >= (float)g.nx) xw = nextafterf((float)g.nx, 0.f);
+    if (yw >= (float)g.ny) yw = nextafterf((float)g.ny, 0.f);
+
+    p.x[t]    = xw;
+    p.y[t]    = yw;
     p.w[t]    = sp.weight;
     p.cell[t] = g.idx(ci, j);
 
@@ -372,6 +391,18 @@ struct Particles {
     DeviceArray<float> x2, y2, ux2, uy2, uz2, w2;
     DeviceArray<int>   cell2;
 
+    // M3 delta-f weight wd = δf/f at the marker (empty unless enabled).
+    DeviceArray<float> wd, wd2;
+    bool has_wd = false;
+
+    // Allocate + zero the delta-f weights. Call AFTER initialize(); a fresh
+    // delta-f load starts exactly on the reference distribution (wd = 0).
+    void enable_deltaf(cudaStream_t s) {
+        wd = DeviceArray<float>(n);
+        wd.zero(s);
+        has_wd = true;
+    }
+
     Particles() = default;
 
     // Allocate for n_total particles (caller sets the count).
@@ -393,7 +424,7 @@ struct Particles {
 
     ParticleViews views() {
         return ParticleViews{ x.view(), y.view(), ux.view(), uy.view(), uz.view(),
-                              w.view(), cell.view(), static_cast<int>(n) };
+                              w.view(), wd.view(), cell.view(), static_cast<int>(n) };
     }
 
     // Load positions (stratified quiet) + velocities (quiet Maxwellian) + cell.
@@ -518,6 +549,7 @@ struct Particles {
             ux2 = DeviceArray<float>(n); uy2 = DeviceArray<float>(n); uz2 = DeviceArray<float>(n);
             w2 = DeviceArray<float>(n); cell2 = DeviceArray<int>(n);
         }
+        if (has_wd && wd2.size() != n) wd2 = DeviceArray<float>(n);
         bin_ntiles = ntiles; bin_ntx = ntx; bin_tx = tx; bin_ty = ty;
 
         bin_count.zero(s);
@@ -537,13 +569,15 @@ struct Particles {
         CUDA_CHECK(cudaPeekAtLastError());
         detail::tile_sort_scatter_kernel<><<<blocks, threads, shbytes, s>>>(
             views(), bin_cursor.view(),
-            x2.data(), y2.data(), ux2.data(), uy2.data(), uz2.data(), w2.data(), cell2.data(),
+            x2.data(), y2.data(), ux2.data(), uy2.data(), uz2.data(), w2.data(),
+            has_wd ? wd2.data() : nullptr, cell2.data(),
             g.nx, tx, ty, ntx, ntiles);
         CUDA_CHECK(cudaPeekAtLastError());
 
         std::swap(x, x2);   std::swap(y, y2);
         std::swap(ux, ux2); std::swap(uy, uy2); std::swap(uz, uz2);
         std::swap(w, w2);   std::swap(cell, cell2);
+        if (has_wd) std::swap(wd, wd2);
         sorted = true;
     }
 };

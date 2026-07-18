@@ -180,6 +180,17 @@ struct RunParams {
     int      bnd_nd    = 64;    // damping cells per side
     double   bnd_numax = 1.0;   // peak damping rate
 
+    // —— M3 delta-f (Yee branch): nonlinear two-weight scheme, g = f0 ——
+    // Markers sample the bi-Maxwellian reference f0 ∝ exp(-ux²/2Tpar
+    // - (uy²+uz²)/2Tperp) with B0 ∥ x̂ (Tpar/Tperp = uth², gyrotropy in y,z
+    // required). Weight equation (chirp1d / Tao PPCF 2017 eq. 19 form):
+    //   dwd/dt = -(1 - wd)·(q/m)·F·∂ln f0/∂u,   F = δE + v×δB (WAVE fields
+    // only — the uniform B0 rotation conserves f0), discretized explicitly
+    // with post-push u. Deposit weights every current by wd (DeltaF policy).
+    int      deltaf    = 0;
+    double   df_tpar   = 1.0;   // uth_par²  (f0 parallel temperature, m = 1)
+    double   df_tperp  = 1.0;   // uth_perp²
+
     // —— M2/M10 antenna: localized rotating transverse current column ——
     // J_y += amp·g(x)·cos(w0 t)·ramp, J_z -= amp·g(x)·sin(w0 t)·ramp with
     // g(x) = exp(-(x-x0)²/2σ²) (cell units), ramp linear over ant_trmp, off

@@ -95,10 +95,10 @@ int main() {
     for (int s = 0; s < 3; ++s) simt.step();          // stale-ify the sort
     CUDA_CHECK(cudaDeviceSynchronize());
     rho0.zero(); rho1.zero();
-    yee::k_rho_nodes<<<((int)p.n + 255) / 256, 256>>>(p.views(), v, rho0.data(), rp.qm);
+    yee::k_rho_nodes<<<((int)p.n + 255) / 256, 256>>>(p.views(), v, rho0.data(), rp.qm, 0);
     simt.step();                                       // deposits J^{n+1/2}
     CUDA_CHECK(cudaDeviceSynchronize());
-    yee::k_rho_nodes<<<((int)p.n + 255) / 256, 256>>>(p.views(), v, rho1.data(), rp.qm);
+    yee::k_rho_nodes<<<((int)p.n + 255) / 256, 256>>>(p.views(), v, rho1.data(), rp.qm, 0);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     auto r0 = host(rho0), r1 = host(rho1);

@@ -156,14 +156,42 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
         Ey += (float)(-rp.pump_ey * sin(th) * r);
         Ez += (float)(rp.pump_ez * cos(th) * r);
     }
-    const float Bx = gather_stag(v.bx, v, x0, y0, 0.f, 0.5f) + rp.B0[0];
-    const float By = gather_stag(v.by, v, x0, y0, 0.5f, 0.f) + rp.B0[1];
-    const float Bz = gather_stag(v.bz, v, x0, y0, 0.5f, 0.5f) + rp.B0[2];
+    // wave-only B kept separate: the M3 delta-f weight equation needs the
+    // perturbation force (the uniform B0 rotation conserves the gyrotropic f0)
+    const float dBx = gather_stag(v.bx, v, x0, y0, 0.f, 0.5f);
+    const float dBy = gather_stag(v.by, v, x0, y0, 0.5f, 0.f);
+    const float dBz = gather_stag(v.bz, v, x0, y0, 0.5f, 0.5f);
+    const float Bx = dBx + rp.B0[0];
+    const float By = dBy + rp.B0[1];
+    const float Bz = dBz + rp.B0[2];
 
     float ux = p.ux[t], uy = p.uy[t], uz = p.uz[t];
+    const float uxo = ux, uyo = uy, uzo = uz;   // u^{n-1/2} (delta-f centering)
     const float qmh = (float)(rp.qm * 0.5 * rp.dt);
     detail::boris_update_full(ux, uy, uz, Ex, Ey, Ez, Bx, By, Bz, qmh);
     p.ux[t] = ux; p.uy[t] = uy; p.uz[t] = uz;
+
+    // M3 delta-f weight update (chirp1d / Tao PPCF 2017 eq. 19 form):
+    //   dwd/dt = -(1-wd)(q/m) F·∂ln f0/∂u,  ∂ln f0/∂u = (-ux/Tpar, -uy/Tperp,
+    //   -uz/Tperp) for the bi-Maxwellian reference with B0 ∥ x̂,
+    //   F = δE + v×δB (wave fields incl. pump).
+    // TIME-CENTERING MATTERS: evaluate u at t^n = (u^{n-1/2}+u^{n+1/2})/2, the
+    // same time level as the gathered fields. Using the post-push u alone puts
+    // the drive a half step out of quadrature and NUMERICALLY ANTI-DAMPS the
+    // fast EM branch (measured: gamma_num ~ +1e-3 at w = 1.28, dt = 0.025,
+    // scaling with dt — found via the deltaf_consistency gate).
+    if (rp.deltaf) {
+        const float uxc = 0.5f * (ux + uxo);
+        const float uyc = 0.5f * (uy + uyo);
+        const float uzc = 0.5f * (uz + uzo);
+        const float Fx = Ex + (uyc * dBz - uzc * dBy);
+        const float Fy = Ey + (uzc * dBx - uxc * dBz);
+        const float Fz = Ez + (uxc * dBy - uyc * dBx);
+        const float S  = Fx * uxc / (float)rp.df_tpar
+                       + (Fy * uyc + Fz * uzc) / (float)rp.df_tperp;
+        const float wd = p.wd[t];
+        p.wd[t] = wd + (float)(rp.dt * rp.qm) * (1.f - wd) * S;
+    }
 
     x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);
     y1 = y0 + (float)(uy * rp.dt / (double)v.dyp);
@@ -272,7 +300,8 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
     // union of the old and new CIC supports always fits.
     const int ib = (int)floorf(fminf(x0, x1));
     const int jb = (int)floorf(fminf(y0, y1));
-    const float qw = (float)rp.qm * p.w[t];        // q = qm (m = 1 code units)
+    float qw = (float)rp.qm * p.w[t];              // q = qm (m = 1 code units)
+    if (rp.deltaf) qw *= p.wd[t];                  // DeltaF policy: δJ = q w wd v
     esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, (float)(1.0 / rp.dt),
                       ib, jb, GlobalJSink{v});
 }
@@ -322,7 +351,8 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
 
         const int ib = (int)floorf(fminf(x0, x1));
         const int jb = (int)floorf(fminf(y0, y1));
-        const float qw = (float)rp.qm * p.w[t];
+        float qw = (float)rp.qm * p.w[t];
+        if (rp.deltaf) qw *= p.wd[t];              // DeltaF policy: δJ = q w wd v
         // union stencil {ib-1..ib+2} inside the shared apron?
         const int il = ib - gi0, jl = jb - gj0;
         if (il - 1 >= -PAD && il + 2 <= TX + DRIFT + 2 &&
@@ -336,6 +366,8 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
         // path skips the separate wrap+cell pass — a whole extra SoA sweep.
         float xw = fmodf(x1, (float)v.nx); if (xw < 0.f) xw += (float)v.nx;
         float yw = fmodf(y1, (float)v.ny); if (yw < 0.f) yw += (float)v.ny;
+        if (xw >= (float)v.nx) xw = 0.f;   // += wrap of a tiny negative rounds
+        if (yw >= (float)v.ny) yw = 0.f;   // to the edge exactly (see migrate)
         p.x[t] = xw; p.y[t] = yw;
         int ci = (int)floorf(xw); if (ci >= v.nx) ci = v.nx - 1;
         int cj = (int)floorf(yw); if (cj >= v.ny) cj = v.ny - 1;
@@ -372,15 +404,18 @@ static __global__ void k_binomial3x3(const float* src, float* dst, YeeViews v) {
     dst[j * v.nx + i] = acc;
 }
 
-// CIC node charge deposit (for Gauss/continuity diagnostics)
-static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, double qsign) {
+// CIC node charge deposit (for Gauss/continuity diagnostics). use_wd = 1 on
+// the delta-f branch: deposit the perturbation charge δρ = Σ q w wd S.
+static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, double qsign,
+                                   int use_wd) {
     const int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t >= p.n) return;
     const float x = p.x[t], y = p.y[t];
     const int ib = (int)floorf(x), jb = (int)floorf(y);
     float Sx[3], Sy[3];
     s1_shape(x, ib, Sx); s1_shape(y, jb, Sy);
-    const float coef = (float)qsign * p.w[t] / (v.dxp * v.dyp);
+    float coef = (float)qsign * p.w[t] / (v.dxp * v.dyp);
+    if (use_wd) coef *= p.wd[t];
     for (int nj = 0; nj < 3; ++nj)
         for (int ni = 0; ni < 3; ++ni) {
             const float s = Sx[ni] * Sy[nj];
@@ -473,6 +508,26 @@ static __global__ void k_div_stats(YeeViews v, const float* r, const float* r0,
     atomicAdd(&sB, b2); atomicAdd(&sG, g2);
     __syncthreads();
     if (threadIdx.x == 0) { atomicAdd(&out[0], sB); atomicAdd(&out[1], sG); }
+}
+
+// M3 weight diagnostics (FP64 sums): out[0] += wd, out[1] += wd²,
+// out[2] = max|wd| via atomicMax on the positive-float bit pattern.
+static __global__ void k_wd_stats(ParticleViews p, double* out, unsigned int* mx) {
+    __shared__ double s1, s2;
+    __shared__ unsigned int sm;
+    if (threadIdx.x == 0) { s1 = 0; s2 = 0; sm = 0; }
+    __syncthreads();
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t < p.n) {
+        const float w = p.wd[t];
+        atomicAdd(&s1, (double)w);
+        atomicAdd(&s2, (double)w * w);
+        atomicMax(&sm, __float_as_uint(fabsf(w)));
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        atomicAdd(&out[0], s1); atomicAdd(&out[1], s2); atomicMax(mx, sm);
+    }
 }
 
 // field energy: out[0] += eps0 E²/2 · dA, out[1] += c² B²/2 · dA (FP64 sums)

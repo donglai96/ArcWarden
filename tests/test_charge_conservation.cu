@@ -34,7 +34,7 @@ static double deposit_points(const Grid& g, const RunParams& rp,
     CUDA_CHECK(cudaMemcpy(w.data(), ws.data(), w.bytes(), cudaMemcpyHostToDevice));
 
     ParticleViews pv{ x.view(), y.view(), ux.view(), uy.view(), uz.view(),
-                      w.view(), cell.view(), np };
+                      w.view(), {}, cell.view(), np };
     Sources src(g);
     CudaStream stream;
     src.zero(stream);

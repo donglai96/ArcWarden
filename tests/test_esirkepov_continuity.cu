@@ -47,10 +47,10 @@ int main() {
     DeviceArray<float> rho0(g.real_size()), rho1(g.real_size());
     rho0.zero(); rho1.zero();
 
-    yee::k_rho_nodes<<<(N + 255) / 256, 256>>>(p.views(), v, rho0.data(), rp.qm);
+    yee::k_rho_nodes<<<(N + 255) / 256, 256>>>(p.views(), v, rho0.data(), rp.qm, 0);
     sim.fields().zero_j();
     yee::k_push_esirkepov<<<(N + 255) / 256, 256>>>(p.views(), v, rp, 0.0);
-    yee::k_rho_nodes<<<(N + 255) / 256, 256>>>(p.views(), v, rho1.data(), rp.qm);
+    yee::k_rho_nodes<<<(N + 255) / 256, 256>>>(p.views(), v, rho1.data(), rp.qm, 0);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     std::vector<float> r0(g.real_size()), r1(g.real_size()),

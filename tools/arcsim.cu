@@ -82,8 +82,27 @@ static int run_yee(Deck& d, const std::string& pref, const std::string& outdir) 
     rp.dump_every = d.dump_every > 0 ? d.dump_every
                   : (rp.nsteps / 100 > 0 ? rp.nsteps / 100 : 1);
 
+    // M3 delta-f: single bi-Maxwellian population, B0 ∥ x̂, gyrotropic in y,z
+    bool anydf = false;
+    for (const auto& q : d.species) anydf = anydf || q.deltaf;
+    if (anydf) {
+        if (d.species.size() != 1 || !d.species[0].deltaf) {
+            std::fprintf(stderr, "arcsim: rep=deltaf requires exactly one species (M3)\n");
+            return 1;
+        }
+        const Species& q = d.species[0];
+        if (rp.B0[1] != 0.f || rp.B0[2] != 0.f || q.uth[1] != q.uth[2]) {
+            std::fprintf(stderr, "arcsim: deltaf needs B0 along x and uth_y == uth_z\n");
+            return 1;
+        }
+        rp.deltaf = 1;
+        rp.df_tpar  = q.uth[0] * q.uth[0];
+        rp.df_tperp = q.uth[1] * q.uth[1];
+    }
+
     MaxwellSimulation sim(g, rp);
     sim.particles().initialize(d.species, g, rp, sim.stream());
+    if (rp.deltaf) sim.particles().enable_deltaf(sim.stream());
     sim.stream().synchronize();
     diag::DiagManager mgr(d, rp, pref, outdir);
 
@@ -110,7 +129,8 @@ static int run_yee(Deck& d, const std::string& pref, const std::string& outdir) 
     };
 
     std::ofstream mcsv(pref + "maxwell.csv");
-    if (mcsv) mcsv << "step,time,WE,WB,divB_rms,gauss_drift_rms\n";
+    if (mcsv) mcsv << (rp.deltaf ? "step,time,WE,WB,divB_rms,gauss_drift_rms,wd_sum,wd_rms,wd_max\n"
+                                 : "step,time,WE,WB,divB_rms,gauss_drift_rms\n");
     sim.residuals();                       // capture the Gauss reference at t=0
 
     for (long n = 0; n <= rp.nsteps; ++n) {
@@ -122,7 +142,12 @@ static int run_yee(Deck& d, const std::string& pref, const std::string& outdir) 
             const auto e = sim.field_energy();
             const auto r = sim.residuals();
             mcsv << n << ',' << t << ',' << e.we << ',' << e.wb << ','
-                 << r.divb_rms << ',' << r.gauss_drift_rms << '\n';
+                 << r.divb_rms << ',' << r.gauss_drift_rms;
+            if (rp.deltaf) {
+                const auto ws = sim.wd_stats();
+                mcsv << ',' << ws.sum << ',' << ws.rms << ',' << ws.max;
+            }
+            mcsv << '\n';
         }
     }
     mgr.finalize();

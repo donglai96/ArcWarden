@@ -832,6 +832,20 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 
 ## M3 — 单 population electromagnetic δf
 
+> **状态：🔶 Phase 1 完成（2026-07-17）——Yee 分支 DeltaF 路径 + 两个门槛。**
+> 已落地：Particles 加 `wd`（进 sort 双缓冲/views）；`[species] rep = deltaf`；
+> 权重方程融合进 yee_advance_particle（chirp1d/Tao eq19 离散，波场 only——
+> gather 已拆 δB 与 B0，∂ln f0 乘加系数，B0∥x̂ + 回旋对称约束）；DeltaF 沉积
+> `q·w·wd·v`（flat + tiled 两路径，k_rho_nodes 同步）。门槛：
+> `deltaf_equilibrium`（各向同性 + 种子，wd 有界 ×1.17，flat/tiled 逐位一致）
+> `deltaf_growth`（单 bi-Max 平行哨声增长率 vs Z 函数理论：**γ=2.60e-3 vs
+> 2.872e-3（9.4%，ppc=1600）；ω_r=0.18686 vs 0.1868 精确**；ppc 收敛
+> 400/1600/6400 → 26%/9%/4% ≈ 1/√ppc——回旋共振带 marker 分辨率所限，
+> 已写进测试头）。ctest 26/26。
+> **待做（Phase 2）**：FullF policy + `deltaf_vs_fullf_consistency`；
+> `deltaf_landau`（对照 solver_es）；精度三模式 + WEIGHT_PRECISION.md；
+> 权重诊断模块（Σwd、⟨wd²⟩）；→ 齐后 tag `v3-deltaf`。
+
 **物理目标**：w/wd 数据模型、非线性权重方程、加权守恒沉积、精度三模式对照、**full-f deposition policy 同步实现**；平衡保持、Landau damping、whistler 色散、各向异性增长率 benchmark。
 
 **代码改动**：
@@ -986,6 +1000,28 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 **Deliverables**：首个自洽 2D chirping、frequency-time spectrogram、共振相空间分析、收敛研究、源区可视化。
 **Exit criteria（收敛四条）**：对 marker 数收敛；对 grid/Δt 收敛；不依赖边界反射；不由数值噪声触发；可由 nonlinear resonant current 解释。
 **工作量**：2–3 月　**Tag**：`v10-chirping-2d`
+
+### M10-SQ：科学问题——注入是否同时触发下带与上带 chorus？（2026-07-17 加入）
+
+上带（0.5–0.8 f_ce）的激发机制无共识；候选：①双成分线性（低能各向异性成分独立驱动
+上带，E_res(0.6 f_ce) ~ 数百 eV）；②非线性父子（下带上升调扫过 0.5 f_ce 被
+v_R = −v_ph 简并阻尼掐断，越过部分成上带，Omura 系）；③下带谐波/波-波耦合
+（Gao/Lu 系）；④高度斜传播上带由场向低能电子 Landau 共振驱动（Mourenas/
+Artemyev 系）。0.5 f_ce 缺口可能"多机制过定"，观测指纹重叠，需受控模拟裁决。
+
+**四个因果切断实验（全部只用已有/计划内基础设施）**：
+1. **成分开关**（M3 δf + M7 注入）：只注高能 / 只注低能 / both，上带是否只随
+   低能成分出现 → 裁决①。
+2. **弑父实验**（M2 掩膜推广为频域/k 域选择性阻尼）：人为杀死下带，看上带
+   是否仍然生长 → 裁决②③。观测上不可能做的实验。
+3. **维度开关**：ny=1 杀死斜传播机制 vs 2D 放开 → 裁决④。
+4. **共振追踪**（δf wd 加权相空间）：上带供能电子在回旋共振速度还是 Landau
+   共振速度 → ①/④ 直接指纹。
+
+前置：注入分布须支持能量依赖各向异性（M7 注入云参数化时预留 per-成分
+uth⊥/uth∥(E)）；选择性阻尼 = k_damp_x 的谱域变体（小改动）。文献引用凭
+记忆待核对（Fu 2014 双成分 PIC；Omura 2009 非线性缺口；Gao 谐波；
+Li Jinxing 2019 缺口成因）。
 
 ---
 
