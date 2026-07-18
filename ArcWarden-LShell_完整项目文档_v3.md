@@ -760,6 +760,18 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 
 ## M1 — Cartesian full-Maxwell + charge conservation
 
+> **状态：✅ 完成（2026-07-17，tag `v1-maxwell`）。** 四个验收 ctest 全过：
+> `yee_vacuum`｜`esirkepov_continuity`｜`yee_langmuir`｜`yee_vs_darwin_lowfreq`
+> （冷等离子体 whistler 本征模：Darwin 实测 0.45−0.05%、Yee 实测 0.449−0.03%，
+> 两分支差 0.21% ≈ 位移电流理论差 0.23%）。∇·B rms 精确为 0（round-off ~1e-10），
+> Gauss 残差漂移钉在原子舍入底 ~2e-7（`MaxwellSimulation::residuals()` +
+> arcsim `<pref>maxwell.csv` 运行时输出）。`[field] model = yee` 已进 arcsim
+> （带 CFL 守卫）。偏差说明：guard cells/StaggeredAccessor 推迟到 M2（v1 用模
+> 索引）；诊断落在 simulation_maxwell.hpp 而非 diagnostics.hpp；dispersion_theory
+> .py 未单列（色散求根内联在各测试里）。额外收获：修复两个 ny=1 越界 bug
+> （Darwin tile-halo 装载、GlobalJSink 4 点 stencil），compute-sanitizer 全绿。
+> 已提前完成的 M9 tiled 沉积也在本分支（case 7 生产验证 2.6× OSIRIS）。
+
 **物理目标**：平直 2D Cartesian 网格上可靠的 2D3V full-Maxwell PIC 基础——Yee staggered E/B 推进、Esirkepov 守恒电流沉积、Gauss law 策略、periodic 场边界、场能量诊断；真空波、等离子体色散验证。
 
 **代码改动**：

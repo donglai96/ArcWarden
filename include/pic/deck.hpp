@@ -39,6 +39,7 @@ struct Deck {
     // Raw inputs are captured during the parse and turned into code-unit RunParams
     // fields in the finalize block (needs dx = Lx/nx, so it runs after [grid]).
     bool   darwin    = false;            // [field] model = darwin
+    bool   yee       = false;            // [field] model = yee (full Maxwell)
     double dx_wpe_c  = 0.0;              // [field] Δx·ω_pe/c  → rp.c = dx / dx_wpe_c
     double c_direct  = 0.0;              // [field] c = <val>  (overrides dx_wpe_c)
     double wce       = 0.0;              // [background] ω_ce
@@ -153,7 +154,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "uth") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.uth[i]=v[i]; }
             else if (key == "ufl") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.ufl[i]=v[i]; }
         } else if (section == "field") {
-            if      (key == "model")    d.darwin = (val == "darwin");
+            if      (key == "model")    { d.darwin = (val == "darwin"); d.yee = (val == "yee"); }
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();
             else if (key == "c")        d.c_direct = dv();
             else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());

@@ -75,6 +75,19 @@ struct Grid {
     __host__ __device__ int idx_periodic(int i, int j) const {
         return wrap(j, ny) * nx + wrap(i, nx);
     }
+
+    // Full modular wrap for indices that may be MANY periods out of range —
+    // tile-halo sweeps when the tile is larger than the grid (e.g. 16-row
+    // tiles on an ny = 1 run). Costs a divide, so keep it off the
+    // per-particle paths; the halo loops run once per tile cell.
+    __host__ __device__ static int wrap_far(int i, int n) {
+        i %= n;
+        if (i < 0) i += n;
+        return i;
+    }
+    __host__ __device__ int idx_periodic_far(int i, int j) const {
+        return wrap_far(j, ny) * nx + wrap_far(i, nx);
+    }
 };
 
 // ---- KGrid : k-space geometry for the R2C half-spectrum -------------------

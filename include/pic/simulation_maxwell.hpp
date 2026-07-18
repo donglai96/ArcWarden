@@ -89,6 +89,52 @@ public:
         return {h[0], h[1]};
     }
 
+    // M1 running conservation diagnostics: rms divB and the DRIFT of the Gauss
+    // residual r = divE - rho from its value at the first call (which absorbs
+    // the neutralizing background and the skipped initial Poisson solve).
+    // rho gets the same binomial passes as J so the comparison is against the
+    // equally-filtered charge (see k_binomial3x3). Call between steps.
+    struct Residuals { double divb_rms, gauss_drift_rms; };
+    Residuals residuals() {
+        const int n = g_.real_size();
+        if (rho_.size() == 0) {
+            rho_  = DeviceArray<float>(n);
+            rres_ = DeviceArray<float>(n);
+            r0_   = DeviceArray<float>(n);
+        }
+        YeeViews v = flds_.views();
+        const dim3 tb(16, 16);
+        const dim3 nb((g_.nx + 15) / 16, (g_.ny + 15) / 16);
+        rho_.zero(s_);
+        if (parts_.n > 0) {
+            const int threads = 256;
+            yee::k_rho_nodes<<<((int)parts_.n + threads - 1) / threads, threads,
+                               0, s_>>>(parts_.views(), v, rho_.data(), rp_.qm);
+        }
+        if (rp_.jfilter > 0) {
+            float *src = rho_.data(), *dst = jtmp_.data();
+            for (int pass = 0; pass < rp_.jfilter; ++pass) {
+                yee::k_binomial3x3<<<nb, tb, 0, s_>>>(src, dst, v);
+                float* t2 = src; src = dst; dst = t2;
+            }
+            if (src != rho_.data())
+                CUDA_CHECK(cudaMemcpyAsync(rho_.data(), src, (size_t)n * sizeof(float),
+                                           cudaMemcpyDeviceToDevice, s_));
+        }
+        yee::k_gauss_residual<<<nb, tb, 0, s_>>>(v, rho_.data(), rres_.data());
+        if (!have_ref_) {
+            CUDA_CHECK(cudaMemcpyAsync(r0_.data(), rres_.data(), (size_t)n * sizeof(float),
+                                       cudaMemcpyDeviceToDevice, s_));
+            have_ref_ = true;
+        }
+        CUDA_CHECK(cudaMemsetAsync(diag_.data(), 0, diag_.bytes(), s_));
+        yee::k_div_stats<<<(n + 255) / 256, 256, 0, s_>>>(v, rres_.data(), r0_.data(),
+                                                          diag_.data());
+        double h[2];
+        CUDA_CHECK(cudaMemcpy(h, diag_.data(), sizeof(h), cudaMemcpyDeviceToHost));
+        return {std::sqrt(h[0] / n), std::sqrt(h[1] / n)};
+    }
+
 private:
     Grid       g_;
     RunParams  rp_;
@@ -97,6 +143,8 @@ private:
     CudaStream s_;
     DeviceArray<double> diag_;
     DeviceArray<float>  jtmp_;   // binomial-filter scratch (empty if jfilter=0)
+    DeviceArray<float>  rho_, rres_, r0_;   // residuals() scratch (lazy)
+    bool have_ref_ = false;      // Gauss reference residual captured?
     long nstep_ = 0;
     long next_sort_ = 0;         // next tile re-sort step (tile_sort path)
 };

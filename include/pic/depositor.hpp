@@ -148,7 +148,7 @@ __global__ void deposit_charge_tiled_kernel(ParticleViews p, BinViews b,
 
     for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
         const float v = s_rho[c];
-        if (v != 0.0f) atomicAdd(&src.rho[g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW))], v);
+        if (v != 0.0f) atomicAdd(&src.rho[g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW))], v);
     }
 }
 
@@ -211,7 +211,7 @@ __global__ void deposit_rho_j_tiled_kernel(ParticleViews p, BinViews b,
         const float vr = s_rho[c];
         const float jx = s_jx[c], jy = s_jy[c], jz = s_jz[c];
         if (vr != 0.0f || jx != 0.0f || jy != 0.0f || jz != 0.0f) {
-            const int gc = g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW));
+            const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
             atomicAdd(&src.rho[gc], vr);
             atomicAdd(&src.Jx[gc], jx);
             atomicAdd(&src.Jy[gc], jy);
@@ -262,7 +262,7 @@ __global__ void deposit_amu_kernel(ParticleViews p, BinViews b, SourceViews src,
     __syncthreads();
     for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
         if (s0[c]||s1[c]||s2[c]||s3[c]) {
-            const int gc = g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW));
+            const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
             atomicAdd(&src.amu0[gc], s0[c]); atomicAdd(&src.amu1[gc], s1[c]);
             atomicAdd(&src.amu2[gc], s2[c]); atomicAdd(&src.amu3[gc], s3[c]);
         }
@@ -283,7 +283,7 @@ __global__ void deposit_dcu_kernel(ParticleViews p, BinViews b, SourceViews src,
     if (tile >= b.ntiles) return;
     const int gi0 = (tile % b.ntx) * TX, gj0 = (tile / b.ntx) * TY;
     for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
-        const int gc = g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW));
+        const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
         sEx[c]=f.Ex[gc]; sEy[c]=f.Ey[gc]; sEz[c]=f.Ez[gc];
         sBx[c]=f.Bx[gc]; sBy[c]=f.By[gc]; sBz[c]=f.Bz[gc];
         sdx[c]=sdy[c]=sdz[c]=0.0f;
@@ -317,7 +317,7 @@ __global__ void deposit_dcu_kernel(ParticleViews p, BinViews b, SourceViews src,
     __syncthreads();
     for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
         if (sdx[c]||sdy[c]||sdz[c]) {
-            const int gc = g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW));
+            const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
             atomicAdd(&src.dcux[gc], sdx[c]); atomicAdd(&src.dcuy[gc], sdy[c]); atomicAdd(&src.dcuz[gc], sdz[c]);
         }
     }

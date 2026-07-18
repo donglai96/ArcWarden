@@ -222,11 +222,18 @@ __device__ inline void esirkepov_scatter(float x0, float y0, float x1, float y1,
         }
 }
 
+// Global-atomic deposit sink (flat path + tiled-path stray fallback). Uses the
+// full modular wrap: the 4-node union stencil {jb-1..jb+2} runs up to TWO
+// periods out of range on tiny grids (ny = 1 runs), beyond the one-period
+// contract of YeeViews::idx.
 struct GlobalJSink {
     YeeViews v;
-    __device__ void jx(int i, int j, float a) { atomicAdd(&v.jx[v.idx(i, j)], a); }
-    __device__ void jy(int i, int j, float a) { atomicAdd(&v.jy[v.idx(i, j)], a); }
-    __device__ void jz(int i, int j, float a) { atomicAdd(&v.jz[v.idx(i, j)], a); }
+    __device__ int idx(int i, int j) const {
+        return Grid::wrap_far(j, v.ny) * v.nx + Grid::wrap_far(i, v.nx);
+    }
+    __device__ void jx(int i, int j, float a) { atomicAdd(&v.jx[idx(i, j)], a); }
+    __device__ void jy(int i, int j, float a) { atomicAdd(&v.jy[idx(i, j)], a); }
+    __device__ void jz(int i, int j, float a) { atomicAdd(&v.jz[idx(i, j)], a); }
 };
 
 static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams rp,
@@ -358,6 +365,45 @@ static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, doub
             if (s != 0.f)
                 atomicAdd(&rho[v.idx(ib - 1 + ni, jb - 1 + nj)], coef * s);
         }
+}
+
+// Gauss residual r = divE - rho at NODES (where the CIC rho lives):
+//   divE(i,j) = (Ex(i,j)-Ex(i-1,j))/dx + (Ey(i,j)-Ey(i,j-1))/dy
+// The uniform neutralizing ion background and the missing initial Poisson
+// solve both live in r(t=0); Esirkepov guarantees r(t) ≡ r(0) to round-off,
+// so the running diagnostic is the DRIFT rms(r - r0), not rms(r).
+static __global__ void k_gauss_residual(YeeViews v, const float* rho, float* r) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const int c = v.idx(i, j);
+    const float dive = (v.ex[c] - v.ex[v.idx(i - 1, j)]) / v.dxp
+                     + (v.ey[c] - v.ey[v.idx(i, j - 1)]) / v.dyp;
+    r[c] = dive - rho[c];
+}
+
+// conservation stats: out[0] += divB², out[1] += (r - r0)²  (FP64 sums)
+//   divB(i+½,j+½) = (Bx(i+1,j+½)-Bx(i,j+½))/dx + (By(i+½,j+1)-By(i+½,j))/dy
+// (Faraday preserves this exactly on the Yee mesh; B starts at 0 and the
+// uniform external B0 never touches the grid, so divB itself is the metric.)
+static __global__ void k_div_stats(YeeViews v, const float* r, const float* r0,
+                                   double* out) {
+    __shared__ double sB, sG;
+    if (threadIdx.x == 0) { sB = 0; sG = 0; }
+    __syncthreads();
+    const int n = blockIdx.x * blockDim.x + threadIdx.x;
+    double b2 = 0, g2 = 0;
+    if (n < v.nx * v.ny) {
+        const int i = n % v.nx, j = n / v.nx;
+        const float divb = (v.bx[v.idx(i + 1, j)] - v.bx[n]) / v.dxp
+                         + (v.by[v.idx(i, j + 1)] - v.by[n]) / v.dyp;
+        b2 = (double)divb * divb;
+        const double d = (double)r[n] - r0[n];
+        g2 = d * d;
+    }
+    atomicAdd(&sB, b2); atomicAdd(&sG, g2);
+    __syncthreads();
+    if (threadIdx.x == 0) { atomicAdd(&out[0], sB); atomicAdd(&out[1], sG); }
 }
 
 // field energy: out[0] += eps0 E²/2 · dA, out[1] += c² B²/2 · dA (FP64 sums)

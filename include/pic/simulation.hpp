@@ -122,6 +122,7 @@ public:
     const Fields&      fields() const { return fields_; }
     const RunParams&   params() const { return p_; }
     const Particles&   particles() const { return particles_; }
+    Particles&         particles()       { return particles_; }   // tests/tools: perturb after init
     const Grid&        grid() const { return grid_; }
 
 private:

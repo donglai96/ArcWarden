@@ -10,10 +10,12 @@
 
 #include "pic/config.hpp"
 #include "pic/deck.hpp"
+#include "pic/pump.hpp"
 #include "pic/run_meta.hpp"
 #include "pic/diag/manager.hpp"
 #include "pic/grid.hpp"
 #include "pic/simulation.hpp"
+#include "pic/simulation_maxwell.hpp"
 #include "pic/species.hpp"
 
 #include <cmath>
@@ -21,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace arc;
@@ -51,6 +54,76 @@ static int run(Deck& d, const std::string& pref, const std::string& outdir) {
     for (long n = 0; n <= d.rp.nsteps; ++n) {
         if (n > 0) sim.step(n - 1);
         mgr.sample(sim.fields(), sim.particles(), g, d.rp, n, n * d.rp.dt);
+    }
+    mgr.finalize();
+    return 0;
+}
+
+// [field] model = yee: full-Maxwell branch. The standard diag modules consume
+// the spectral Fields type with Darwin conventions (B includes B0, E includes
+// the pump), so the Yee arrays are mirrored into one before each sample — the
+// pattern validated by tools/an2019_yee.cu. Extra output vs the spectral
+// branches: <pref>maxwell.csv with field energies + the M1 running
+// conservation residuals (rms divB, Gauss-residual drift).
+static int run_yee(Deck& d, const std::string& pref, const std::string& outdir) {
+    Grid g(d.nx, d.ny, d.Lx, d.Ly);
+    RunParams& rp = d.rp;
+
+    // light CFL (deck dt is used verbatim; ny = 1 kills the y-curls)
+    const double kmax = std::sqrt(1.0 / (g.dx * g.dx)
+                                + (d.ny > 1 ? 1.0 / (g.dy * g.dy) : 0.0));
+    if (rp.c * rp.dt * kmax >= 1.0) {
+        std::fprintf(stderr, "arcsim: model=yee CFL violated: c*dt*kmax = %.3f >= 1 "
+                     "(max stable dt = %.5g)\n", rp.c * rp.dt * kmax, 1.0 / (rp.c * kmax));
+        return 1;
+    }
+    if (!outdir.empty()) std::filesystem::create_directories(outdir);
+    if (!outdir.empty()) write_run_meta(outdir, g_deckfile, g_argc, g_argv);
+    rp.dump_every = d.dump_every > 0 ? d.dump_every
+                  : (rp.nsteps / 100 > 0 ? rp.nsteps / 100 : 1);
+
+    MaxwellSimulation sim(g, rp);
+    sim.particles().initialize(d.species, g, rp, sim.stream());
+    sim.stream().synchronize();
+    diag::DiagManager mgr(d, rp, pref, outdir);
+
+    Fields mirror(g);
+    mirror.allocate_em(g, sim.stream());
+    mirror.zero(sim.stream());
+    const size_t nbytes = (size_t)g.real_size() * sizeof(float);
+    auto sync_mirror = [&](double t) {
+        YeeFields& yf = sim.fields();
+        cudaStream_t st = sim.stream();
+        CUDA_CHECK(cudaMemcpyAsync(mirror.Ex.data(), yf.ex_.data(), nbytes, cudaMemcpyDeviceToDevice, st));
+        CUDA_CHECK(cudaMemcpyAsync(mirror.Ey.data(), yf.ey_.data(), nbytes, cudaMemcpyDeviceToDevice, st));
+        CUDA_CHECK(cudaMemcpyAsync(mirror.Ez.data(), yf.ez_.data(), nbytes, cudaMemcpyDeviceToDevice, st));
+        CUDA_CHECK(cudaMemcpyAsync(mirror.Bx.data(), yf.bx_.data(), nbytes, cudaMemcpyDeviceToDevice, st));
+        CUDA_CHECK(cudaMemcpyAsync(mirror.By.data(), yf.by_.data(), nbytes, cudaMemcpyDeviceToDevice, st));
+        CUDA_CHECK(cudaMemcpyAsync(mirror.Bz.data(), yf.bz_.data(), nbytes, cudaMemcpyDeviceToDevice, st));
+        // Yee keeps no separate longitudinal solve; the kt/dispersion modules
+        // read ELx, which for the resolved along-x spectrum is just Ex.
+        if (mirror.ELx.size() > 0)
+            CUDA_CHECK(cudaMemcpyAsync(mirror.ELx.data(), yf.ex_.data(), nbytes,
+                                       cudaMemcpyDeviceToDevice, st));
+        add_background_b0(mirror, g, rp, st);
+        add_pump_field(mirror, g, rp, t, st);
+    };
+
+    std::ofstream mcsv(pref + "maxwell.csv");
+    if (mcsv) mcsv << "step,time,WE,WB,divB_rms,gauss_drift_rms\n";
+    sim.residuals();                       // capture the Gauss reference at t=0
+
+    for (long n = 0; n <= rp.nsteps; ++n) {
+        if (n > 0) sim.step();
+        const double t = n * rp.dt;
+        sync_mirror(t);
+        mgr.sample(mirror, sim.particles(), g, rp, n, t);
+        if (mcsv && (n % rp.dump_every == 0 || n == rp.nsteps)) {
+            const auto e = sim.field_energy();
+            const auto r = sim.residuals();
+            mcsv << n << ',' << t << ',' << e.we << ',' << e.wb << ','
+                 << r.divb_rms << ',' << r.gauss_drift_rms << '\n';
+        }
     }
     mgr.finalize();
     return 0;
@@ -91,7 +164,7 @@ int main(int argc, char** argv) {
     // default diagnostics if the deck didn't list any
     if (d.diag_enable.empty()) {
         d.diag_enable.push_back("phase_frames");
-        if (d.darwin) d.diag_enable.push_back("em_energy");
+        if (d.darwin || d.yee) d.diag_enable.push_back("em_energy");
     }
 
     const std::string base = d.prefix.empty() ? deck_stem(deckfile) : d.prefix;
@@ -104,11 +177,13 @@ int main(int argc, char** argv) {
     const long long N = (long long)d.nx * d.ny * (d.species.empty() ? 0 : d.species[0].ppc);
     std::printf("arcwarden [%s]  model=%s  nx=%d ny=%d N=%lld | dx=%.4f Lx=%.1f c=%.3g |B0|=%.4g | "
                 "pump=%d M=%d w0=%.5g v_r/v_th=%.3f | nsteps=%ld  diag=[",
-                base.c_str(), d.darwin ? "darwin" : "electrostatic", d.nx, d.ny, N,
+                base.c_str(), d.yee ? "yee" : d.darwin ? "darwin" : "electrostatic", d.nx, d.ny, N,
                 dx, d.Lx, d.rp.c, bmag, (int)d.rp.pump, d.pump_M, d.rp.pump_w0, vr, d.rp.nsteps);
     for (size_t i = 0; i < d.diag_enable.size(); ++i)
         std::printf("%s%s", i ? " " : "", d.diag_enable[i].c_str());
     std::printf("]  out='%s'\n", outdir.empty() ? "." : outdir.c_str());
 
-    return d.darwin ? run<CfgDarwin>(d, pref, outdir) : run<arc::Cfg>(d, pref, outdir);
+    return d.yee    ? run_yee(d, pref, outdir)
+         : d.darwin ? run<CfgDarwin>(d, pref, outdir)
+                    : run<arc::Cfg>(d, pref, outdir);
 }

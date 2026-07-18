@@ -158,7 +158,7 @@ __global__ void boris_push_tiled_kernel(ParticleViews p, BinViews b, FieldViews 
     const int gj0 = (tile / b.ntx) * TY;
 
     for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
-        const int gc = g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW));
+        const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
         s_Ex[c] = f.Ex[gc];
         s_Ey[c] = f.Ey[gc];
     }
@@ -215,7 +215,7 @@ __global__ void em_push_tiled_kernel(ParticleViews p, BinViews b, FieldViews f,
     const int gj0 = (tile / b.ntx) * TY;
 
     for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
-        const int gc = g.idx_periodic(gi0 + (c % SW), gj0 + (c / SW));
+        const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
         sEx[c] = f.Ex[gc]; sEy[c] = f.Ey[gc]; sEz[c] = f.Ez[gc];
         sBx[c] = f.Bx[gc]; sBy[c] = f.By[gc]; sBz[c] = f.Bz[gc];
     }
