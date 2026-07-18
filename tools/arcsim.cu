@@ -99,9 +99,18 @@ static int run_yee(Deck& d, const std::string& pref, const std::string& outdir) 
         rp.df_tpar  = q.uth[0] * q.uth[0];
         rp.df_tperp = q.uth[1] * q.uth[1];
     }
+    // M4 background profile: mirror-equilibrium load ((E,mu)-mapped bi-Max,
+    // ny = 1). Full-f in a mirror needs the same mapped load, so b0_prof
+    // forces initialize_mirror for the single-species case either way.
+    if (rp.b0_prof && (g.ny != 1 || d.species.size() != 1)) {
+        std::fprintf(stderr, "arcsim: [background] profile=parabolic requires ny=1 "
+                             "and exactly one species (M4)\n");
+        return 1;
+    }
 
     MaxwellSimulation sim(g, rp);
-    sim.particles().initialize(d.species, g, rp, sim.stream());
+    if (rp.b0_prof) sim.particles().initialize_mirror(d.species[0], g, rp, sim.stream());
+    else            sim.particles().initialize(d.species, g, rp, sim.stream());
     if (rp.deltaf) sim.particles().enable_deltaf(sim.stream());
     sim.stream().synchronize();
     diag::DiagManager mgr(d, rp, pref, outdir);

@@ -30,6 +30,7 @@
 #ifndef ARC_PIC_PARTICLES_HPP
 #define ARC_PIC_PARTICLES_HPP
 
+#include "pic/background_b0.hpp"   // M4 mirror-equilibrium load (bg::b0x)
 #include "pic/config.hpp"
 #include "pic/cuda_utils.hpp"
 #include "pic/device_array.hpp"
@@ -39,6 +40,7 @@
 #include <cstddef>
 #include <stdexcept> // sort_by_tile guard (weight-precision study is flat-path)
 #include <utility>   // std::swap (chunk-pool sort buffer swap)
+#include <vector>    // initialize_mirror per-cell offsets
 
 namespace arc {
 
@@ -376,6 +378,53 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
     p.uz[t] = static_cast<float>(sp.ufl[2] + r2 * sp.uth[2] * erfinv(2.0 * qz - 1.0));
 }
 
+// M4 mirror-equilibrium loader (chirp1d k_load port to the 2D branch, ny = 1):
+// markers sample the (E,mu)-mapped equatorial bi-Maxwellian in the background
+// B0(x) profile (background_b0.hpp):
+//   Tpar = const,  1/Tperp(x) = (1 - 1/b)/Tpar + (1/b)/Tperp_eq,
+//   b(x) = B0(x)/B0eq,  n(x)/n_eq = Tperp(x)/Tperp_eq
+// with equal-weight markers (per-cell count ∝ n, offsets prefix `off`, marker
+// cell by binary search). Noisy load (hashed RNG positions + Box-Muller
+// velocities, chirp1d convention) — quiet mirror load is a future refinement;
+// the delta-f noise floor is set by the wd seed, not marker sampling (see
+// test_deltaf_growth header).
+__global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
+                                   const int* __restrict__ off,
+                                   double uth_par, double uth_perp_eq,
+                                   float weight, unsigned long seed) {
+    const long t = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (t >= p.n) return;
+    int lo = 0, hi = g.nx;                 // largest c with off[c] <= t
+    while (hi - lo > 1) {
+        const int mid = (lo + hi) >> 1;
+        if (off[mid] <= t) lo = mid; else hi = mid;
+    }
+    const int c = lo;
+    float x = static_cast<float>(c)
+            + static_cast<float>(rng_uniform(static_cast<int>(t), 0, seed));
+    if (x >= (float)g.nx) x = nextafterf((float)g.nx, 0.f);
+
+    const double b   = (double)bg::b0x(rp, x * (float)g.dx) / (double)rp.B0[0];
+    const double Tpa = uth_par * uth_par;
+    const double Tpe = uth_perp_eq * uth_perp_eq;
+    const double Tp  = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / Tpe);
+
+    const double r1 = fmax(rng_uniform(static_cast<int>(t), 1, seed), 1e-12);
+    const double r2 = rng_uniform(static_cast<int>(t), 2, seed);
+    const double r3 = fmax(rng_uniform(static_cast<int>(t), 3, seed), 1e-12);
+    const double r4 = rng_uniform(static_cast<int>(t), 4, seed);
+    const double upar  = uth_par * sqrt(-2.0 * log(r1)) * cos(2.0 * M_PI * r2);
+    const double uperp = sqrt(Tp) * sqrt(-2.0 * log(r3));
+
+    p.x[t]    = x;
+    p.y[t]    = 0.5f;                      // ny = 1 (validated host-side)
+    p.ux[t]   = static_cast<float>(upar);
+    p.uy[t]   = static_cast<float>(uperp * cos(2.0 * M_PI * r4));
+    p.uz[t]   = static_cast<float>(uperp * sin(2.0 * M_PI * r4));
+    p.w[t]    = weight;
+    p.cell[t] = g.idx(c, 0);
+}
+
 } // namespace detail
 
 struct Particles {
@@ -484,6 +533,42 @@ struct Particles {
             CUDA_CHECK(cudaPeekAtLastError());
             base += si.count;
         }
+    }
+
+    // M4: mirror-equilibrium load of ONE species in the background B0(x)
+    // profile (mirror_init_kernel above). Per-cell marker count ∝ n(x) =
+    // Tperp(x)/Tperp_eq (equal weight = density·dx·dy/ppc at the equator);
+    // total n is set by the profile, NOT ppc·ncells. Requires ny == 1,
+    // rp.b0_prof, gyrotropy uth[1] == uth[2].
+    void initialize_mirror(const Species& q, const Grid& g, const RunParams& rp,
+                           cudaStream_t s) {
+        if (g.ny != 1)   throw std::runtime_error("initialize_mirror: ny must be 1");
+        if (!rp.b0_prof) throw std::runtime_error("initialize_mirror: rp.b0_prof required");
+        if (q.uth[1] != q.uth[2])
+            throw std::runtime_error("initialize_mirror: gyrotropy uth[1] == uth[2] required");
+        const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
+        std::vector<int> off(g.nx + 1, 0);
+        long tot = 0;
+        for (int c = 0; c < g.nx; ++c) {
+            const double b  = (double)bg::b0x(rp, (c + 0.5f) * (float)g.dx)
+                            / (double)rp.B0[0];
+            const double Tp = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / Tpe);
+            off[c] = static_cast<int>(tot);
+            tot += std::lround(q.ppc * (Tp / Tpe));
+        }
+        off[g.nx] = static_cast<int>(tot);
+        allocate_n(static_cast<std::size_t>(tot));
+        DeviceArray<int> doff(static_cast<std::size_t>(g.nx) + 1);
+        CUDA_CHECK(cudaMemcpyAsync(doff.data(), off.data(),
+                                   (g.nx + 1) * sizeof(int),
+                                   cudaMemcpyHostToDevice, s));
+        constexpr int threads = 256;
+        const int blocks = static_cast<int>((tot + threads - 1) / threads);
+        detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
+            views(), g, rp, doff.data(), q.uth[0], q.uth[1],
+            static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed);
+        CUDA_CHECK(cudaPeekAtLastError());
+        CUDA_CHECK(cudaStreamSynchronize(s));   // doff is scoped to this call
     }
 
     // Periodic wrap + recompute cell (v1 migrate; chunk-pool reshuffle later).

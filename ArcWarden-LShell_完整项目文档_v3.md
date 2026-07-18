@@ -884,10 +884,18 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 > mid-kick u；`detail::boris_rotate` 从 boris_update_full 抽出共用）。
 > 门槛 `yee_mirror_bounce`（test_chirp1d_mirror 的 2D 代码路径版，零权重
 > 单粒子隔离积分器）：**ω_b 误差 0.20%，μ 散布 7.3e-4，|u|² 漂移 5.9e-6**。
-> **待做**：δf × b0_prof（(ℰ,μ) 映射装载 + Tperp(x) 权重驱动，chirp1d
-> tperp_of 移植——当前组合被拒绝）；相对论 push 选项（Yee 分支 γ≡1，
-> chirp1d 的 Tao 复现是相对论的——或先用双方 nonrel 模式对照）；deck
-> `[background] profile=parabolic`；chirping 复验 run + `plot_chirping.py`。
+> 同日第二块：**δf × b0_prof 已接通**——`Particles::initialize_mirror`
+> （chirp1d k_load 移植：(ℰ,μ) 映射 bi-Max，n(x)∝T⊥(x)/T⊥eq 等权 marker，
+> 逐 cell 计数 + 二分查找）+ 权重驱动局部 T⊥(x)（tperp_of 公式，b0_prof
+> 时启用）；门槛 `deltaf_mirror_hold`（装载矩逐段 vs 解析 <3.2%；
+> A=0.25 稳定 + 1e-6 种子跑 2 个弹跳周期：wd 有界 ×1.36，max 1.4e-4）。
+> deck `[background] profile=parabolic a= xc=`（xc 缺省 Lx/2）+ arcsim
+> 接线（b0_prof → initialize_mirror，单 species + ny=1 校验）。
+> `decks/chirping_2dpath.ini` 骨架已写（Tao GRL17 单位换算全注释）。
+> **待做**：多 species 混合装载（冷各向同性 = 均匀装载即平衡，仅热各向
+> 异性需 mirror load——arcsim 解除单 species 限制）；相对论 push 选项
+> （先双方 nonrel 对照，再加 γ）；antenna 幅值重标定；chirping 复验 run
+> + `plot_chirping.py` → tag `v4-gate-1d`。
 
 **代码改动**：
 

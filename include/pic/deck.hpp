@@ -45,6 +45,7 @@ struct Deck {
     double wce       = 0.0;              // [background] ω_ce
     double theta_deg = 0.0;             // [background] B0 angle in x-z plane (deg)
     bool   b0_direct = false;           // [background] B0 = bx by bz given verbatim
+    bool   b0_xc_set = false;           // [background] xc given (else Lx/2)
 
     bool   pump_enable = false;         // [pump] enable
     int    pump_M      = 0;             // [pump] mode  → rp.pump_k0 = 2πM/Lx
@@ -180,6 +181,13 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "theta_deg") d.theta_deg = dv();
             else if (key == "B0") { auto v = detail::deck_vec3(val);
                                     for (int i=0;i<3;++i) d.rp.B0[i]=(float)v[i]; d.b0_direct = true; }
+            // M4 parabolic profile B0(x) = wce·(1 + a (x−xc)²) x̂
+            // (background_b0.hpp); xc defaults to Lx/2 in the finalize block.
+            else if (key == "profile") { if (val == "parabolic") d.rp.b0_prof = 1;
+                                         else if (val != "uniform")
+                                             throw std::runtime_error("deck: [background] profile must be uniform|parabolic"); }
+            else if (key == "a")       d.rp.b0_a = dv();
+            else if (key == "xc")      { d.rp.b0_xc = dv(); d.b0_xc_set = true; }
         } else if (section == "pump") {
             if      (key == "enable") d.pump_enable = detail::deck_bool(val);
             else if (key == "mode")   d.pump_M = static_cast<int>(iv());
@@ -217,6 +225,11 @@ inline Deck load_deck(const std::string& path) {
         d.rp.B0[0] = (float)(d.wce * std::cos(th));
         d.rp.B0[1] = 0.0f;
         d.rp.B0[2] = (float)(d.wce * std::sin(th));
+    }
+    if (d.rp.b0_prof) {                                        // M4 parabolic B0(x)
+        if (!d.b0_xc_set) d.rp.b0_xc = 0.5 * d.Lx;
+        if (d.rp.B0[1] != 0.f || d.rp.B0[2] != 0.f)
+            throw std::runtime_error("deck: [background] profile=parabolic requires B0 along x (theta_deg = 0)");
     }
     if (d.pump_enable) {                                       // whistler pump (An et al. Table I)
         const double s = d.pump_amp * dx / 1e4;               // Ẽα0 = 1e4·eEα0/(me ωpe² Δx)

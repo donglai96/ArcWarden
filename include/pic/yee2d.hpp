@@ -201,8 +201,20 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
         const float Fx = Ex + (uyc * dBz - uzc * dBy);
         const float Fy = Ey + (uzc * dBx - uxc * dBz);
         const float Fz = Ez + (uxc * dBy - uyc * dBx);
+        // M4: in the background B0(x) profile the reference f0 is the
+        // (E,mu)-mapped equatorial bi-Maxwellian (initialize_mirror), whose
+        // local perpendicular temperature is 1/Tperp(x) = (1-1/b)/Tpar +
+        // (1/b)/Tperp_eq, b = B0(x)/B0eq (chirp1d tperp_of). The mirror force
+        // is part of the equilibrium motion conserving f0(E,mu) and does NOT
+        // enter the wave force F.
+        float tpe = (float)rp.df_tperp;
+        if (rp.b0_prof) {
+            const float b = bg::b0x(rp, x0 * v.dxp) / rp.B0[0];
+            tpe = 1.f / ((1.f - 1.f / b) / (float)rp.df_tpar
+                         + (1.f / b) / (float)rp.df_tperp);
+        }
         const float S  = Fx * uxc / (float)rp.df_tpar
-                       + (Fy * uyc + Fz * uzc) / (float)rp.df_tperp;
+                       + (Fy * uyc + Fz * uzc) / tpe;
         const float wd = p.wd[t];
         // Accumulator precision study (docs/WEIGHT_PRECISION.md). The drive S is
         // FP32 in all modes — the question is roundoff of the ACCUMULATION over
