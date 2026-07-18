@@ -31,12 +31,13 @@
 #ifndef ARC_PIC_YEE2D_HPP
 #define ARC_PIC_YEE2D_HPP
 
+#include "pic/background_b0.hpp"  // M4 parabolic B0(x) + mirror effective field
 #include "pic/config.hpp"
 #include "pic/cuda_utils.hpp"
 #include "pic/device_array.hpp"
 #include "pic/grid.hpp"
 #include "pic/particles.hpp"
-#include "pic/pusher.hpp"     // boris_update_full (shared rotation)
+#include "pic/pusher.hpp"     // boris_update_full + boris_rotate
 
 #include <cmath>
 
@@ -168,7 +169,20 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
     float ux = p.ux[t], uy = p.uy[t], uz = p.uz[t];
     const float uxo = ux, uyo = uy, uzo = uz;   // u^{n-1/2} (delta-f centering)
     const float qmh = (float)(rp.qm * 0.5 * rp.dt);
-    detail::boris_update_full(ux, uy, uz, Ex, Ey, Ez, Bx, By, Bz, qmh);
+    if (rp.b0_prof) {
+        // M4 parabolic B0(x) + mirror force (background_b0.hpp): the effective
+        // field needs the MID-KICK u, so split the kick-rotate-kick here.
+        // Requires B0 ∥ x̂; rp.B0[1] = rp.B0[2] = 0 (validated by callers).
+        const float xph = x0 * v.dxp;
+        const float b0  = bg::b0x(rp, xph);
+        const float mc  = bg::db0dx(rp, xph) / (2.f * b0 * (float)rp.qm);
+        ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
+        detail::boris_rotate(ux, uy, uz,
+                             dBx + b0, dBy + mc * uz, dBz - mc * uy, qmh);
+        ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
+    } else {
+        detail::boris_update_full(ux, uy, uz, Ex, Ey, Ez, Bx, By, Bz, qmh);
+    }
     p.ux[t] = ux; p.uy[t] = uy; p.uz[t] = uz;
 
     // M3 delta-f weight update (chirp1d / Tao PPCF 2017 eq. 19 form):
@@ -190,7 +204,26 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
         const float S  = Fx * uxc / (float)rp.df_tpar
                        + (Fy * uyc + Fz * uzc) / (float)rp.df_tperp;
         const float wd = p.wd[t];
-        p.wd[t] = wd + (float)(rp.dt * rp.qm) * (1.f - wd) * S;
+        // Accumulator precision study (docs/WEIGHT_PRECISION.md). The drive S is
+        // FP32 in all modes — the question is roundoff of the ACCUMULATION over
+        // ~1e5 steps. Kahan uses __fadd_rn so the compensation term cannot be
+        // algebraically folded away; FP64 keeps wdd and mirrors it to wd for the
+        // deposit. Default (df_wprec = 0) is bit-identical to the plain update.
+        if (rp.df_wprec == 2) {
+            const double wo = p.wdd[t];
+            const double wn = wo + rp.dt * rp.qm * (1.0 - wo) * (double)S;
+            p.wdd[t] = wn;
+            p.wd[t]  = (float)wn;
+        } else if (rp.df_wprec == 1) {
+            const float inc = (float)(rp.dt * rp.qm) * (1.f - wd) * S;
+            const float c   = p.wc[t];
+            const float yk  = __fadd_rn(inc, -c);
+            const float wn  = __fadd_rn(wd, yk);
+            p.wc[t] = __fadd_rn(__fadd_rn(wn, -wd), -yk);
+            p.wd[t] = wn;
+        } else {
+            p.wd[t] = wd + (float)(rp.dt * rp.qm) * (1.f - wd) * S;
+        }
     }
 
     x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);

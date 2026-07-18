@@ -79,14 +79,11 @@ __device__ inline void boris_velocity_update(float& ux, float& uy, float& uz,
     uy += qmh * Ey;
 }
 
-// Full Boris with a PER-PARTICLE gathered B (Darwin/EM): half-E → rotate about
-// the local B → half-E, over dt (qmh = (q/m)(dt/2)). Same scheme as
-// boris_velocity_update but B is the self-consistent gathered field, not rp.B0,
-// and Ez participates. Used by the fused EM push.
-__device__ inline void boris_update_full(float& ux, float& uy, float& uz,
-                                         float Ex, float Ey, float Ez,
-                                         float Bx, float By, float Bz, float qmh) {
-    ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;          // first half E
+// Boris rotation only, about field (Bx,By,Bz) over dt (qmh = (q/m)(dt/2)).
+// Split out of boris_update_full for callers that need the mid-kick u to build
+// a velocity-dependent effective field (M4 mirror force, background_b0.hpp).
+__device__ inline void boris_rotate(float& ux, float& uy, float& uz,
+                                    float Bx, float By, float Bz, float qmh) {
     const float tx = qmh * Bx, ty = qmh * By, tz = qmh * Bz;
     const float t2 = tx * tx + ty * ty + tz * tz;
     const float sf = 2.0f / (1.0f + t2);
@@ -97,6 +94,17 @@ __device__ inline void boris_update_full(float& ux, float& uy, float& uz,
     ux += (upy * sz - upz * sy);
     uy += (upz * sx - upx * sz);
     uz += (upx * sy - upy * sx);
+}
+
+// Full Boris with a PER-PARTICLE gathered B (Darwin/EM): half-E → rotate about
+// the local B → half-E, over dt (qmh = (q/m)(dt/2)). Same scheme as
+// boris_velocity_update but B is the self-consistent gathered field, not rp.B0,
+// and Ez participates. Used by the fused EM push.
+__device__ inline void boris_update_full(float& ux, float& uy, float& uz,
+                                         float Ex, float Ey, float Ez,
+                                         float Bx, float By, float Bz, float qmh) {
+    ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;          // first half E
+    boris_rotate(ux, uy, uz, Bx, By, Bz, qmh);
     ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;          // second half E
 }
 

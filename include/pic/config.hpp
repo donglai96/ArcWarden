@@ -190,6 +190,20 @@ struct RunParams {
     int      deltaf    = 0;
     double   df_tpar   = 1.0;   // uth_par²  (f0 parallel temperature, m = 1)
     double   df_tperp  = 1.0;   // uth_perp²
+    // —— M4 background B0(x) profile (background_b0.hpp) ——
+    // b0_prof = 1: parabolic B0(x) = B0[0]·(1 + b0_a (x − b0_xc)²) x̂ along the
+    // field-aligned coordinate, with the unresolved mirror force folded into
+    // the Boris rotation as an effective field. x, b0_xc PHYSICAL units.
+    // Requires B0[1] = B0[2] = 0; deltaf + b0_prof not wired yet (see header).
+    int      b0_prof   = 0;
+    double   b0_a      = 0.0;
+    double   b0_xc     = 0.0;
+
+    // wd accumulator precision (weight-precision study, docs/WEIGHT_PRECISION.md):
+    // 0 = FP32 (production), 1 = FP32 + Kahan compensation, 2 = FP64 reference.
+    // Modes 1/2 need Particles::enable_deltaf(s, wprec) and the FLAT deposit
+    // path (the tile sort does not carry the auxiliary accumulator arrays).
+    int      df_wprec  = 0;
 
     // —— M2/M10 antenna: localized rotating transverse current column ——
     // J_y += amp·g(x)·cos(w0 t)·ramp, J_z -= amp·g(x)·sin(w0 t)·ramp with

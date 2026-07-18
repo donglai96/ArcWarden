@@ -37,6 +37,7 @@
 #include "pic/species.hpp"
 
 #include <cstddef>
+#include <stdexcept> // sort_by_tile guard (weight-precision study is flat-path)
 #include <utility>   // std::swap (chunk-pool sort buffer swap)
 
 namespace arc {
@@ -47,6 +48,10 @@ struct ParticleViews {
     DeviceView<float> wd;       // M3 delta-f weight (empty unless enable_deltaf)
     DeviceView<int>   cell;
     int n = 0;
+    // Weight-precision study accumulators, APPENDED after n on purpose: shorter
+    // brace-inits elsewhere value-initialize these to empty (no call-site churn).
+    DeviceView<float>  wc;      // Kahan compensation  (df_wprec == 1)
+    DeviceView<double> wdd;     // FP64 wd accumulator (df_wprec == 2)
 };
 
 // Per-tile particle binning (coarse counting sort) — the index structure the
@@ -395,12 +400,22 @@ struct Particles {
     DeviceArray<float> wd, wd2;
     bool has_wd = false;
 
+    // Weight-precision study (docs/WEIGHT_PRECISION.md): auxiliary accumulators
+    // for df_wprec 1 (Kahan compensation) / 2 (FP64 reference, mirrored to wd
+    // for the deposit). FLAT path only — the tile sort does not scatter these.
+    DeviceArray<float>  wc;
+    DeviceArray<double> wdd;
+    int wprec = 0;
+
     // Allocate + zero the delta-f weights. Call AFTER initialize(); a fresh
     // delta-f load starts exactly on the reference distribution (wd = 0).
-    void enable_deltaf(cudaStream_t s) {
+    void enable_deltaf(cudaStream_t s, int wprec_ = 0) {
         wd = DeviceArray<float>(n);
         wd.zero(s);
         has_wd = true;
+        wprec = wprec_;
+        if (wprec == 1) { wc  = DeviceArray<float>(n);  wc.zero(s);  }
+        if (wprec == 2) { wdd = DeviceArray<double>(n); wdd.zero(s); }
     }
 
     Particles() = default;
@@ -424,7 +439,8 @@ struct Particles {
 
     ParticleViews views() {
         return ParticleViews{ x.view(), y.view(), ux.view(), uy.view(), uz.view(),
-                              w.view(), wd.view(), cell.view(), static_cast<int>(n) };
+                              w.view(), wd.view(), cell.view(), static_cast<int>(n),
+                              wc.view(), wdd.view() };
     }
 
     // Load positions (stratified quiet) + velocities (quiet Maxwellian) + cell.
@@ -536,6 +552,9 @@ struct Particles {
     // the array-moving scatter + a buffer swap.
     void sort_by_tile(const Grid& g, int tx, int ty, cudaStream_t s) {
         if (n == 0) return;
+        if (wprec != 0)
+            throw std::runtime_error("sort_by_tile: df_wprec > 0 (weight-precision "
+                                     "study) is flat-path only — disable tile_sort");
         const int ntx    = (g.nx + tx - 1) / tx;
         const int nty    = (g.ny + ty - 1) / ty;
         const int ntiles = ntx * nty;

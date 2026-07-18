@@ -832,19 +832,25 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 
 ## M3 — 单 population electromagnetic δf
 
-> **状态：🔶 Phase 1 完成（2026-07-17）——Yee 分支 DeltaF 路径 + 两个门槛。**
-> 已落地：Particles 加 `wd`（进 sort 双缓冲/views）；`[species] rep = deltaf`；
-> 权重方程融合进 yee_advance_particle（chirp1d/Tao eq19 离散，波场 only——
-> gather 已拆 δB 与 B0，∂ln f0 乘加系数，B0∥x̂ + 回旋对称约束）；DeltaF 沉积
-> `q·w·wd·v`（flat + tiled 两路径，k_rho_nodes 同步）。门槛：
-> `deltaf_equilibrium`（各向同性 + 种子，wd 有界 ×1.17，flat/tiled 逐位一致）
-> `deltaf_growth`（单 bi-Max 平行哨声增长率 vs Z 函数理论：**γ=2.60e-3 vs
-> 2.872e-3（9.4%，ppc=1600）；ω_r=0.18686 vs 0.1868 精确**；ppc 收敛
-> 400/1600/6400 → 26%/9%/4% ≈ 1/√ppc——回旋共振带 marker 分辨率所限，
-> 已写进测试头）。ctest 26/26。
-> **待做（Phase 2）**：FullF policy + `deltaf_vs_fullf_consistency`；
-> `deltaf_landau`（对照 solver_es）；精度三模式 + WEIGHT_PRECISION.md；
-> 权重诊断模块（Σwd、⟨wd²⟩）；→ 齐后 tag `v3-deltaf`。
+> **状态：✅ 完成（2026-07-18），tag `v3-deltaf`。**
+> Phase 1（e724845）：Particles 加 `wd`（进 sort 双缓冲/views）；`[species]
+> rep = deltaf`；权重方程融合进 yee_advance_particle（chirp1d/Tao eq19 离散，
+> 波场 only——gather 已拆 δB 与 B0，∂ln f0 乘加系数，B0∥x̂ + 回旋对称约束，
+> **u 时间中心化 t^n**——consistency 门槛抓出的反阻尼 bug）；DeltaF 沉积
+> `q·w·wd·v`（flat + tiled 两路径）。四门槛：`deltaf_equilibrium`（wd 有界
+> ×1.17，flat/tiled 逐位一致）｜`deltaf_growth`（γ=2.60e-3 vs 2.872e-3，
+> 9.4% @ppc1600，1/√ppc marker 分辨率所限；ω_r 精确）｜`deltaf_landau`
+> （ω 0.06%、γ 2.3%）｜`deltaf_consistency`（双表示同种子 ω 差 0.05%）。
+> Phase 2 收尾（2026-07-18）：**精度三模式 = 运行时开关 `df_wprec`
+> （0=FP32/1=Kahan/2=FP64，`enable_deltaf(s,wprec)`，flat 路径）+
+> `tools/weight_precision.cu` 1e5 步双 case 对照 → `docs/WEIGHT_PRECISION.md`。
+> 结论：FP32 生产默认成立——三精度 γ 五位有效数字全同（2.6474e-3）；
+> Kahan 与 FP32 对 FP64 的偏离逐点一致 → 主导误差是每步 FP32 增量算术经
+> 沉积反馈的 marker 轨迹发散（所有模式共有），非累加舍入；比 1/√ppc 噪声
+> 低 3+ 个量级。** ctest 29/29，sanitizer clean。
+> 注：`weight_update.hpp`/`f0/` 目录未单独拆文件——权重方程融合在
+> yee2d.hpp（性能路径），f0 系数即 df_tpar/df_tperp；表结构等 M5 f0(ℰ,μ)
+> 需要时再抽。
 
 **物理目标**：w/wd 数据模型、非线性权重方程、加权守恒沉积、精度三模式对照、**full-f deposition policy 同步实现**；平衡保持、Landau damping、whistler 色散、各向异性增长率 benchmark。
 
@@ -870,7 +876,18 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 
 ## ⛔ M4 — 退化 1D 复现【PHYSICS GATE】
 
-**物理目标**：$N_\phi=1$–4（periodic），复现文献中的 whistler 线性增长 → nonlinear trapping → rising-tone chirping（Katoh-Omura / Tao 类设置）；同步产出第一轮 hot 表示对比数据。**通过前禁止实现任何 MLT injection 物理。**
+> **状态：🔶 已开工（2026-07-18）——背景场基础设施落地，第一门槛通过。**
+> `include/pic/background_b0.hpp`（新）：抛物 B0(x)=B0eq(1+a(x−xc)²)x̂ +
+> 镜像力有效场 B_mir=[B0′/(2B0(q/m))](u×x̂)（chirp1d 方案；1/(q/m) 因子
+> 泛化了 chirp1d 硬编码的 q/m=−1）；`RunParams::b0_prof/b0_a/b0_xc`；
+> yee_advance_particle 在 b0_prof 下拆 kick-rotate-kick（B_mir 需要
+> mid-kick u；`detail::boris_rotate` 从 boris_update_full 抽出共用）。
+> 门槛 `yee_mirror_bounce`（test_chirp1d_mirror 的 2D 代码路径版，零权重
+> 单粒子隔离积分器）：**ω_b 误差 0.20%，μ 散布 7.3e-4，|u|² 漂移 5.9e-6**。
+> **待做**：δf × b0_prof（(ℰ,μ) 映射装载 + Tperp(x) 权重驱动，chirp1d
+> tperp_of 移植——当前组合被拒绝）；相对论 push 选项（Yee 分支 γ≡1，
+> chirp1d 的 Tao 复现是相对论的——或先用双方 nonrel 模式对照）；deck
+> `[background] profile=parabolic`；chirping 复验 run + `plot_chirping.py`。
 
 **代码改动**：
 
