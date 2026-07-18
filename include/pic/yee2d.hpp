@@ -167,6 +167,28 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
 
     x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);
     y1 = y0 + (float)(uy * rp.dt / (double)v.dyp);
+    // M2 bounded x: specular reflection at the DOMAIN ends (Umeda scheme —
+    // the damping layers may contain plasma; the mask kills the fields, the
+    // wall keeps particles out of the periodic x-wrap). Reflect before the
+    // deposit so Esirkepov sees the folded path (still |Δ| < 1 cell).
+    if (rp.bnd_x) {
+        if (x1 < 0.f)               { x1 = -x1;                  p.ux[t] = -ux; }
+        else if (x1 >= (float)v.nx) { x1 = 2.f * v.nx - x1;      p.ux[t] = -ux; }
+        if (x1 >= (float)v.nx)      // float edge x1 == nx: keep off the wrap
+            x1 = nextafterf((float)v.nx, 0.f);
+        // hybrid mode: damp the transverse momentum inside the layers so the
+        // coherent whistler current dies with the field it would re-radiate
+        if (rp.bnd_x == 2) {
+            const float nd = (float)rp.bnd_nd;
+            float d = 0.f;
+            if (x1 < nd)                 d = (nd - x1) / nd;
+            else if (x1 > v.nx - nd)     d = (x1 - (v.nx - nd)) / nd;
+            if (d > 0.f) {
+                const float m = __expf((float)(-rp.bnd_numax * rp.dt) * d * d);
+                p.uy[t] = uy * m; p.uz[t] = uz * m;
+            }
+        }
+    }
     // position write-back is the CALLER's job: the flat kernel stores x1
     // unwrapped (Particles::migrate wraps), the tiled kernel stores the
     // wrapped position directly (fused migrate) — avoids a double write.
@@ -365,6 +387,53 @@ static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, doub
             if (s != 0.f)
                 atomicAdd(&rho[v.idx(ib - 1 + ni, jb - 1 + nj)], coef * s);
         }
+}
+
+// M2: Umeda-style multiplicative damping masks over the two x-end layers,
+// applied to ALL wave fields once per step (the grid holds only wave fields;
+// the uniform external B0 lives in RunParams and is never damped). mn = mask
+// at integer x (Ey, Ez, Bx sites), mh = mask at half-integer x (Ex, By, Bz);
+// the y stagger is irrelevant for x-direction masks.
+static __global__ void k_damp_x(YeeViews v, const float* __restrict__ mn,
+                                const float* __restrict__ mh) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const float a = mn[i], b = mh[i];
+    if (a == 1.f && b == 1.f) return;
+    const int c = j * v.nx + i;
+    v.ey[c] *= a; v.ez[c] *= a; v.bx[c] *= a;
+    v.ex[c] *= b; v.by[c] *= b; v.bz[c] *= b;
+}
+
+// M2/M10 antenna: add the rotating transverse current column (see RunParams
+// ant_*) into J before the Ampère update. Jy site (i, j+½) and Jz site (i, j)
+// share integer x, so one Gaussian g(i) serves both.
+static __global__ void k_antenna(YeeViews v, RunParams rp, double tnow) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const double dxi = i - rp.ant_x0;
+    if (fabs(dxi) > 4.0 * rp.ant_sigma) return;
+    if (rp.ant_toff > 0 && tnow >= rp.ant_toff) return;   // toff = 0: always on
+    // trapezoidal envelope (yee_pump_ramp shape): linear up over trmp, flat,
+    // linear down over the last trmp before toff — a hard turn-off radiates a
+    // broadband transient (slow near-ωce whistlers that pollute the domain)
+    double ramp = 1.0;
+    if (rp.ant_trmp > 0) {
+        if (tnow < rp.ant_trmp)                      ramp = tnow / rp.ant_trmp;
+        else if (rp.ant_toff > 0 &&
+                 tnow > rp.ant_toff - rp.ant_trmp)   ramp = (rp.ant_toff - tnow) / rp.ant_trmp;
+    }
+    const double g = rp.ant_amp * ramp * exp(-dxi * dxi / (2.0 * rp.ant_sigma * rp.ant_sigma));
+    const double ph = rp.ant_w0 * tnow;
+    const int c = j * v.nx + i;
+    // electron-gyration (R-mode) sense: (Jy + iJz) ∝ e^{+i w0 t}. The
+    // opposite sense is an L-mode drive — evanescent below ω_ce, radiates
+    // nothing at w0 (verified the hard way: probe spectrum showed only
+    // broadband ramp transients near ω_ce).
+    v.jy[c] += (float)(g * cos(ph));
+    v.jz[c] += (float)(g * sin(ph));
 }
 
 // Gauss residual r = divE - rho at NODES (where the CIC rho lives):

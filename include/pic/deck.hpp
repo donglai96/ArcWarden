@@ -160,6 +160,20 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());
             else if (key == "jfilter")  d.rp.jfilter = static_cast<int>(iv());
             else if (key == "tile_sort") d.rp.tile_sort = static_cast<int>(iv());
+        } else if (section == "antenna") {
+            // M2/M10 (Yee branch): localized rotating transverse current column
+            if      (key == "amp")   d.rp.ant_amp = dv();
+            else if (key == "x0")    d.rp.ant_x0 = dv();     // cells
+            else if (key == "sigma") d.rp.ant_sigma = dv();  // cells
+            else if (key == "w0")    d.rp.ant_w0 = dv();
+            else if (key == "trmp")  d.rp.ant_trmp = dv();
+            else if (key == "toff")  d.rp.ant_toff = dv();
+        } else if (section == "boundary") {
+            // M2 (Yee branch): [boundary] x = damping|periodic, nd, numax
+            if      (key == "x")     d.rp.bnd_x = (val == "hybrid") ? 2
+                                                : (val == "damping") ? 1 : 0;
+            else if (key == "nd")    d.rp.bnd_nd = static_cast<int>(iv());
+            else if (key == "numax") d.rp.bnd_numax = dv();
         } else if (section == "background") {
             if      (key == "wce")       { d.wce = dv(); d.rp.wce = d.wce; }
             else if (key == "theta_deg") d.theta_deg = dv();

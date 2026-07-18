@@ -163,6 +163,35 @@ struct RunParams {
     // atomics, so any cadence is correct; N·v_max·dt/dx ≲ 2 keeps it fast.
     int      tile_sort = 0;
 
+    // —— M2 absorbing boundary in x (Yee branch; y stays periodic) ——
+    // bnd_x = 1: Umeda-style multiplicative damping masks exp(-numax·d²·dt)
+    // over bnd_nd cells at both x ends, applied to all wave fields each step;
+    // particles reflect specularly at the layer inner edges x = bnd_nd and
+    // x = nx - bnd_nd (cell units), so the layers stay plasma-free. Field
+    // indexing REMAINS periodic — the damped layers suppress the wrap-around
+    // leakage (chirp1d-proven masking scheme, ported to 2D).
+    // bnd_x = 2 ("hybrid") additionally damps each layer particle's TRANSVERSE
+    // momentum (uy, uz) by the same mask each step. Field-only masks (mode 1)
+    // do NOT absorb whistlers: most of the wave energy rides in the coherent
+    // electron transverse current, which re-radiates the damped field (measured
+    // R ≈ 1 in tools/boundary_reflection.cu). This is the 2D analogue of
+    // chirp1d damping the cold-fluid vcy/vcz along with the wave fields.
+    int      bnd_x     = 0;     // 0 = periodic, 1 = field damping, 2 = hybrid
+    int      bnd_nd    = 64;    // damping cells per side
+    double   bnd_numax = 1.0;   // peak damping rate
+
+    // —— M2/M10 antenna: localized rotating transverse current column ——
+    // J_y += amp·g(x)·cos(w0 t)·ramp, J_z -= amp·g(x)·sin(w0 t)·ramp with
+    // g(x) = exp(-(x-x0)²/2σ²) (cell units), ramp linear over ant_trmp, off
+    // after ant_toff. Radiates R-helicity whistler packets in ±x (chirp1d
+    // triggering antenna, ported to the 2D Yee branch). amp = 0 disables.
+    double   ant_amp   = 0.0;
+    double   ant_x0    = 0.0;   // column center (cells)
+    double   ant_sigma = 2.0;   // column width (cells)
+    double   ant_w0    = 0.0;   // drive frequency
+    double   ant_trmp  = 0.0;   // ramp-up time
+    double   ant_toff  = 0.0;   // turn-off time
+
     // —— external pump field (whistler driver, An et al. 2019, Eq. S1/S2) ——
     // E_pump_α(x,t) = Re{ Ẽ_α e^{i(k0·x − w0·t)} } · ramp(t), added to the total E
     // used in the dcu deposit + push (the whistler B then forms self-consistently

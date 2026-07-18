@@ -82,6 +82,11 @@ add_executable(eaw2d_yee tools/eaw2d_yee.cu)
 target_include_directories(eaw2d_yee PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(eaw2d_yee PRIVATE CUDA::cudart)
 
+# M2: whistler reflection coefficient of the x-end damping layers
+add_executable(boundary_reflection tools/boundary_reflection.cu)
+target_include_directories(boundary_reflection PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(boundary_reflection PRIVATE CUDA::cudart)
+
 add_executable(deposit_bench tools/deposit_bench.cu)
 target_include_directories(deposit_bench PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(deposit_bench PRIVATE CUDA::cudart CUDA::cufft)
@@ -151,7 +156,7 @@ target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
 
 # M1 gates: Yee vacuum dispersion / Esirkepov continuity / dual-path Langmuir.
-foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq)
+foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler)
   add_executable(test_${t} tests/test_${t}.cu)
   target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/include)
   target_link_libraries(test_${t} PRIVATE CUDA::cudart CUDA::cufft)
@@ -201,6 +206,6 @@ set_tests_properties(smoke_device fft_roundtrip poisson_sine particle_load
 set_tests_properties(langmuir two_stream weibel darwin_magnetostatic
                      chirp1d_mirror chirp1d_dispersion chirp1d_growth
                      yee_vacuum esirkepov_continuity yee_langmuir
-                     yee_vs_darwin_lowfreq
+                     yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler
                      PROPERTIES LABELS "physics")
 set_tests_properties(conservation_longrun PROPERTIES LABELS "regression")

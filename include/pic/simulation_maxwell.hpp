@@ -16,13 +16,18 @@
 
 #include "pic/yee2d.hpp"
 
+#include <vector>
+
 namespace arc {
 
 class MaxwellSimulation {
 public:
     MaxwellSimulation(const Grid& g, const RunParams& rp)
         : g_(g), rp_(rp), flds_(g, rp.c, rp.dt), diag_(2),
-          jtmp_(rp.jfilter > 0 ? g.real_size() : 0) {}
+          jtmp_(rp.jfilter > 0 ? g.real_size() : 0),
+          mask_n_(rp.bnd_x ? g.nx : 0), mask_h_(rp.bnd_x ? g.nx : 0) {
+        if (rp_.bnd_x) build_masks();
+    }
 
     Grid&       grid()      { return g_; }
     RunParams&  params()    { return rp_; }
@@ -74,8 +79,14 @@ public:
                 }
             }
         }
+        if (rp_.ant_amp != 0.0) {          // M2/M10 antenna current column
+            if (parts_.n == 0) flds_.zero_j(s_);   // vacuum runs skip the deposit block
+            yee::k_antenna<<<nb, tb, 0, s_>>>(v, rp_, tnow);
+        }
         yee::k_faraday<<<nb, tb, 0, s_>>>(v, dt2);
         yee::k_ampere<<<nb, tb, 0, s_>>>(v);
+        if (rp_.bnd_x)     // M2 absorbing layers: damp wave fields at x ends
+            yee::k_damp_x<<<nb, tb, 0, s_>>>(v, mask_n_.data(), mask_h_.data());
         CUDA_CHECK(cudaPeekAtLastError());
     }
 
@@ -136,6 +147,27 @@ public:
     }
 
 private:
+    // M2 damping-layer masks: exp(-numax·d²·dt), d = depth into the bnd_nd-cell
+    // layer normalized to [0,1] (chirp1d build_masks, ported). mask_n at
+    // integer x sites, mask_h at half-integer sites.
+    void build_masks() {
+        std::vector<float> mn(g_.nx), mh(g_.nx);
+        const int nd = rp_.bnd_nd;
+        auto mval = [&](double xi) {
+            double d = 0.0;
+            if (xi < nd)                 d = (nd - xi) / (double)nd;
+            else if (xi > g_.nx - nd)    d = (xi - (g_.nx - nd)) / (double)nd;
+            if (d <= 0.0) return 1.0;
+            return std::exp(-rp_.bnd_numax * d * d * rp_.dt);
+        };
+        for (int i = 0; i < g_.nx; ++i) {
+            mn[i] = (float)mval(i);
+            mh[i] = (float)mval(i + 0.5);
+        }
+        CUDA_CHECK(cudaMemcpy(mask_n_.data(), mn.data(), mn.size() * 4, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(mask_h_.data(), mh.data(), mh.size() * 4, cudaMemcpyHostToDevice));
+    }
+
     Grid       g_;
     RunParams  rp_;
     Particles  parts_;
@@ -144,6 +176,7 @@ private:
     DeviceArray<double> diag_;
     DeviceArray<float>  jtmp_;   // binomial-filter scratch (empty if jfilter=0)
     DeviceArray<float>  rho_, rres_, r0_;   // residuals() scratch (lazy)
+    DeviceArray<float>  mask_n_, mask_h_;   // M2 x-damping masks (empty if bnd_x=0)
     bool have_ref_ = false;      // Gauss reference residual captured?
     long nstep_ = 0;
     long next_sort_ = 0;         // next tile re-sort step (tile_sort path)
