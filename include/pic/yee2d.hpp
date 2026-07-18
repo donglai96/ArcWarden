@@ -475,7 +475,8 @@ static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, doub
 // at integer x (Ey, Ez, Bx sites), mh = mask at half-integer x (Ex, By, Bz);
 // the y stagger is irrelevant for x-direction masks.
 static __global__ void k_damp_x(YeeViews v, const float* __restrict__ mn,
-                                const float* __restrict__ mh) {
+                                const float* __restrict__ mh,
+                                float* vcy = nullptr, float* vcz = nullptr) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
     if (i >= v.nx || j >= v.ny) return;
@@ -484,6 +485,38 @@ static __global__ void k_damp_x(YeeViews v, const float* __restrict__ mn,
     const int c = j * v.nx + i;
     v.ey[c] *= a; v.ez[c] *= a; v.bx[c] *= a;
     v.ex[c] *= b; v.by[c] *= b; v.bz[c] *= b;
+    if (vcy) { vcy[c] *= a; vcz[c] *= a; }   // cold fluid dies with its wave
+}
+
+// M4: linearized cold-electron fluid update on the x-nodes (chirp1d k_cold
+// port, ny = 1 — Ey/Ez y-staggering is degenerate there). Half E kick, EXACT
+// gyro-rotation by θ = −qm·B0(x)·dt, half E kick:
+//   d(vy+ivz)/dt = qm(Ey+iEz) − i·qm·B0·(vy+ivz)
+// (qm = −1 reduces to chirp1d's e^{+iB0dt}). The cold current J_c = qm·nc·vc
+// at the NEW level is added to the deposited (already filtered) J before the
+// Ampère update, exactly as chirp1d's k_ampere consumes nc·vc.
+static __global__ void k_cold_fluid(YeeViews v, RunParams rp,
+                                    float* __restrict__ vcy,
+                                    float* __restrict__ vcz) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const int c = j * v.nx + i;
+    const float Ey = v.ey[c], Ez = v.ez[c];
+    const float h  = (float)(0.5 * rp.dt * rp.qm);
+    float uy = vcy[c] + h * Ey;
+    float uz = vcz[c] + h * Ez;
+    const float b0 = rp.b0_prof ? bg::b0x(rp, i * v.dxp) : rp.B0[0];
+    float sn, cs;
+    sincosf((float)(-rp.qm * rp.dt) * b0, &sn, &cs);
+    const float uy2 = uy * cs - uz * sn;
+    const float uz2 = uy * sn + uz * cs;
+    uy = uy2 + h * Ey;
+    uz = uz2 + h * Ez;
+    vcy[c] = uy; vcz[c] = uz;
+    const float jc = (float)(rp.qm * rp.cold_nc);
+    v.jy[c] += jc * uy;
+    v.jz[c] += jc * uz;
 }
 
 // M2/M10 antenna: add the rotating transverse current column (see RunParams

@@ -17,6 +17,7 @@
 #include "pic/yee2d.hpp"
 
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 namespace arc {
@@ -26,8 +27,16 @@ public:
     MaxwellSimulation(const Grid& g, const RunParams& rp)
         : g_(g), rp_(rp), flds_(g, rp.c, rp.dt), diag_(2),
           jtmp_(rp.jfilter > 0 ? g.real_size() : 0),
-          mask_n_(rp.bnd_x ? g.nx : 0), mask_h_(rp.bnd_x ? g.nx : 0) {
+          mask_n_(rp.bnd_x ? g.nx : 0), mask_h_(rp.bnd_x ? g.nx : 0),
+          vcy_(rp.cold_nc > 0.0 ? g.real_size() : 0),
+          vcz_(rp.cold_nc > 0.0 ? g.real_size() : 0) {
         if (rp_.bnd_x) build_masks();
+        if (rp_.cold_nc > 0.0) {
+            if (g.ny != 1)
+                throw std::runtime_error("cold_nc: the linearized cold fluid is "
+                                         "ny = 1 only (Ey/Ez stagger degeneracy)");
+            vcy_.zero(s_); vcz_.zero(s_);
+        }
     }
 
     Grid&       grid()      { return g_; }
@@ -35,6 +44,8 @@ public:
     Particles&  particles() { return parts_; }
     YeeFields&  fields()    { return flds_; }
     CudaStream& stream()    { return s_; }
+    DeviceArray<float>& vcy() { return vcy_; }   // M4 cold fluid (tests/seeding)
+    DeviceArray<float>& vcz() { return vcz_; }
 
     void step() { step_at(nstep_ * rp_.dt); ++nstep_; }
 
@@ -84,10 +95,16 @@ public:
             if (parts_.n == 0) flds_.zero_j(s_);   // vacuum runs skip the deposit block
             yee::k_antenna<<<nb, tb, 0, s_>>>(v, rp_, tnow);
         }
+        if (rp_.cold_nc > 0.0) {           // M4 linearized cold fluid (chirp1d port)
+            if (parts_.n == 0 && rp_.ant_amp == 0.0) flds_.zero_j(s_);
+            yee::k_cold_fluid<<<nb, tb, 0, s_>>>(v, rp_, vcy_.data(), vcz_.data());
+        }
         yee::k_faraday<<<nb, tb, 0, s_>>>(v, dt2);
         yee::k_ampere<<<nb, tb, 0, s_>>>(v);
         if (rp_.bnd_x)     // M2 absorbing layers: damp wave fields at x ends
-            yee::k_damp_x<<<nb, tb, 0, s_>>>(v, mask_n_.data(), mask_h_.data());
+            yee::k_damp_x<<<nb, tb, 0, s_>>>(v, mask_n_.data(), mask_h_.data(),
+                                             rp_.cold_nc > 0.0 ? vcy_.data() : nullptr,
+                                             rp_.cold_nc > 0.0 ? vcz_.data() : nullptr);
         CUDA_CHECK(cudaPeekAtLastError());
     }
 
@@ -197,6 +214,7 @@ private:
     DeviceArray<float>  jtmp_;   // binomial-filter scratch (empty if jfilter=0)
     DeviceArray<float>  rho_, rres_, r0_;   // residuals() scratch (lazy)
     DeviceArray<float>  mask_n_, mask_h_;   // M2 x-damping masks (empty if bnd_x=0)
+    DeviceArray<float>  vcy_, vcz_;         // M4 cold-fluid velocity (empty if cold_nc=0)
     DeviceArray<double> wdiag_;             // M3 wd-stats scratch (lazy)
     DeviceArray<unsigned int> wmax_;
     bool have_ref_ = false;      // Gauss reference residual captured?

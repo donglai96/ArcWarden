@@ -892,10 +892,23 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 > deck `[background] profile=parabolic a= xc=`（xc 缺省 Lx/2）+ arcsim
 > 接线（b0_prof → initialize_mirror，单 species + ny=1 校验）。
 > `decks/chirping_2dpath.ini` 骨架已写（Tao GRL17 单位换算全注释）。
-> **待做**：多 species 混合装载（冷各向同性 = 均匀装载即平衡，仅热各向
-> 异性需 mirror load——arcsim 解除单 species 限制）；相对论 push 选项
-> （先双方 nonrel 对照，再加 γ）；antenna 幅值重标定；chirping 复验 run
-> + `plot_chirping.py` → tag `v4-gate-1d`。
+> 同日第三块：**RISING TONE 在 2D 代码路径复现成功（first light）。**
+> 架构决策：冷电子用**线性化冷流体**（chirp1d/DAWN 架构；动理学冷种群在
+> 此网格 λD≈dx/25 会网格加热）——`[plasma] cold_nc`，k_cold_fluid 精确
+> 回旋旋转 + J_c=qm·nc·vc 入 Ampère，掩模同步阻尼 vc，ny=1 限定。热种群
+> 因此是唯一 PIC 种群 → 已有单 species δf+mirror 装载直接可用。门槛
+> `cold_fluid_dispersion`：本征模种子（vc-only 种子激发全部三支 R 模、
+> 相位斜率量到拍频——教训入测试头），**ω 误差 0.001%**。
+> `tools/chirp2d.cu`（bline/probe/energy dumps）+ `scripts/plot_chirp2d.py`
+> + deck 就绪（antenna 标定 amp=1e-4 → δB/B0≈1.2e-3）。
+> **结果（build/chirp2d_tao，ppc=4096 δf，nonrel）**：离散上升调元素
+> **0.26→0.6 ωce，t≈1800–4800，dω/dt=+5.3e-4 ωce²（ridge 拟合 r=0.98）**
+> vs Tao GRL17 印刷值 5.3e-4、chirp1d 相对论复现 4.2e-4；ω-k 功率全部
+> 落在冷哨声色散支上；t>5000 转宽带湍流（nonrel 过驱动，符合 regime
+> rule）。图 docs/figs/chirp2d_first_light.png。ctest 31/31。
+> **待做（→ tag v4-gate-1d）**：相对论 push 选项 + chirp1d nonrel 对照
+> run（定量收口）；marker 收敛扫描；关 antenna 自洽触发验证；
+> wd_rms~1.9 深度捕获的表示健康度检查（HOT_REP_ROUND1.md）。
 
 **代码改动**：
 

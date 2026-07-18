@@ -190,6 +190,16 @@ struct RunParams {
     int      deltaf    = 0;
     double   df_tpar   = 1.0;   // uth_par²  (f0 parallel temperature, m = 1)
     double   df_tperp  = 1.0;   // uth_perp²
+    // —— M4 linearized cold-electron fluid (chirp1d/DAWN class, ny = 1) ——
+    // cold_nc > 0 adds a transverse cold fluid on the x-nodes: dvc/dt =
+    // qm(E + vc×B0(x)x̂) via exact gyro-rotation, J_c = qm·nc·vc summed into
+    // Ampère after the (filtered) hot deposit. Replaces a kinetic cold species
+    // whose Debye length the chirping grids cannot resolve; matches the
+    // literature architecture (DAWN/Katoh-Omura/chirp1d). Longitudinal cold
+    // response is absent (quasi-parallel whistlers have E∥ ≈ 0; chirp1d drops
+    // E∥ entirely). Total wpe² = cold_nc + hot density.
+    double   cold_nc   = 0.0;
+
     // —— M4 background B0(x) profile (background_b0.hpp) ——
     // b0_prof = 1: parabolic B0(x) = B0[0]·(1 + b0_a (x − b0_xc)²) x̂ along the
     // field-aligned coordinate, with the unresolved mirror force folded into
