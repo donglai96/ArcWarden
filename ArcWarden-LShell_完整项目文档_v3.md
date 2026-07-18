@@ -906,9 +906,23 @@ M0 交付：`test_magnetized_boris`（E×B 漂移 1.5e-5、漂移系 μ 1e-5/50 
 > vs Tao GRL17 印刷值 5.3e-4、chirp1d 相对论复现 4.2e-4；ω-k 功率全部
 > 落在冷哨声色散支上；t>5000 转宽带湍流（nonrel 过驱动，符合 regime
 > rule）。图 docs/figs/chirp2d_first_light.png。ctest 31/31。
-> **待做（→ tag v4-gate-1d）**：相对论 push 选项 + chirp1d nonrel 对照
-> run（定量收口）；marker 收敛扫描；关 antenna 自洽触发验证；
-> wd_rms~1.9 深度捕获的表示健康度检查（HOT_REP_ROUND1.md）。
+> **⛔ GATE 通过（2026-07-18 晚，tag `v4-gate-1d`）**。同日第四块收口：
+> ① 相对论 push（`RunParams::rel`，中点 γ 除转动、v=u/γ 入移动/Jz 沉积/
+> δf 波力，缺省 0 逐位不变；bounce 门槛 rel 情形 0.13%）+ chirp1d 加
+> `nonrel` deck key。**2×2 收敛矩阵闭合（dω/dt，1e-4 ωce²）**：
+> nonrel 1D/2D = 5.2/5.3；rel 1D/2D = 4.2/4.0（r≥0.97；Tao GRL17 印刷值
+> 5.3；相对论 ~25% 压低两码一致）。② marker 收敛：ppc 1024/2048/4096 →
+> 4.0/3.5/4.1，无 ppc 趋势（±9% = 窗口噪声水平）。③ 关天线 full-f 自洽
+> 触发：WB 从散粒噪声底自发长 3.8 个量级（1.5e-7→9.8e-4 @t=8800），
+> 首元素 0.21→0.44 ωce @ +2.2e-4（r=0.85，噪但在——PPCF17 full-f 面板
+> 现象学）；δf 关天线保持空（无自发发射，与 chirp1d 一致）。
+> ④ σ_wd 健康度：rel 饱和 0.82 平稳无长期增长（nonrel 1.9 = 过驱动
+> regime 症状）。交付物 `docs/HOT_REP_ROUND1.md`（表示对比 round 1 +
+> 收敛表 + 建议）；图 chirp2d_first_light / chirp2d_rel_closure /
+> chirp2d_selftrigger.png。ctest 31/31，sanitizer clean。
+> 注：验收载具是 chirp2d 专用工具而非计划表中的 chirping_1d.cu 命名；
+> `[plasma] rel=true` 定为 chorus 生产缺省。真实 L-shell 差距的定量
+> 分析（压缩 ~400×@L=5）见 build/lshell_realism.png 讨论,M5.5 处置。
 
 **代码改动**：
 

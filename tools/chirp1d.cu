@@ -76,6 +76,7 @@ arc::Chirp1DParams load_chirp_deck(const std::string& path) {
         else if (key == "ant_toff")      P.ant_toff = dv();
         else if (key == "ant_trise")     P.ant_trise = dv();
         else if (key == "periodic")      P.periodic = (val == "1" || val == "true");
+        else if (key == "nonrel")        P.nonrel = (val == "1" || val == "true");
         else if (key == "nd")            P.nd = (int)iv();
         else if (key == "numax")         P.numax = dv();
         else if (key == "seed_amp")      P.seed_amp = dv();

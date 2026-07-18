@@ -2,17 +2,19 @@
 // background B0(x) = B0eq(1 + a (x-xc)^2) x̂, through MaxwellSimulation with the
 // b0_prof effective mirror field (background_b0.hpp). 2D analog of
 // test_chirp1d_mirror: the gyro-averaged mirror force gives EXACT SHM in x,
-//   du_par/dt = -(u_perp^2 / 2 B0) dB0/dx = -2 a M (x - xc),
-// with M = u_perp^2 / 2 B0 invariant, so omega_b = sqrt(a) * u_perp_eq
-// (the Yee push is nonrelativistic, gamma = 1).
+//   du_par/dt = -(u_perp^2 / (2 gamma B0)) dB0/dx = -(2 a M / gamma)(x - xc),
+// with M = u_perp^2 / 2 B0 invariant and gamma constant (no E field), so
+//   omega_b = sqrt(a) * u_perp_eq / gamma.
+// Run twice: Newtonian (rp.rel = 0, gamma = 1, thermal-scale u) and
+// relativistic (rp.rel = 1, chirp1d Tao momenta u = 0.2/0.53, gamma = 1.187).
 //
 // The particle carries ZERO macro weight, so it deposits nothing and the wave
 // fields stay identically zero: this isolates the orbit integrator inside the
 // full simulation loop. u is rotated backward dt/2 about B0 + B_mir on the
 // host (leapfrog init, chirp1d k_half_back analog).
 //
-// Asserts: bounce frequency within 1% of theory; relative mu spread < 1%;
-// |u|^2 drift < 1e-4 (mirror rotation is a pure rotation).
+// Asserts (each case): bounce frequency within 1% of theory; relative mu
+// spread < 1%; |u|^2 drift < 1e-4 (the mirror rotation is a pure rotation).
 
 #include "pic/simulation_maxwell.hpp"
 
@@ -24,8 +26,9 @@ using namespace arc;
 
 // double-precision Boris rotation about B over signed interval dts (q/m = qm)
 static void rotate_host(double& ux, double& uy, double& uz,
-                        double Bx, double By, double Bz, double qm, double dts) {
-    const double h = 0.5 * qm * dts;
+                        double Bx, double By, double Bz,
+                        double qm, double dts, double gam) {
+    const double h = 0.5 * qm * dts / gam;
     const double tx = h * Bx, ty = h * By, tz = h * Bz;
     const double t2 = tx * tx + ty * ty + tz * tz;
     const double sf = 2.0 / (1.0 + t2);
@@ -37,7 +40,7 @@ static void rotate_host(double& ux, double& uy, double& uz,
     uz += sf * (upx * ty - upy * tx);
 }
 
-int main() {
+static bool run_case(int rel, double upar0, double uperp0) {
     const int nx = 512, ny = 1;
     const double dx = 0.2, dt = 0.1, c = 1.0;
     const double b0eq = 1.0, a = 1e-3;
@@ -48,22 +51,17 @@ int main() {
     rp.dt = dt; rp.c = c; rp.qm = -1.0; rp.eps0 = 1.0;
     rp.B0[0] = (float)b0eq; rp.wce = b0eq;
     rp.b0_prof = 1; rp.b0_a = a; rp.b0_xc = xc;
-    rp.dump_every = 0;
+    rp.rel = rel; rp.dump_every = 0;
 
-    const double upar0 = 0.05, uperp0 = 0.1;
-    const double wb_theory = std::sqrt(a) * uperp0;   // gamma = 1 (nonrel push)
+    const double gam = rel ? std::sqrt(1.0 + upar0 * upar0 + uperp0 * uperp0) : 1.0;
+    const double wb_theory = std::sqrt(a) * uperp0 / gam;
 
     MaxwellSimulation sim(g, rp);
     Particles& parts = sim.particles();
     parts.allocate_n(1);
     {
-        // start at the equator (x = xc), u = (upar0, uperp0, 0) at t = 0;
-        // leapfrog init: rotate backward dt/2 about B0(xc) + B_mir (db0 = 0
-        // at the equator, so B_mir = 0 here — but keep the general form).
         double ux = upar0, uy = uperp0, uz = 0.0;
-        const double b0 = b0eq * (1.0 + a * 0.0);
-        const double mc = 0.0 / (2.0 * b0 * rp.qm);   // db0/dx = 0 at xc
-        rotate_host(ux, uy, uz, b0, mc * uz, -mc * uy, rp.qm, -0.5 * dt);
+        rotate_host(ux, uy, uz, b0eq, 0.0, 0.0, rp.qm, -0.5 * dt, gam);
         const float xf = (float)(xc / dx), yf = 0.5f;
         const float uxf = (float)ux, uyf = (float)uy, uzf = (float)uz;
         const float wf = 0.0f;                        // zero weight: no deposit
@@ -100,7 +98,6 @@ int main() {
         u2_end = u2;
     }
 
-    // bounce frequency from zero crossings of x - xc
     int ncross = 0;
     double t_first = 0, t_last = 0;
     for (long n = 1; n < nsteps; ++n) {
@@ -112,18 +109,22 @@ int main() {
             ++ncross;
         }
     }
-    if (ncross < 4) { std::printf("FAIL: only %d equator crossings\n", ncross); return 1; }
+    if (ncross < 4) { std::printf("FAIL: only %d equator crossings\n", ncross); return false; }
     const double wb_meas = M_PI * (ncross - 1) / (t_last - t_first);
 
     const double werr  = std::abs(wb_meas - wb_theory) / wb_theory;
     const double muerr = (mu_max - mu_min) / (0.5 * (mu_max + mu_min));
     const double eerr  = std::abs(u2_end - u2_0) / u2_0;
 
-    std::printf("yee mirror bounce: wb_meas=%.6e wb_theory=%.6e err=%.3e\n",
-                wb_meas, wb_theory, werr);
-    std::printf("mu spread=%.3e  |u|^2 drift=%.3e\n", muerr, eerr);
+    std::printf("[%s] wb_meas=%.6e wb_theory=%.6e err=%.3e  mu spread=%.3e  "
+                "|u|^2 drift=%.3e\n", rel ? "rel" : "nonrel",
+                wb_meas, wb_theory, werr, muerr, eerr);
+    return werr < 0.01 && muerr < 0.01 && eerr < 1e-4;
+}
 
-    const bool ok = werr < 0.01 && muerr < 0.01 && eerr < 1e-4;
+int main() {
+    bool ok = run_case(0, 0.05, 0.1);          // Newtonian, thermal-scale
+    ok = run_case(1, 0.2, 0.53) && ok;         // relativistic, Tao momenta
     std::printf("%s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }

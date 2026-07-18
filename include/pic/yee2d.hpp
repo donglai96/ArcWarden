@@ -144,7 +144,7 @@ __device__ inline double yee_pump_ramp(double t, double trmp, double toff) {
 __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
                                             const RunParams& rp, double tnow, int t,
                                             float& x0, float& y0,
-                                            float& x1, float& y1) {
+                                            float& x1, float& y1, float& vz1) {
     x0 = p.x[t]; y0 = p.y[t];
 
     float Ex = gather_stag(v.ex, v, x0, y0, 0.5f, 0.f);
@@ -169,21 +169,26 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
     float ux = p.ux[t], uy = p.uy[t], uz = p.uz[t];
     const float uxo = ux, uyo = uy, uzo = uz;   // u^{n-1/2} (delta-f centering)
     const float qmh = (float)(rp.qm * 0.5 * rp.dt);
+    // explicit kick-rotate-kick (same op sequence boris_update_full inlines):
+    // the M4 mirror field needs the MID-KICK u, and rp.rel divides the
+    // rotation by the mid-kick γ (u is then the normalized momentum γv).
+    ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
+    const float gri = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
     if (rp.b0_prof) {
-        // M4 parabolic B0(x) + mirror force (background_b0.hpp): the effective
-        // field needs the MID-KICK u, so split the kick-rotate-kick here.
+        // M4 parabolic B0(x) + mirror force (background_b0.hpp).
         // Requires B0 ∥ x̂; rp.B0[1] = rp.B0[2] = 0 (validated by callers).
         const float xph = x0 * v.dxp;
         const float b0  = bg::b0x(rp, xph);
         const float mc  = bg::db0dx(rp, xph) / (2.f * b0 * (float)rp.qm);
-        ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
         detail::boris_rotate(ux, uy, uz,
-                             dBx + b0, dBy + mc * uz, dBz - mc * uy, qmh);
-        ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
+                             dBx + b0, dBy + mc * uz, dBz - mc * uy, qmh * gri);
     } else {
-        detail::boris_update_full(ux, uy, uz, Ex, Ey, Ez, Bx, By, Bz, qmh);
+        detail::boris_rotate(ux, uy, uz, Bx, By, Bz, qmh * gri);
     }
+    ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
     p.ux[t] = ux; p.uy[t] = uy; p.uz[t] = uz;
+    const float gni = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
+    vz1 = uz * gni;                              // out-of-plane deposit velocity
 
     // M3 delta-f weight update (chirp1d / Tao PPCF 2017 eq. 19 form):
     //   dwd/dt = -(1-wd)(q/m) F·∂ln f0/∂u,  ∂ln f0/∂u = (-ux/Tpar, -uy/Tperp,
@@ -198,9 +203,12 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
         const float uxc = 0.5f * (ux + uxo);
         const float uyc = 0.5f * (uy + uyo);
         const float uzc = 0.5f * (uz + uzo);
-        const float Fx = Ex + (uyc * dBz - uzc * dBy);
-        const float Fy = Ey + (uzc * dBx - uxc * dBz);
-        const float Fz = Ez + (uxc * dBy - uyc * dBx);
+        // rel: F = δE + v×δB with v = u_c/γ_c; ∂ln f0/∂u stays in momentum
+        const float gci = rp.rel
+            ? rsqrtf(1.f + uxc * uxc + uyc * uyc + uzc * uzc) : 1.f;
+        const float Fx = Ex + gci * (uyc * dBz - uzc * dBy);
+        const float Fy = Ey + gci * (uzc * dBx - uxc * dBz);
+        const float Fz = Ez + gci * (uxc * dBy - uyc * dBx);
         // M4: in the background B0(x) profile the reference f0 is the
         // (E,mu)-mapped equatorial bi-Maxwellian (initialize_mirror), whose
         // local perpendicular temperature is 1/Tperp(x) = (1-1/b)/Tpar +
@@ -238,8 +246,8 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
         }
     }
 
-    x1 = x0 + (float)(ux * rp.dt / (double)v.dxp);
-    y1 = y0 + (float)(uy * rp.dt / (double)v.dyp);
+    x1 = x0 + (float)(ux * gni * rp.dt / (double)v.dxp);
+    y1 = y0 + (float)(uy * gni * rp.dt / (double)v.dyp);
     // M2 bounded x: specular reflection at the DOMAIN ends (Umeda scheme —
     // the damping layers may contain plasma; the mask kills the fields, the
     // wall keeps particles out of the periodic x-wrap). Reflect before the
@@ -336,8 +344,8 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
     const int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t >= p.n) return;
 
-    float x0, y0, x1, y1;
-    yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1);
+    float x0, y0, x1, y1, vz;
+    yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1, vz);
     p.x[t] = x1; p.y[t] = y1;    // unwrapped; Particles::migrate wraps
 
     // ---- Esirkepov CIC deposit over the union stencil ----
@@ -347,7 +355,7 @@ static __global__ void k_push_esirkepov(ParticleViews p, YeeViews v, RunParams r
     const int jb = (int)floorf(fminf(y0, y1));
     float qw = (float)rp.qm * p.w[t];              // q = qm (m = 1 code units)
     if (rp.deltaf) qw *= p.wd[t];                  // DeltaF policy: δJ = q w wd v
-    esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, (float)(1.0 / rp.dt),
+    esirkepov_scatter(x0, y0, x1, y1, qw, vz, v, (float)(1.0 / rp.dt),
                       ib, jb, GlobalJSink{v});
 }
 
@@ -391,8 +399,8 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
     const int beg = b.off[tile], end = b.off[tile + 1];
     const int step = blocks_per_tile * blockDim.x;
     for (int t = beg + lane * blockDim.x + threadIdx.x; t < end; t += step) {
-        float x0, y0, x1, y1;
-        yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1);
+        float x0, y0, x1, y1, vz;
+        yee_advance_particle(p, v, rp, tnow, t, x0, y0, x1, y1, vz);
 
         const int ib = (int)floorf(fminf(x0, x1));
         const int jb = (int)floorf(fminf(y0, y1));
@@ -402,9 +410,9 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
         const int il = ib - gi0, jl = jb - gj0;
         if (il - 1 >= -PAD && il + 2 <= TX + DRIFT + 2 &&
             jl - 1 >= -PAD && jl + 2 <= TY + DRIFT + 2)
-            esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, invdt, ib, jb, shs);
+            esirkepov_scatter(x0, y0, x1, y1, qw, vz, v, invdt, ib, jb, shs);
         else                                            // stray since last sort
-            esirkepov_scatter(x0, y0, x1, y1, qw, p.uz[t], v, invdt, ib, jb,
+            esirkepov_scatter(x0, y0, x1, y1, qw, vz, v, invdt, ib, jb,
                               GlobalJSink{v});
 
         // fused migrate (same formula as particle_migrate_kernel): the tiled

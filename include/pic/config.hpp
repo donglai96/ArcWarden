@@ -190,6 +190,13 @@ struct RunParams {
     int      deltaf    = 0;
     double   df_tpar   = 1.0;   // uth_par²  (f0 parallel temperature, m = 1)
     double   df_tperp  = 1.0;   // uth_perp²
+    // —— M4 relativistic push option (Yee branch) ——
+    // rel = 1: u is the normalized momentum γv/c; Boris rotation divided by
+    // the mid-kick γ, move and out-of-plane deposit use v = u/γ, the delta-f
+    // wave force uses v while ∂ln f0/∂u stays in momentum (chirp1d rel form).
+    // Default 0 is bit-identical to the Newtonian path (γ ≡ 1).
+    int      rel       = 0;
+
     // —— M4 linearized cold-electron fluid (chirp1d/DAWN class, ny = 1) ——
     // cold_nc > 0 adds a transverse cold fluid on the x-nodes: dvc/dt =
     // qm(E + vc×B0(x)x̂) via exact gyro-rotation, J_c = qm·nc·vc summed into

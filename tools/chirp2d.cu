@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
         if      (!std::strncmp(argv[i], "--ppc=", 6))    d.species[0].ppc = atoi(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--amp=", 6))    d.rp.ant_amp = atof(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--nsteps=", 9)) d.rp.nsteps = atol(argv[i] + 9);
+        else if (!std::strcmp(argv[i], "--fullf"))       d.species[0].deltaf = false;
     }
     RunParams rp = d.rp;
     Grid g(d.nx, d.ny, d.Lx, d.Ly);

@@ -147,6 +147,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "noisy") d.rp.noisy_load = detail::deck_bool(val);
             else if (key == "seed")  d.rp.rng_seed = static_cast<unsigned long>(iv());
             else if (key == "cold_nc") d.rp.cold_nc = dv();   // M4 cold fluid (ny=1)
+            else if (key == "rel")     d.rp.rel = detail::deck_bool(val) ? 1 : 0;
             else if (key == "outdir") d.outdir = val;
         } else if (section.rfind("species", 0) == 0) {
             if (d.species.empty()) throw std::runtime_error("deck: species key outside a species block");
