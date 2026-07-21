@@ -24,6 +24,22 @@ struct Species {
     double      uth[3]  = {0.0, 0.0, 0.0};  // thermal velocity per dimension
     double      ufl[3]  = {0.0, 0.0, 0.0};  // fluid (drift) velocity per dimension
     bool        deltaf  = false;        // M3: delta-f representation ([species] rep = deltaf)
+
+    // M5a/Chen-PoP-2026: loss-cone SUBTRACTED bi-Maxwellian (dist = losscone),
+    //   f_perp ∝ exp(−u⊥²/2 U⊥²) − lc_rho · exp(−u⊥²/(2 lc_kappa U⊥²)),
+    // U⊥ = uth[1] (Chen et al. Eq. 1; their Ut⊥). Only the mirror loader
+    // (initialize_mirror) honors it; delta-f ∂lnf0 for it is a later step.
+    int         dist     = 0;           // 0 = bi-Max, 1 = loss-cone subtracted
+    double      lc_rho   = 1.0;         // subtraction amplitude ρ ∈ [0,1]
+    double      lc_kappa = 0.3;         // subtracted-component width κ ∈ (0,1)
+    double      taud     = 0.0;         // delta-f drift-injection timescale
+                                        // (physical time; RunParams::df_taud)
+    double      wdnoise  = 0.0;         // delta-f initial weight noise rms:
+                                        // wd(0) = ±uniform, rms = wdnoise.
+                                        // A PERSISTENT noise source (weights
+                                        // are not absorbed at boundaries) —
+                                        // the δf analog of full-f shot noise,
+                                        // level ≈ wdnoise × full-f floor.
 };
 
 using SpeciesList = std::vector<Species>;

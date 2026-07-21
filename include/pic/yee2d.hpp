@@ -216,22 +216,50 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
         // is part of the equilibrium motion conserving f0(E,mu) and does NOT
         // enter the wave force F.
         float tpe = (float)rp.df_tperp;
+        float t2  = (float)(rp.df_kappa * rp.df_tperp);
         if (rp.b0_prof) {
             const float b = bg::b0x(rp, x0 * v.dxp) / rp.B0[0];
-            tpe = 1.f / ((1.f - 1.f / b) / (float)rp.df_tpar
-                         + (1.f / b) / (float)rp.df_tperp);
+            const float par = (1.f - 1.f / b) / (float)rp.df_tpar;
+            tpe = 1.f / (par + (1.f / b) / (float)rp.df_tperp);
+            t2  = 1.f / (par + (1.f / b) / (float)(rp.df_kappa * rp.df_tperp));
+        }
+        float perp_fac = 1.f / tpe;
+        if (rp.df_dist == 1) {
+            // loss-cone subtracted bi-Max ∂lnf0 (see config.hpp df_dist).
+            // Deep in the (empty) cone the exact factor → −∞; cap it at
+            // −10/T1 — the affected markers carry f0 ≈ 0 and un-capped kicks
+            // drive wd → −(clamp) → artificial currents → field blow-up
+            // (measured: low-ω explosion to δB/B ~ 0.2 at saturation).
+            const float u2p = uyc * uyc + uzc * uzc;
+            const float g   = (float)rp.df_rho
+                            * __expf(-0.5f * u2p * (1.f / t2 - 1.f / tpe));
+            const float omg = fmaxf(1.f - g, 1e-3f);
+            perp_fac = fmaxf((1.f / tpe - g / t2) / omg, -10.f / tpe);
         }
         const float S  = Fx * uxc / (float)rp.df_tpar
-                       + (Fy * uyc + Fz * uzc) / tpe;
+                       + (Fy * uyc + Fz * uzc) * perp_fac;
         const float wd = p.wd[t];
+        // Drift-injection relaxation (Chen 2022 gcPIC-δf τ_D): δf decays
+        // toward 0 as fresh f0 electrons replace azimuthally drifting ones.
+        const float taufac = rp.df_taud > 0.0
+            ? (float)(1.0 - rp.dt / rp.df_taud) : 1.f;
         // Accumulator precision study (docs/WEIGHT_PRECISION.md). The drive S is
         // FP32 in all modes — the question is roundoff of the ACCUMULATION over
         // ~1e5 steps. Kahan uses __fadd_rn so the compensation term cannot be
         // algebraically folded away; FP64 keeps wdd and mirrors it to wd for the
         // deposit. Default (df_wprec = 0) is bit-identical to the plain update.
+        // wd = δf/f < 1 EXACTLY in the continuous system (δf→∞ ⇒ wd→1⁻);
+        // finite dt can overshoot past 1, flipping the sign of (1−wd) and
+        // blowing up exponentially (seen at element saturation, wd→8e3→NaN).
+        // The lower bound is pragmatic: a marker at wd = −8 deposits −8× its
+        // macro-weight — beyond that it is numerical debris, not physics
+        // (wd → −∞ only where f → 0, i.e. where markers are never loaded).
+        const float WD_HI = 1.f - 1e-4f, WD_LO = -8.f;
         if (rp.df_wprec == 2) {
             const double wo = p.wdd[t];
-            const double wn = wo + rp.dt * rp.qm * (1.0 - wo) * (double)S;
+            double wn = (wo + rp.dt * rp.qm * (1.0 - wo) * (double)S)
+                      * (double)taufac;
+            wn = fmin(fmax(wn, (double)WD_LO), (double)WD_HI);
             p.wdd[t] = wn;
             p.wd[t]  = (float)wn;
         } else if (rp.df_wprec == 1) {
@@ -240,9 +268,10 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
             const float yk  = __fadd_rn(inc, -c);
             const float wn  = __fadd_rn(wd, yk);
             p.wc[t] = __fadd_rn(__fadd_rn(wn, -wd), -yk);
-            p.wd[t] = wn;
+            p.wd[t] = fminf(fmaxf(wn * taufac, WD_LO), WD_HI);
         } else {
-            p.wd[t] = wd + (float)(rp.dt * rp.qm) * (1.f - wd) * S;
+            const float wn = (wd + (float)(rp.dt * rp.qm) * (1.f - wd) * S) * taufac;
+            p.wd[t] = fminf(fmaxf(wn, WD_LO), WD_HI);
         }
     }
 

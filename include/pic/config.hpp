@@ -216,6 +216,36 @@ struct RunParams {
     double   b0_a      = 0.0;
     double   b0_xc     = 0.0;
 
+    // b0_prof = 2 (M5a): dipole B0(s) along the field line,
+    //   B(λ)/Beq = sqrt(1+3 sin²λ)/cos⁶λ at λ(s), s = arc distance from the
+    //   equator, field-line scale b0_lre = L·R_E (PHYSICAL length units; a
+    //   compressed geometry just uses a smaller b0_lre).
+    // bg::fit_dipole (deck finalize) inverts s(λ) and least-squares fits an
+    // even polynomial B/Beq = Σ b0_c[i]·u^i, u = ((x−b0_xc)/b0_sref)², so
+    // device code evaluates coefficients — no table pointer plumbing.
+    double   b0_lre    = 0.0;
+    double   b0_sref   = 1.0;
+    double   b0_c[6]   = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+    // delta-f reference distribution shape (must match the LOADED f0):
+    // df_dist = 0 bi-Max; 1 = loss-cone SUBTRACTED bi-Max (Chen PoP 2026
+    // Eq. 1) with parameters df_rho/df_kappa — the perp drive becomes
+    //   ∂lnf0/∂u⊥ = −u⊥ (1/T1 − g/T2)/(1 − g),
+    //   g = ρ exp(−u⊥²(1/T2−1/T1)/2),  T2 the κ-component (E,μ)-mapped.
+    // (1−g) is clamped ≥ 1e-3: at the empty loss cone f0→0 and the drive
+    // diverges, but marker density ∝ u⊥³ there — the clamp localizes the
+    // error to markers that are never loaded in practice.
+    int      df_dist   = 0;
+    double   df_rho    = 1.0;
+    double   df_kappa  = 0.3;
+
+    // Chen-2022-style drift injection for delta-f (gcPIC-δf τ_D): fresh
+    // f0-distributed electrons drift in azimuthally while perturbed ones drift
+    // out, relaxing δf toward 0 on timescale df_taud (PHYSICAL time units):
+    // wd multiplied by (1 − dt/τ_D) each step. 0 = off. Sustains the free
+    // energy for repetitive elements.
+    double   df_taud   = 0.0;
+
     // wd accumulator precision (weight-precision study, docs/WEIGHT_PRECISION.md):
     // 0 = FP32 (production), 1 = FP32 + Kahan compensation, 2 = FP64 reference.
     // Modes 1/2 need Particles::enable_deltaf(s, wprec) and the FLAT deposit

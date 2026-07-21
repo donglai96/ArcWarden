@@ -164,7 +164,7 @@ target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
 
 # M1 gates: Yee vacuum dispersion / Esirkepov continuity / dual-path Langmuir.
-foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau yee_mirror_bounce deltaf_mirror_hold cold_fluid_dispersion)
+foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau yee_mirror_bounce deltaf_mirror_hold cold_fluid_dispersion dipole_profile)
   add_executable(test_${t} tests/test_${t}.cu)
   target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/include)
   target_link_libraries(test_${t} PRIVATE CUDA::cudart CUDA::cufft)

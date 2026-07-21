@@ -14,6 +14,7 @@
 #ifndef ARC_PIC_DECK_HPP
 #define ARC_PIC_DECK_HPP
 
+#include "pic/background_b0.hpp"   // bg::fit_dipole (profile = dipole finalize)
 #include "pic/config.hpp"
 #include "pic/species.hpp"
 
@@ -46,6 +47,9 @@ struct Deck {
     double theta_deg = 0.0;             // [background] B0 angle in x-z plane (deg)
     bool   b0_direct = false;           // [background] B0 = bx by bz given verbatim
     bool   b0_xc_set = false;           // [background] xc given (else Lx/2)
+    double bnoise    = 0.0;             // [plasma] bnoise: initial white noise on
+                                        // By/Bz, RELATIVE to wce (chirp2d seed —
+                                        // the delta-f "initial noise level")
 
     bool   pump_enable = false;         // [pump] enable
     int    pump_M      = 0;             // [pump] mode  → rp.pump_k0 = 2πM/Lx
@@ -59,6 +63,8 @@ struct Deck {
 
     // ---- whistler-tool diagnostics ----
     std::vector<std::string> diag_enable;  // [diagnostics] enable = <module keys...>
+    std::vector<double> probes;         // [diagnostics] probes = offsets from the
+                                        // equator (b0_xc) in physical units (chirp2d)
     double tsnap     = 0.0;             // [diagnostics] paper snapshot time
     int    band_lo   = 0, band_hi = 0;  // [diagnostics] nonlinear-structure mode band
     int    kt_stride = 5;               // [diagnostics] δE_L dump cadence (steps)
@@ -148,6 +154,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "seed")  d.rp.rng_seed = static_cast<unsigned long>(iv());
             else if (key == "cold_nc") d.rp.cold_nc = dv();   // M4 cold fluid (ny=1)
             else if (key == "rel")     d.rp.rel = detail::deck_bool(val) ? 1 : 0;
+            else if (key == "bnoise")  d.bnoise = dv();
             else if (key == "outdir") d.outdir = val;
         } else if (section.rfind("species", 0) == 0) {
             if (d.species.empty()) throw std::runtime_error("deck: species key outside a species block");
@@ -157,6 +164,14 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "uth") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.uth[i]=v[i]; }
             else if (key == "ufl") { auto v = detail::deck_vec3(val); for (int i=0;i<3;++i) sp.ufl[i]=v[i]; }
             else if (key == "rep") sp.deltaf = (val == "deltaf");   // M3 (Yee branch)
+            // M5a: loss-cone subtracted bi-Max (mirror loader only)
+            else if (key == "dist") { if (val == "losscone") sp.dist = 1;
+                                      else if (val != "bimax")
+                                          throw std::runtime_error("deck: species dist must be bimax|losscone"); }
+            else if (key == "kappa") sp.lc_kappa = dv();
+            else if (key == "rho")   sp.lc_rho = dv();
+            else if (key == "taud")  sp.taud = dv();     // δf drift injection
+            else if (key == "wdnoise") sp.wdnoise = dv();  // δf initial wd noise
         } else if (section == "field") {
             if      (key == "model")    { d.darwin = (val == "darwin"); d.yee = (val == "yee"); }
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();
@@ -183,12 +198,15 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "theta_deg") d.theta_deg = dv();
             else if (key == "B0") { auto v = detail::deck_vec3(val);
                                     for (int i=0;i<3;++i) d.rp.B0[i]=(float)v[i]; d.b0_direct = true; }
-            // M4 parabolic profile B0(x) = wce·(1 + a (x−xc)²) x̂
-            // (background_b0.hpp); xc defaults to Lx/2 in the finalize block.
+            // M4 parabolic profile B0(x) = wce·(1 + a (x−xc)²) x̂; M5a dipole
+            // B0(s) with field-line scale lre = L·R_E (background_b0.hpp);
+            // xc defaults to Lx/2 in the finalize block.
             else if (key == "profile") { if (val == "parabolic") d.rp.b0_prof = 1;
+                                         else if (val == "dipole") d.rp.b0_prof = 2;
                                          else if (val != "uniform")
-                                             throw std::runtime_error("deck: [background] profile must be uniform|parabolic"); }
+                                             throw std::runtime_error("deck: [background] profile must be uniform|parabolic|dipole"); }
             else if (key == "a")       d.rp.b0_a = dv();
+            else if (key == "lre")     d.rp.b0_lre = dv();
             else if (key == "xc")      { d.rp.b0_xc = dv(); d.b0_xc_set = true; }
         } else if (section == "pump") {
             if      (key == "enable") d.pump_enable = detail::deck_bool(val);
@@ -209,6 +227,8 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "kt_stride") d.kt_stride = static_cast<int>(iv());
             else if (key == "n_frames")  d.n_frames = static_cast<int>(iv());
             else if (key == "prefix")    d.prefix = val;
+            else if (key == "probes")  { std::istringstream is(val); double p;
+                                         while (is >> p) d.probes.push_back(p); }
         }
         // unknown sections/keys are ignored (forward-compatible)
     }
@@ -228,10 +248,16 @@ inline Deck load_deck(const std::string& path) {
         d.rp.B0[1] = 0.0f;
         d.rp.B0[2] = (float)(d.wce * std::sin(th));
     }
-    if (d.rp.b0_prof) {                                        // M4 parabolic B0(x)
+    if (d.rp.b0_prof) {                                        // M4/M5a B0(x) profile
         if (!d.b0_xc_set) d.rp.b0_xc = 0.5 * d.Lx;
         if (d.rp.B0[1] != 0.f || d.rp.B0[2] != 0.f)
-            throw std::runtime_error("deck: [background] profile=parabolic requires B0 along x (theta_deg = 0)");
+            throw std::runtime_error("deck: [background] profile=parabolic|dipole requires B0 along x (theta_deg = 0)");
+        if (d.rp.b0_prof == 2) {                               // dipole: fit the even poly
+            if (d.rp.b0_lre <= 0.0)
+                throw std::runtime_error("deck: [background] profile=dipole requires lre = L*R_E > 0");
+            const double smax = std::max(d.rp.b0_xc, d.Lx - d.rp.b0_xc);
+            bg::fit_dipole(d.rp, 1.01 * smax);                 // 1% margin past the wall
+        }
     }
     if (d.pump_enable) {                                       // whistler pump (An et al. Table I)
         const double s = d.pump_amp * dx / 1e4;               // Ẽα0 = 1e4·eEα0/(me ωpe² Δx)

@@ -391,7 +391,8 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
 __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
                                    const int* __restrict__ off,
                                    double uth_par, double uth_perp_eq,
-                                   float weight, unsigned long seed) {
+                                   float weight, unsigned long seed,
+                                   int dist, double lc_rho, double lc_kappa) {
     const long t = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (t >= p.n) return;
     int lo = 0, hi = g.nx;                 // largest c with off[c] <= t
@@ -411,10 +412,32 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
 
     const double r1 = fmax(rng_uniform(static_cast<int>(t), 1, seed), 1e-12);
     const double r2 = rng_uniform(static_cast<int>(t), 2, seed);
-    const double r3 = fmax(rng_uniform(static_cast<int>(t), 3, seed), 1e-12);
     const double r4 = rng_uniform(static_cast<int>(t), 4, seed);
-    const double upar  = uth_par * sqrt(-2.0 * log(r1)) * cos(2.0 * M_PI * r2);
-    const double uperp = sqrt(Tp) * sqrt(-2.0 * log(r3));
+    const double upar = uth_par * sqrt(-2.0 * log(r1)) * cos(2.0 * M_PI * r2);
+
+    double uperp;
+    if (dist == 1) {
+        // Loss-cone SUBTRACTED bi-Max (Chen PoP 2026 Eq. 1): both Gaussian
+        // components are (E,mu) equilibria, so each maps separately,
+        //   1/T2(x) = (1 - 1/b)/Tpa + (1/b)/(kappa Tpe),  T2 < Tp always.
+        // Local perp pdf ∝ u⊥[exp(−u⊥²/2Tp) − ρ exp(−u⊥²/2T2)] (the amplitude
+        // ratio stays exactly ρ at every x — see initialize_mirror header).
+        // Rejection off the Rayleigh(Tp) envelope: accept w.p.
+        //   1 − ρ exp(−u⊥²(1/T2 − 1/Tp)/2) ∈ [1−ρ, 1);  acceptance ≈ 1 − ρT2/Tp.
+        const double T2 = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / (lc_kappa * Tpe));
+        const double dinv = 0.5 * (1.0 / T2 - 1.0 / Tp);
+        double u2 = 0.0;
+        for (int k = 0; k < 64; ++k) {
+            const double rm = fmax(rng_uniform(static_cast<int>(t), 10 + 2 * k, seed), 1e-12);
+            const double ra = rng_uniform(static_cast<int>(t), 11 + 2 * k, seed);
+            u2 = -2.0 * Tp * log(rm);
+            if (ra < 1.0 - lc_rho * exp(-u2 * dinv)) break;
+        }
+        uperp = sqrt(u2);
+    } else {
+        const double r3 = fmax(rng_uniform(static_cast<int>(t), 3, seed), 1e-12);
+        uperp = sqrt(Tp) * sqrt(-2.0 * log(r3));
+    }
 
     p.x[t]    = x;
     p.y[t]    = 0.5f;                      // ny = 1 (validated host-side)
@@ -536,25 +559,41 @@ struct Particles {
     }
 
     // M4: mirror-equilibrium load of ONE species in the background B0(x)
-    // profile (mirror_init_kernel above). Per-cell marker count ∝ n(x) =
-    // Tperp(x)/Tperp_eq (equal weight = density·dx·dy/ppc at the equator);
-    // total n is set by the profile, NOT ppc·ncells. Requires ny == 1,
-    // rp.b0_prof, gyrotropy uth[1] == uth[2].
+    // profile (mirror_init_kernel above). Per-cell marker count ∝ n(x):
+    //   bi-Max:    n/n_eq = Tperp(x)/Tperp_eq
+    //   loss-cone: n/n_eq = [T1(x) − ρ T2(x)] / (Tperp_eq (1 − ρκ))
+    // (equal weight = density·dx·dy/ppc at the equator); total n is set by
+    // the profile, NOT ppc·ncells. The loss-cone form follows from writing
+    // Chen PoP 2026 Eq. 1 as a signed mixture of two bi-Maxwellians with
+    // weights 1/(1−ρκ) and −ρκ/(1−ρκ) and perp temperatures Tpe, κTpe: each
+    // maps as an (E,mu) equilibrium and the LOCAL amplitude ratio of the two
+    // exp terms in the perp pdf stays exactly ρ at every x because
+    // n_i(x)/T⊥i(x) is x-independent. Requires ny == 1, rp.b0_prof,
+    // gyrotropy uth[1] == uth[2].
     void initialize_mirror(const Species& q, const Grid& g, const RunParams& rp,
                            cudaStream_t s) {
         if (g.ny != 1)   throw std::runtime_error("initialize_mirror: ny must be 1");
         if (!rp.b0_prof) throw std::runtime_error("initialize_mirror: rp.b0_prof required");
         if (q.uth[1] != q.uth[2])
             throw std::runtime_error("initialize_mirror: gyrotropy uth[1] == uth[2] required");
+        if (q.dist == 1 && (q.lc_rho < 0.0 || q.lc_rho > 1.0 ||
+                            q.lc_kappa <= 0.0 || q.lc_kappa >= 1.0))
+            throw std::runtime_error("initialize_mirror: losscone needs 0<=rho<=1, 0<kappa<1");
         const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
         std::vector<int> off(g.nx + 1, 0);
         long tot = 0;
         for (int c = 0; c < g.nx; ++c) {
             const double b  = (double)bg::b0x(rp, (c + 0.5f) * (float)g.dx)
                             / (double)rp.B0[0];
-            const double Tp = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / Tpe);
+            const double T1 = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / Tpe);
+            double nfac = T1 / Tpe;
+            if (q.dist == 1) {
+                const double T2 = 1.0 / ((1.0 - 1.0 / b) / Tpa
+                                         + (1.0 / b) / (q.lc_kappa * Tpe));
+                nfac = (T1 - q.lc_rho * T2) / (Tpe * (1.0 - q.lc_rho * q.lc_kappa));
+            }
             off[c] = static_cast<int>(tot);
-            tot += std::lround(q.ppc * (Tp / Tpe));
+            tot += std::lround(q.ppc * nfac);
         }
         off[g.nx] = static_cast<int>(tot);
         allocate_n(static_cast<std::size_t>(tot));
@@ -566,7 +605,8 @@ struct Particles {
         const int blocks = static_cast<int>((tot + threads - 1) / threads);
         detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
             views(), g, rp, doff.data(), q.uth[0], q.uth[1],
-            static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed);
+            static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed,
+            q.dist, q.lc_rho, q.lc_kappa);
         CUDA_CHECK(cudaPeekAtLastError());
         CUDA_CHECK(cudaStreamSynchronize(s));   // doff is scoped to this call
     }
