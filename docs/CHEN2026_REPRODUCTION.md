@@ -135,3 +135,46 @@ Method-independence lesson (the physics headline): regime taxonomy and
 saturation amplitudes are ROBUST (full-f and δf agree with each other and
 the paper); onset times and the very existence of self-starting depend on
 seed/boundary bookkeeping that papers in this lineage do not document.
+
+## GIANT full-f runs (2026-07-21): GPU-limit ppc, honest physics
+
+Recipe: ppc = 110000 (equatorial), tiled deposit (tile_sort = 25 —
+mandatory, flat atomics collapse 52x at this ppc), rel push, honest
+absorbing boundary (nd = 300, ν = 0.1), NO seed/antenna. Shot-noise floor
+drops to δB/B ~ 5e-5 — low enough for a clean linear phase, still self-
+igniting (the δf runs proved a 1e-5 one-shot seed cannot self-start).
+
+Case II (build/chen2026_case2_giant, 425M markers, 3.5 h): textbook quiet
+linear phase (rel γ = 2.6e-3), then REPETITIVE discrete rising tones
+0.2 → 0.6 Ωe with subpackets, peak δB/B = 0.0264 at λ = −10° (paper 0.027,
+saturation off-equator matching their λ = 10–15°). By-latitude peaks:
+eq 0.005 → ±5° 0.006/0.015 → ±10° 0.015/0.026.
+
+Case III (build/chen2026_case3_giant, 288M markers): NOT 425M — ppc is the
+equatorial reference and the loss-cone mirror-equilibrium n(s) falls faster
+at A = 3.75 (wall density 14% of equatorial vs 46% for Case II;
+line-integral ratio 0.68). Run killed at 88% (t = 4380/5000 Ωe) by a system
+suspend; all Case III action is at t < 2000 so nothing lost. Result: ONE
+broadband burst (0.15–0.6 Ωe, overlapping short risers = hiss), onset ~400,
+peak t ≈ 750, then monotonic decay — single flood, no repetition, the
+opposite relaxation character to Case II. Peaks by latitude: eq 0.009 →
+±5° 0.021/0.023 → ±10° 0.040/0.052 (paper 0.038 at T3 = 1237 ✓ off-equator
+saturation; our onset ~500/Ωe early, same noise-floor cause). Case I giant
+deck written (decks/chen2026_case1_giant.ini) but NOT run (user cancelled).
+
+Element repetition vs bounce (Case II, measured): equatorial element
+spacing 850–900/Ωe early, stretching to ~1500 late. Resonant electrons
+(ω = 0.25 Ωe → |v∥| = 0.26c, v ≈ 0.35–0.4c) have T_b = 1900–2500/Ωe in
+this dipole → element period ≈ T_b/2: the equatorial resonant population
+is replenished by the half-bounce return flow from BOTH hemispheres, and
+the regrow time ln(10)/γ ≈ 900/Ωe coincides — a two-clock relaxation
+oscillator. Late-time slowdown = reservoir depletion: closed box, no drift
+resupply (real magnetosphere refills a source region by gradient-curvature
+drift in ~minutes = 1e7/Ωe — far slower than elements, far faster than a
+storm; the [species] taud knob or a full-f boundary refresh is the 1D
+surrogate, untested).
+
+Figures (4-panel format, scripts/plot_chen2026_giant.py: waveform /
+envelope / STFT / δB(h,t) with shared time axis, attached colorbars so no
+panel shrinks): docs/figs/chen2026_giant_final.png (Case II),
+docs/figs/chen2026_case3_giant_final.png (Case III).
