@@ -47,6 +47,12 @@ public:
     DeviceArray<float>& vcy() { return vcy_; }   // M4 cold fluid (tests/seeding)
     DeviceArray<float>& vcz() { return vcz_; }
 
+    // checkpoint/restart (checkpoint_io.hpp): the step counter is the only
+    // hidden scalar state; restoring it also schedules a tile re-sort on the
+    // next step so bins never carry a stale layout across a resume.
+    long step_count() const { return nstep_; }
+    void set_step_count(long n) { nstep_ = n; next_sort_ = n; }
+
     void step() { step_at(nstep_ * rp_.dt); ++nstep_; }
 
     void step_at(double tnow) {

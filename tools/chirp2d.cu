@@ -4,15 +4,22 @@
 // chirp1d's triggered run 8 (tag v1d-chirping-tao2017), nonrelativistic push.
 //
 // Usage: ./chirp2d <deck.ini> [outdir] [--ppc=N] [--amp=A] [--nsteps=N]
+//                  [--fullf] [--ckpt=N] [--resume]
+// --ckpt=N   save <outdir>/ckpt.bin every N steps (atomic .tmp+rename)
+// --resume   continue from <outdir>/ckpt.bin (same deck; diagnostics append)
 // Dumps into outdir:
 //   bline_XXXXXX.bin   float32 By[nx] then Bz[nx], every bline_every steps
 //   probe.bin          float32 (By,Bz) at nprobe x-locations, every probe_every
 //   energy.csv         step,time,WE,WB,wd_sum,wd_rms,wd_max
 //   meta.txt           geometry + cadence for the plot script
 
+#include "pic/checkpoint_io.hpp"
 #include "pic/deck.hpp"
 #include "pic/run_meta.hpp"
 #include "pic/simulation_maxwell.hpp"
+
+#include <fstream>
+#include <sstream>
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,11 +34,15 @@ int main(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: %s <deck.ini> [outdir] [--ppc= --amp= --nsteps=]\n", argv[0]); return 1; }
     Deck d = load_deck(argv[1]);
     std::string outdir = (argc > 2 && argv[2][0] != '-') ? argv[2] : "chirp2d_out";
+    long ckpt_every = 0;          // --ckpt=N: save outdir/ckpt.bin every N steps
+    bool resume = false;          // --resume: continue from outdir/ckpt.bin
     for (int i = 2; i < argc; ++i) {
         if      (!std::strncmp(argv[i], "--ppc=", 6))    d.species[0].ppc = atoi(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--amp=", 6))    d.rp.ant_amp = atof(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--nsteps=", 9)) d.rp.nsteps = atol(argv[i] + 9);
         else if (!std::strcmp(argv[i], "--fullf"))       d.species[0].deltaf = false;
+        else if (!std::strncmp(argv[i], "--ckpt=", 7))   ckpt_every = atol(argv[i] + 7);
+        else if (!std::strcmp(argv[i], "--resume"))      resume = true;
     }
     RunParams rp = d.rp;
     Grid g(d.nx, d.ny, d.Lx, d.Ly);
@@ -61,7 +72,24 @@ int main(int argc, char** argv) {
     if (rp.deltaf) sim.particles().enable_deltaf(sim.stream());
     sim.stream().synchronize();
 
-    if (rp.deltaf && q.wdnoise > 0.0) {
+    const std::string ckpt_path = outdir + "/ckpt.bin";
+    std::string deck_text;
+    {   std::ifstream df(argv[1]);
+        std::stringstream ss; ss << df.rdbuf(); deck_text = ss.str(); }
+
+    long n0 = 0;                   // resume point (0 = fresh start)
+    if (resume) {
+        std::string saved_deck;
+        n0 = checkpoint_load(ckpt_path, sim, &saved_deck);
+        sim.set_step_count(n0);
+        if (saved_deck != deck_text)
+            std::fprintf(stderr, "chirp2d: WARNING deck text differs from the "
+                                 "checkpointed one — resuming anyway\n");
+        std::printf("resumed %s at step %ld (t=%.0f)\n",
+                    ckpt_path.c_str(), n0, n0 * rp.dt);
+    }
+
+    if (!resume && rp.deltaf && q.wdnoise > 0.0) {
         // persistent δf sampling noise: wd(0) random, rms = wdnoise
         std::vector<float> w0(sim.particles().n);
         std::srand((unsigned)rp.rng_seed + 7);
@@ -71,7 +99,7 @@ int main(int argc, char** argv) {
                               w0.size() * 4, cudaMemcpyHostToDevice));
     }
 
-    if (d.bnoise > 0.0) {
+    if (!resume && d.bnoise > 0.0) {
         // seed BAND-LIMITED random-phase noise on the transverse B (the
         // "initial noise level" of a delta-f run; d.bnoise = target rms of
         // |δB⊥| relative to wce). Whistler-band k ∈ [0.2, 1.5] wpe/c only —
@@ -110,9 +138,18 @@ int main(int argc, char** argv) {
     for (int p = 0; p < nprobe; ++p)
         probe_ix[p] = (int)((rp.b0_xc + poff[p]) / g.dx);
 
-    std::FILE* fpb = std::fopen((outdir + "/probe.bin").c_str(), "wb");
-    std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), "w");
-    std::fprintf(fen, "step,time,WE,WB,wd_sum,wd_rms,wd_max\n");
+    // On resume: truncate probe.bin to exactly the records written up to n0
+    // (a mid-interval kill may have left a partial tail), then append.
+    if (resume) {
+        std::error_code ec;
+        std::filesystem::resize_file(outdir + "/probe.bin",
+            (uintmax_t)(n0 / probe_every) * 2 * nprobe * 4, ec);
+        if (ec) std::fprintf(stderr, "chirp2d: probe.bin truncate: %s\n",
+                             ec.message().c_str());
+    }
+    std::FILE* fpb = std::fopen((outdir + "/probe.bin").c_str(), resume ? "ab" : "wb");
+    std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
+    if (!resume) std::fprintf(fen, "step,time,WE,WB,wd_sum,wd_rms,wd_max\n");
     {   std::FILE* fm = std::fopen((outdir + "/meta.txt").c_str(), "w");
         std::fprintf(fm, "nx %d\ndx %.9g\ndt %.9g\nnsteps %ld\nbline_every %d\n"
                          "probe_every %d\nnprobe %d\nwce %.9g\nb0_a %.9g\nb0_xc %.9g\n"
@@ -128,8 +165,14 @@ int main(int argc, char** argv) {
 
     std::vector<float> by(g.real_size()), bz(g.real_size());
     const long nsteps = rp.nsteps;
-    for (long n = 1; n <= nsteps; ++n) {
+    for (long n = n0 + 1; n <= nsteps; ++n) {
         sim.step();
+        if (ckpt_every > 0 && n % ckpt_every == 0) {
+            sim.stream().synchronize();
+            checkpoint_save(ckpt_path, sim, n, n * rp.dt,
+                            (uint64_t)rp.rng_seed, deck_text);
+            std::printf("ckpt @ step %ld -> %s\n", n, ckpt_path.c_str());
+        }
         const bool want_line  = n % bline_every == 0;
         const bool want_probe = n % probe_every == 0;
         if (want_line || want_probe) {
