@@ -25,6 +25,21 @@
 // exactly (charge-independent — the 1/(q/m) factor generalizes chirp1d's
 // hard-coded q/m = -1). Being a pure rotation it conserves |u| identically.
 //
+// b0_prof = 3 (G1.2), 2D Cartesian mirror from the flux function
+//   Az = B0eq (y − yc)(1 + a (x − xc)²):
+//   Bx = B0eq (1 + a x̃²),   By = −2 a B0eq x̃ ỹ      (∇·B = 0 EXACTLY).
+// Note the factor 2 vs the cylindrical Br = −a B0 z r form: it is what makes
+// the 2D SLAB solenoidal, and it also makes the y-resolved gyration supply
+// the full mirror force with no effective-field trick. Gyro-averaging
+// Fx = q(vy·0 − vz·By) over the y–z gyration (y excursion resolved, z
+// ignorable, Bz_bg = 0) gives ⟨Fx⟩ = −μ ∂Bx/∂x exactly — the z half of the
+// orbit contributes nothing because the geometry has no Bz. On-axis |B| is
+// b0x below (the parabolic branch), correct to O(a²x̃²ỹ²) paraxial order, so
+// the delta-f Tperp(x) drive and the (E,mu) mirror load work unchanged.
+// CAVEAT: By is linear in ỹ, so it jumps by 2aB0·x̃·Ly across the periodic
+// y-wrap; keep the paraxial ordering (mirror-ratio·Ly/x̃max << 1) so only a
+// thin boundary layer of markers sees an O(that) field kick.
+//
 // Coupling notes:
 //  - requires B0 ∥ x̂ (RunParams::B0[1] = B0[2] = 0) — validated by callers.
 //  - the delta-f weight drive and the (E,mu) mirror load only consume b(x) =
@@ -62,6 +77,14 @@ __host__ __device__ inline float db0dx(const RunParams& rp, float xph) {
         return rp.B0[0] * dp * 2.f * d / (float)((double)rp.b0_sref * rp.b0_sref);
     }
     return rp.B0[0] * 2.f * (float)rp.b0_a * d;
+}
+
+// b0_prof = 3 only: transverse background component of the 2D slab mirror
+// (see header). b0x/db0dx above already give the on-axis Bx (parabolic
+// branch) for this profile.
+__host__ __device__ inline float b0y2d(const RunParams& rp, float xph, float yph) {
+    return -2.f * (float)rp.b0_a * rp.B0[0]
+         * (xph - (float)rp.b0_xc) * (yph - (float)rp.b0_yc);
 }
 
 // ---- host-side dipole reference (exact, used by fit_dipole and the gates) ----

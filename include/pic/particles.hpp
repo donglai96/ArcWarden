@@ -325,6 +325,7 @@ struct SpeciesInit {
     double        ufl[3] = {0, 0, 0};
     bool          noisy  = false;
     unsigned long seed   = 0;
+    double        kappa_v = 0.0;   // G1.1: bi-kappa index (0 = Maxwellian)
 };
 
 // Load one species into [base, base+count). Same position/velocity machinery as
@@ -373,9 +374,43 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
     const double qy = sp.noisy ? rng_uniform(static_cast<int>(t), 3, sp.seed) : radical_inverse(static_cast<unsigned>(t) + 1, 7);
     const double qz = sp.noisy ? rng_uniform(static_cast<int>(t), 4, sp.seed) : radical_inverse(static_cast<unsigned>(t) + 1, 11);
     const double r2 = 1.41421356237309515;   // sqrt(2)
-    p.ux[t] = static_cast<float>(sp.ufl[0] + r2 * sp.uth[0] * erfinv(2.0 * qx - 1.0));
-    p.uy[t] = static_cast<float>(sp.ufl[1] + r2 * sp.uth[1] * erfinv(2.0 * qy - 1.0));
-    p.uz[t] = static_cast<float>(sp.ufl[2] + r2 * sp.uth[2] * erfinv(2.0 * qz - 1.0));
+    double gx = r2 * sp.uth[0] * erfinv(2.0 * qx - 1.0);
+    double gy = r2 * sp.uth[1] * erfinv(2.0 * qy - 1.0);
+    double gz = r2 * sp.uth[2] * erfinv(2.0 * qz - 1.0);
+    if (sp.kappa_v > 0.0) {
+        // bi-kappa: Gaussian * sqrt(kappa/W), W ~ chi^2_nu with nu = 2k-1,
+        // ONE W per particle (shared factor = correlated fat tails, the true
+        // multivariate kappa). chi^2_nu built from floor(nu/2) exponentials
+        // + (nu odd) one squared normal; hashed-RNG dims 5.. are free here.
+        const int nu = (int)(2.0 * sp.kappa_v - 1.0 + 0.5);
+        double W = 0.0;
+        int dim = 5;
+        for (int m = 0; m < nu / 2; ++m) {
+            const double u = fmax(rng_uniform(static_cast<int>(t), dim++, sp.seed), 1e-300);
+            W += -2.0 * log(u);
+        }
+        if (nu & 1) {
+            const double u1 = fmax(rng_uniform(static_cast<int>(t), dim++, sp.seed), 1e-300);
+            const double u2 = rng_uniform(static_cast<int>(t), dim++, sp.seed);
+            const double z  = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+            W += z * z;
+        }
+        const double scale = sqrt(sp.kappa_v / fmax(W, 1e-30));
+        gx *= scale; gy *= scale; gz *= scale;
+        // tail guard: low-kappa Student-t has heavy (kappa<=1.5: infinite-
+        // variance) tails — cap the thermal speed at 0.6c so rare draws stay
+        // subluminal (nonrel push + Esirkepov 1-cell moves assume it).
+        // Distorts only the extreme tail of an already-truncated physics.
+        const double g2 = gx * gx + gy * gy + gz * gz;
+        const double gmax = 0.6;
+        if (g2 > gmax * gmax) {
+            const double r = gmax / sqrt(g2);
+            gx *= r; gy *= r; gz *= r;
+        }
+    }
+    p.ux[t] = static_cast<float>(sp.ufl[0] + gx);
+    p.uy[t] = static_cast<float>(sp.ufl[1] + gy);
+    p.uz[t] = static_cast<float>(sp.ufl[2] + gz);
 }
 
 // M4 mirror-equilibrium loader (chirp1d k_load port to the 2D branch, ny = 1):
@@ -392,9 +427,15 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
                                    const int* __restrict__ off,
                                    double uth_par, double uth_perp_eq,
                                    float weight, unsigned long seed,
-                                   int dist, double lc_rho, double lc_kappa) {
-    const long t = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (t >= p.n) return;
+                                   int dist, double lc_rho, double lc_kappa,
+                                   long base, long cnt) {
+    // multi-species: markers [base, base+cnt) belong to this species; off[]
+    // holds ABSOLUTE offsets (off[0] = base). RNG streams use the absolute
+    // index t, so the single-species path (base = 0) is bit-identical to
+    // the pre-refactor loader.
+    const long tid = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (tid >= cnt) return;
+    const long t = base + tid;
     int lo = 0, hi = g.nx;                 // largest c with off[c] <= t
     while (hi - lo > 1) {
         const int mid = (lo + hi) >> 1;
@@ -439,13 +480,20 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
         uperp = sqrt(Tp) * sqrt(-2.0 * log(r3));
     }
 
+    // ny > 1 (G1.2 mirror2d): uniform in y — the (E,mu) equilibrium density
+    // depends on |B| ≈ Bx(x) only (paraxial), so n(x,y) = n(x).
+    float y = 0.5f;
+    if (g.ny > 1) {
+        y = (float)g.ny * (float)rng_uniform(static_cast<int>(t), 5, seed);
+        if (y >= (float)g.ny) y = nextafterf((float)g.ny, 0.f);
+    }
     p.x[t]    = x;
-    p.y[t]    = 0.5f;                      // ny = 1 (validated host-side)
+    p.y[t]    = y;
     p.ux[t]   = static_cast<float>(upar);
     p.uy[t]   = static_cast<float>(uperp * cos(2.0 * M_PI * r4));
     p.uz[t]   = static_cast<float>(uperp * sin(2.0 * M_PI * r4));
     p.w[t]    = weight;
-    p.cell[t] = g.idx(c, 0);
+    p.cell[t] = g.idx(c, (int)y);
 }
 
 } // namespace detail
@@ -550,6 +598,16 @@ struct Particles {
             for (int d = 0; d < 3; ++d) { si.uth[d] = q.uth[d]; si.ufl[d] = q.ufl[d]; }
             si.noisy = rp.noisy_load;
             si.seed  = rp.rng_seed;
+            si.kappa_v = q.kappa_v;
+            if (q.kappa_v > 0.0) {
+                const double nu = 2.0 * q.kappa_v - 1.0;
+                if (std::abs(nu - std::round(nu)) > 1e-9 || nu < 1.0)
+                    throw std::runtime_error("species kappa_v: 2*kappa-1 must "
+                                             "be a positive integer");
+                if (!rp.noisy_load)
+                    throw std::runtime_error("species kappa_v requires "
+                                             "[plasma] noisy = true");
+            }
             constexpr int threads = 256;
             const int blocks = static_cast<int>((si.count + threads - 1) / threads);
             detail::species_init_kernel<><<<blocks, threads, 0, s>>>(views(), g, si);
@@ -568,47 +626,80 @@ struct Particles {
     // weights 1/(1−ρκ) and −ρκ/(1−ρκ) and perp temperatures Tpe, κTpe: each
     // maps as an (E,mu) equilibrium and the LOCAL amplitude ratio of the two
     // exp terms in the perp pdf stays exactly ρ at every x because
-    // n_i(x)/T⊥i(x) is x-independent. Requires ny == 1, rp.b0_prof,
-    // gyrotropy uth[1] == uth[2].
+    // n_i(x)/T⊥i(x) is x-independent. Requires rp.b0_prof and gyrotropy
+    // uth[1] == uth[2]; ny > 1 only with b0_prof = 3 (mirror2d: uniform-in-y,
+    // ppc still per CELL).
+    // Multi-species version (G1.3 tools): each species gets its own (E,mu)
+    // mapping; ISOTROPIC species degrade exactly to a uniform load (b in the
+    // mapping cancels: Tp = Tpa, nfac = 1), so cold cores compose with
+    // mirror-mapped hot minorities in one call. Marker layout is contiguous
+    // per species; RNG streams use absolute indices, so the single-species
+    // call is bit-identical to the pre-refactor loader.
+    void initialize_mirror(const SpeciesList& list, const Grid& g,
+                           const RunParams& rp, cudaStream_t s) {
+        if (g.ny != 1 && rp.b0_prof != 3)
+            throw std::runtime_error("initialize_mirror: ny > 1 needs profile=mirror2d");
+        if (!rp.b0_prof) throw std::runtime_error("initialize_mirror: rp.b0_prof required");
+        if (list.empty()) throw std::runtime_error("initialize_mirror: empty species list");
+
+        const std::size_t nsp = list.size();
+        std::vector<std::vector<int>> offs(nsp);
+        std::vector<long> bases(nsp), cnts(nsp);
+        long base = 0;
+        for (std::size_t si = 0; si < nsp; ++si) {
+            const Species& q = list[si];
+            if (q.uth[1] != q.uth[2])
+                throw std::runtime_error("initialize_mirror: gyrotropy uth[1] == uth[2] required");
+            if (q.dist == 1 && (q.lc_rho < 0.0 || q.lc_rho > 1.0 ||
+                                q.lc_kappa <= 0.0 || q.lc_kappa >= 1.0))
+                throw std::runtime_error("initialize_mirror: losscone needs 0<=rho<=1, 0<kappa<1");
+            if (q.kappa_v > 0.0)
+                throw std::runtime_error("initialize_mirror: kappa_v not supported by the mirror loader");
+            const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
+            offs[si].resize(g.nx + 1);
+            long tot = 0;
+            for (int c = 0; c < g.nx; ++c) {
+                const double b  = (double)bg::b0x(rp, (c + 0.5f) * (float)g.dx)
+                                / (double)rp.B0[0];
+                const double T1 = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / Tpe);
+                double nfac = T1 / Tpe;
+                if (q.dist == 1) {
+                    const double T2 = 1.0 / ((1.0 - 1.0 / b) / Tpa
+                                             + (1.0 / b) / (q.lc_kappa * Tpe));
+                    nfac = (T1 - q.lc_rho * T2) / (Tpe * (1.0 - q.lc_rho * q.lc_kappa));
+                }
+                offs[si][c] = static_cast<int>(base + tot);
+                tot += std::lround(q.ppc * nfac) * g.ny;   // per x-COLUMN, uniform in y
+            }
+            offs[si][g.nx] = static_cast<int>(base + tot);
+            bases[si] = base; cnts[si] = tot; base += tot;
+            if (base > 2147483647L)
+                throw std::runtime_error("initialize_mirror: marker count overflows int32 offsets");
+        }
+        allocate_n(static_cast<std::size_t>(base));
+
+        std::vector<DeviceArray<int>> doffs;
+        doffs.reserve(nsp);
+        constexpr int threads = 256;
+        for (std::size_t si = 0; si < nsp; ++si) {
+            const Species& q = list[si];
+            doffs.emplace_back(static_cast<std::size_t>(g.nx) + 1);
+            CUDA_CHECK(cudaMemcpyAsync(doffs.back().data(), offs[si].data(),
+                                       (g.nx + 1) * sizeof(int),
+                                       cudaMemcpyHostToDevice, s));
+            const int blocks = static_cast<int>((cnts[si] + threads - 1) / threads);
+            detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
+                views(), g, rp, doffs.back().data(), q.uth[0], q.uth[1],
+                static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed,
+                q.dist, q.lc_rho, q.lc_kappa, bases[si], cnts[si]);
+            CUDA_CHECK(cudaPeekAtLastError());
+        }
+        CUDA_CHECK(cudaStreamSynchronize(s));   // doffs are scoped to this call
+    }
+
     void initialize_mirror(const Species& q, const Grid& g, const RunParams& rp,
                            cudaStream_t s) {
-        if (g.ny != 1)   throw std::runtime_error("initialize_mirror: ny must be 1");
-        if (!rp.b0_prof) throw std::runtime_error("initialize_mirror: rp.b0_prof required");
-        if (q.uth[1] != q.uth[2])
-            throw std::runtime_error("initialize_mirror: gyrotropy uth[1] == uth[2] required");
-        if (q.dist == 1 && (q.lc_rho < 0.0 || q.lc_rho > 1.0 ||
-                            q.lc_kappa <= 0.0 || q.lc_kappa >= 1.0))
-            throw std::runtime_error("initialize_mirror: losscone needs 0<=rho<=1, 0<kappa<1");
-        const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
-        std::vector<int> off(g.nx + 1, 0);
-        long tot = 0;
-        for (int c = 0; c < g.nx; ++c) {
-            const double b  = (double)bg::b0x(rp, (c + 0.5f) * (float)g.dx)
-                            / (double)rp.B0[0];
-            const double T1 = 1.0 / ((1.0 - 1.0 / b) / Tpa + (1.0 / b) / Tpe);
-            double nfac = T1 / Tpe;
-            if (q.dist == 1) {
-                const double T2 = 1.0 / ((1.0 - 1.0 / b) / Tpa
-                                         + (1.0 / b) / (q.lc_kappa * Tpe));
-                nfac = (T1 - q.lc_rho * T2) / (Tpe * (1.0 - q.lc_rho * q.lc_kappa));
-            }
-            off[c] = static_cast<int>(tot);
-            tot += std::lround(q.ppc * nfac);
-        }
-        off[g.nx] = static_cast<int>(tot);
-        allocate_n(static_cast<std::size_t>(tot));
-        DeviceArray<int> doff(static_cast<std::size_t>(g.nx) + 1);
-        CUDA_CHECK(cudaMemcpyAsync(doff.data(), off.data(),
-                                   (g.nx + 1) * sizeof(int),
-                                   cudaMemcpyHostToDevice, s));
-        constexpr int threads = 256;
-        const int blocks = static_cast<int>((tot + threads - 1) / threads);
-        detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
-            views(), g, rp, doff.data(), q.uth[0], q.uth[1],
-            static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed,
-            q.dist, q.lc_rho, q.lc_kappa);
-        CUDA_CHECK(cudaPeekAtLastError());
-        CUDA_CHECK(cudaStreamSynchronize(s));   // doff is scoped to this call
+        initialize_mirror(SpeciesList{q}, g, rp, s);
     }
 
     // Periodic wrap + recompute cell (v1 migrate; chunk-pool reshuffle later).

@@ -47,6 +47,7 @@ struct Deck {
     double theta_deg = 0.0;             // [background] B0 angle in x-z plane (deg)
     bool   b0_direct = false;           // [background] B0 = bx by bz given verbatim
     bool   b0_xc_set = false;           // [background] xc given (else Lx/2)
+    bool   b0_yc_set = false;           // [background] yc given (else Ly/2)
     double bnoise    = 0.0;             // [plasma] bnoise: initial white noise on
                                         // By/Bz, RELATIVE to wce (chirp2d seed —
                                         // the delta-f "initial noise level")
@@ -169,6 +170,7 @@ inline Deck load_deck(const std::string& path) {
                                       else if (val != "bimax")
                                           throw std::runtime_error("deck: species dist must be bimax|losscone"); }
             else if (key == "kappa") sp.lc_kappa = dv();
+            else if (key == "kappa_v") sp.kappa_v = dv();   // G1.1 bi-kappa index
             else if (key == "rho")   sp.lc_rho = dv();
             else if (key == "taud")  sp.taud = dv();     // δf drift injection
             else if (key == "wdnoise") sp.wdnoise = dv();  // δf initial wd noise
@@ -177,6 +179,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();
             else if (key == "c")        d.c_direct = dv();
             else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());
+            else if (key == "tc")       d.rp.darwin_tc = detail::deck_bool(val) ? 1 : 0;
             else if (key == "jfilter")  d.rp.jfilter = static_cast<int>(iv());
             else if (key == "tile_sort") d.rp.tile_sort = static_cast<int>(iv());
         } else if (section == "antenna") {
@@ -203,11 +206,13 @@ inline Deck load_deck(const std::string& path) {
             // xc defaults to Lx/2 in the finalize block.
             else if (key == "profile") { if (val == "parabolic") d.rp.b0_prof = 1;
                                          else if (val == "dipole") d.rp.b0_prof = 2;
+                                         else if (val == "mirror2d") d.rp.b0_prof = 3;
                                          else if (val != "uniform")
-                                             throw std::runtime_error("deck: [background] profile must be uniform|parabolic|dipole"); }
+                                             throw std::runtime_error("deck: [background] profile must be uniform|parabolic|dipole|mirror2d"); }
             else if (key == "a")       d.rp.b0_a = dv();
             else if (key == "lre")     d.rp.b0_lre = dv();
             else if (key == "xc")      { d.rp.b0_xc = dv(); d.b0_xc_set = true; }
+            else if (key == "yc")      { d.rp.b0_yc = dv(); d.b0_yc_set = true; }
         } else if (section == "pump") {
             if      (key == "enable") d.pump_enable = detail::deck_bool(val);
             else if (key == "mode")   d.pump_M = static_cast<int>(iv());
@@ -248,10 +253,13 @@ inline Deck load_deck(const std::string& path) {
         d.rp.B0[1] = 0.0f;
         d.rp.B0[2] = (float)(d.wce * std::sin(th));
     }
-    if (d.rp.b0_prof) {                                        // M4/M5a B0(x) profile
+    if (d.rp.b0_prof) {                                        // M4/M5a/G1.2 B0 profile
         if (!d.b0_xc_set) d.rp.b0_xc = 0.5 * d.Lx;
+        if (!d.b0_yc_set) d.rp.b0_yc = 0.5 * d.Ly;
         if (d.rp.B0[1] != 0.f || d.rp.B0[2] != 0.f)
-            throw std::runtime_error("deck: [background] profile=parabolic|dipole requires B0 along x (theta_deg = 0)");
+            throw std::runtime_error("deck: [background] profile=parabolic|dipole|mirror2d requires B0 along x (theta_deg = 0)");
+        if (d.rp.b0_prof == 3 && d.ny <= 1)
+            throw std::runtime_error("deck: [background] profile=mirror2d needs ny > 1 (use profile=parabolic for ny = 1)");
         if (d.rp.b0_prof == 2) {                               // dipole: fit the even poly
             if (d.rp.b0_lre <= 0.0)
                 throw std::runtime_error("deck: [background] profile=dipole requires lre = L*R_E > 0");

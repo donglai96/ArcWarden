@@ -151,6 +151,12 @@ struct RunParams {
     // UPIC default 1–2). Unused by the ES path.
     double   c      = 1.0;
     int      ndc    = 1;
+    // darwin_tc = UPIC-style TIME-CENTERED Darwin scheme ([field] tc = true;
+    // docs/DARWIN_UPIC_COMPARISON.md): trial-Boris deposits center cue/dcu/amu
+    // at time t and the ndc corrector sweeps (with the ωp0² shift-back) make
+    // E_T self-consistent — removes the O(dt) free-mode damping of the legacy
+    // one-shot path. 0 = legacy path, bit-identical to pre-fix behavior.
+    int      darwin_tc = 0;
 
     // —— Yee branch (FieldModel::YeeMaxwell) ——
     // jfilter = number of 3×3 binomial smoothing passes applied to J each step
@@ -226,6 +232,14 @@ struct RunParams {
     double   b0_lre    = 0.0;
     double   b0_sref   = 1.0;
     double   b0_c[6]   = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+    // b0_prof = 3 (G1.2): 2D Cartesian mirror from the flux function
+    //   Az = B0[0]·(y − b0_yc)·(1 + b0_a (x − b0_xc)²):
+    //   Bx = B0[0](1 + b0_a x̃²),  By = −2 b0_a B0[0] x̃ ỹ   (∇·B = 0 exact).
+    // Needs ny > 1; the resolved y-gyration sampling By supplies the FULL
+    // gyro-averaged mirror force −μ ∂Bx/∂x (no effective-field trick — see
+    // background_b0.hpp). b0_yc PHYSICAL units, defaults to Ly/2.
+    double   b0_yc     = 0.0;
 
     // delta-f reference distribution shape (must match the LOADED f0):
     // df_dist = 0 bi-Max; 1 = loss-cone SUBTRACTED bi-Max (Chen PoP 2026

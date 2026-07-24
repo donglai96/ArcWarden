@@ -174,7 +174,16 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
     // rotation by the mid-kick γ (u is then the normalized momentum γv).
     ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
     const float gri = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
-    if (rp.b0_prof) {
+    if (rp.b0_prof == 3) {
+        // G1.2 2D slab mirror (background_b0.hpp): background evaluated
+        // analytically at the particle; the resolved y-gyration sampling
+        // By(x,y) supplies the full mirror force — no effective-field term.
+        const float xph = x0 * v.dxp, yph = y0 * v.dyp;
+        detail::boris_rotate(ux, uy, uz,
+                             dBx + bg::b0x(rp, xph),
+                             dBy + bg::b0y2d(rp, xph, yph),
+                             dBz, qmh * gri);
+    } else if (rp.b0_prof) {
         // M4 parabolic B0(x) + mirror force (background_b0.hpp).
         // Requires B0 ∥ x̂; rp.B0[1] = rp.B0[2] = 0 (validated by callers).
         const float xph = x0 * v.dxp;

@@ -89,6 +89,16 @@ target_link_libraries(boundary_reflection PRIVATE CUDA::cudart)
 
 add_executable(chirp2d tools/chirp2d.cu)
 target_include_directories(chirp2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(liband_yee tools/liband_yee.cu)
+target_include_directories(liband_yee PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(mirror2d tools/mirror2d.cu)
+target_include_directories(mirror2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(liband_darwin tools/liband_darwin.cu)
+target_include_directories(liband_darwin PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(liband_darwin PRIVATE CUDA::cudart CUDA::cufft)
 target_link_libraries(chirp2d PRIVATE CUDA::cudart)
 
 add_executable(weight_precision tools/weight_precision.cu)
@@ -164,7 +174,7 @@ target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
 
 # M1 gates: Yee vacuum dispersion / Esirkepov continuity / dual-path Langmuir.
-foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau yee_mirror_bounce deltaf_mirror_hold cold_fluid_dispersion dipole_profile)
+foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau yee_mirror_bounce deltaf_mirror_hold cold_fluid_dispersion dipole_profile mirror2d)
   add_executable(test_${t} tests/test_${t}.cu)
   target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/include)
   target_link_libraries(test_${t} PRIVATE CUDA::cudart CUDA::cufft)

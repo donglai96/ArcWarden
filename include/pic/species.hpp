@@ -34,6 +34,16 @@ struct Species {
     double      lc_kappa = 0.3;         // subtracted-component width κ ∈ (0,1)
     double      taud     = 0.0;         // delta-f drift-injection timescale
                                         // (physical time; RunParams::df_taud)
+    double      kappa_v  = 0.0;         // G1.1: bi-kappa velocity index (0 =
+                                        // Maxwellian). f ∝ [1 + (u∥²/θ∥² +
+                                        // u⊥²/θ⊥²)/κ]^(−κ−1), θ = uth.
+                                        // Sampled as Gaussian·√(κ/W),
+                                        // W ~ χ²_ν shared across components,
+                                        // ν = 2κ−1 (positive integer →
+                                        // κ ∈ {1, 1.5, 2, 2.5, ...});
+                                        // <u∥²> = κθ∥²/(2κ−3) needs κ > 1.5
+                                        // for finite temperature. Noisy load
+                                        // only (uniform loader).
     double      wdnoise  = 0.0;         // delta-f initial weight noise rms:
                                         // wd(0) = ±uniform, rms = wdnoise.
                                         // A PERSISTENT noise source (weights
