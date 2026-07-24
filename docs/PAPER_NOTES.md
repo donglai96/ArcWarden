@@ -56,6 +56,33 @@ CUDA 13.3. Reference code: OSIRIS 4.4.4 CUDA (tiles + 512-particle chunk pool).
      tiled path incl. stray fallback; energy-history parity with the flat
      path to 4×10⁻⁷.
 
+## Darwin branch measurement (2026-07-16)
+
+Case-7-scale on the Darwin spectral branch (`decks/darwin_bench.ini`: 625²,
+156.25M particles, same anisotropic load, dt = 0.1 — no light CFL):
+- **5.0×10⁹ p-steps/s** (31.4 ms/step, marginal 150→550 steps) with the
+  pre-tiling flat deposit — matches flat-Yee 4.5×10⁹ + spectral solves ≈ free
+  (36 µs).
+- Time-to-solution for t=3000/ωpe: 30,000 steps ≈ **943 s** → 2.2× cheaper
+  than tiled Yee (2,080 s), 5.7× than OSIRIS (5,393 s). Model beats kernels.
+- GPU utilization 98–100% @ ~485 W once stepping (`profiling/darwin_util.txt`).
+- Kernel budget (nsys, ms/step of 31.4): **per-step tile sort 11.6 (36%!)**,
+  push 8.0, ρ+J 3.4, amu 3.3, dcu 3.0, migrate 2.1, all spectral solves 0.17.
+  The Darwin branch still sorts EVERY step (pre-M9 design) — adopting the
+  amortized stale-tolerant sort + fused migrate projects ~18 ms/step
+  (8.7e9 p-steps/s, ~550 s for case-7 physics, ~10× OSIRIS end-to-end).
+  This is the top implementation TODO for the paper.
+
+## Paper draft status (2026-07-16)
+
+Full LaTeX draft lives in `paper/main.tex` + `paper/refs.bib` (compile on
+Overleaf/tectonic; no local TeX). Sections written: intro, models (Darwin/
+Yee/hybrid), GPU design (4 rules), validation (case 7 + chirping), perf
+(head-to-head, ablation, overhead-bound, Darwin TTS, profiling), discussion,
+**LLM-agent development-methodology section**, conclusions. Open items are
+`\tocheck{}` markers in the tex. Profiling artifacts in `profiling/`
+(nsys-rep for GUI; ncu pending sudo).
+
 ## Still needed before writing
 
 - [ ] Scaling curves: rate vs ppc (100…4096) and vs grid (256²…2048²), both codes

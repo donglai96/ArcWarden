@@ -50,6 +50,8 @@ def main():
     poff = float(opts.get("probe", 116.4))
     nwin = int(opts.get("nwin", 1024))
     want_ht = "ht" in opts
+    # c/wpe per 5 deg of latitude: 23.28 * (lre / 1330.504-x10-baseline)
+    hp5 = float(opts.get("hp5", 116.4))
 
     m, t_wpe, by, bz = load_probe(d, poff)
     wce = m["wce"]
@@ -57,7 +59,7 @@ def main():
     byn, bzn = by / wce, bz / wce
     env = np.abs(byn + 1j * bzn)
     tmax = t_oe[-1]
-    lat_deg = round(poff / 23.28)          # 116.4 c/wpe per 5 deg (their pin)
+    lat_deg = round(5 * poff / hp5)
 
     npan = 4 if want_ht else 3
     heights = [1, 1, 1.8] + ([1.8] if want_ht else [])
@@ -117,10 +119,10 @@ def main():
         pc = ax.pcolormesh(t, h, np.clip(bt, 1e-6, None).T,
                            norm=LogNorm(vmin=1e-4, vmax=3e-2),
                            cmap="jet", shading="auto", rasterized=True)
-        for hp in (-116.4, 116.4):
+        for hp in (-hp5, hp5):
             ax.axhline(hp, color="w", ls=":", lw=0.8, alpha=0.7)
         ax.axhline(0, color="yellow", ls=":", lw=0.8, alpha=0.9)
-        ax.text(tmax * 0.99, 116.4, r" probes $\lambda=\pm5^\circ$ ", color="w",
+        ax.text(tmax * 0.99, hp5, r" probes $\lambda=\pm5^\circ$ ", color="w",
                 fontsize=8, ha="right", va="bottom")
         ax.text(tmax * 0.99, 0, " equator ", color="yellow", fontsize=8,
                 ha="right", va="bottom")

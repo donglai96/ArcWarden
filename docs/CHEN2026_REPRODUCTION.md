@@ -178,3 +178,68 @@ Figures (4-panel format, scripts/plot_chen2026_giant.py: waveform /
 envelope / STFT / δB(h,t) with shared time axis, attached colorbars so no
 panel shrinks): docs/figs/chen2026_giant_final.png (Case II),
 docs/figs/chen2026_case3_giant_final.png (Case III).
+
+## lre scan (2026-07-21/22): element period ∝ T_b — three-point gradient scan
+
+Question: is the repetition period the half-bounce refill clock (∝ lre) or
+the ignition clock ln(B_th/B_floor)/γ? Scan Case II at x20 / x10 / x5
+dipole compression (lre = 665 / 1331 / 2661), same latitude coverage
+±26.6°, same physics. Decks: chen2026_case2_l{5,20}.ini. Omura 2021
+threshold theory (scripts/omura_threshold.py, Eq. 105/97; a = 4.5/lre²,
+th ∝ lre⁻⁴ at fixed ω): B_th @ ω = 0.25 Ωe = 7.8e-5 (x5) / 1.2e-3 (x10) /
+2.0e-2 (x20); B_opt ≈ 1.1e-2 for all.
+
+x20 (212M markers, complete): NO self-start over 6000/Ωe — all 7 probes
+pinned at the 5e-5 noise floor (max 1e-3 transients). Matches th > B_opt
+for ω ≤ 0.3 = Omura's literal suppression criterion. Clean negative.
+
+x5 (425M markers @ ppc 55000, complete, ~4.6 h): threshold sits AT the
+noise floor → instant broadband ignition (flood t ≈ 1000–3500, like a
+mini Case III), then settles into REPETITIVE element complexes. Peaks:
+eq 0.016 → ±5° 0.026/0.028 → ±10° 0.045/0.038 → ±15° 0.061/0.060
+(convective amplification, N/S symmetric in aggregate; per-element
+hemisphere choice random — post-flood deep-gap elements went 3/3 south
+at ±5°, ±10° complexes interleave N/S). Emission never dies (WB ~ 1e-3
+at t_end 15000/Ωe): low threshold keeps the system marginally lit.
+
+Period (ACF of smoothed equatorial envelope — objective, no peak-picking;
+scripts/analyze_chen2026_periods.py): x10 894/Ωe; x5 2795/Ωe (eq),
+2446/Ωe at −10° with clean harmonics. Ratio 2.7–3.1 vs 2.0 predicted;
+late-vs-late spacing (x10 late ~1500) gives 1.7–1.9 ≈ 2 ✓. Both runs land
+inside their T_b/2 band. TWO-SCALE HIERARCHY: the periodic unit at x5 is
+the element COMPLEX (2400–2800/Ωe, ACF-coherent) containing 2–3
+NON-periodic sub-risers 700–1000/Ωe apart — the dense-riser regime the
+low threshold predicts; the bounce refill clock survives as the modulation
+envelope. x10 = threshold-gated single shots; x5 = refill-gated bursts.
+
+Sweep rate vs Omura Eq. 88 (dω/dt = 0.4 s0 ω Ωw / s1, equator, no lre
+dependence): spectral-ridge rising segments, linear fits, r² > 0.5 kept.
+x10: 3 segments, meas/theory 0.70/0.72/0.74. x5: 13 segments, median
+0.73 (clean isolated risers 0.7–1.3; flood-phase segments 0.2–0.36 —
+amplitude attribution ambiguous when waves overlap). Same coefficient at
+both gradients = sweep is amplitude-controlled, lre-independent, exactly
+as Eq. 88 says; effective S ≈ −0.29 (vs the assumed −0.4 optimum),
+the same level of agreement Omura's and Tao GRL17's own tests report.
+
+Gating evidence (inter-element gaps, equatorial envelope): x10 gap min =
+0.8x B_th (rides the threshold, fires on re-cross, γ_climb = 5.8e-3) —
+threshold-gated, consistent. x5 gaps: min 8x ABOVE B_th, 100% of gap
+super-threshold, yet waits 2000+/Ωe with γ_climb only 6–7e-4 (10x
+suppressed — fuel drained); recovery at that γ takes ~2300/Ωe = the
+observed gap. Super-threshold waiting = the threshold is NOT the gate:
+x5 refill-gating is PROVEN from data. x10 needs an interventional test —
+three designed: (1) fuel-gauge diagnostic (equatorial velocity moments;
+at ignition x10 aligns on B_w = B_th, x5 aligns on a fuel level),
+(2) post-element seed injection (x10 triggers early, x5 refuses until
+T_b/2), (3) noise-floor/ppc scan (zero code: x10 period shifts by
+~ln2/γ, x5 unchanged).
+
+x5 figures: docs/figs/chen2026_case2_l5_final.png (4-panel, --hp5=232.8
+for the doubled latitude scale), build/chen2026_case2_l5_probes.png
+(7-probe stack), build/l5_element_audit.png (complex-vs-subpacket audit).
+x20 archive: docs/figs/chen2026_case2_l20_final.png.
+
+Checkpoint status (asked 2026-07-22): format schema exists and is
+unit-tested (include/pic/checkpoint.hpp, tests/test_checkpoint_format.cu)
+but array streaming + chirp2d wiring is NOT implemented (planned M7).
+~Half a day to land; do it BEFORE the M5b 24 h run.
