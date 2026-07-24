@@ -143,6 +143,23 @@ __global__ void combine_etotal_kernel(float* Ex, float* Ey, float* Ez,
     Ez[i] = et_scale * ETz[i];
 }
 
+// darwin_tc shift-back (UPIC mascfguard analog): dcu -= ωp0²·E_T_guess.
+// The centered deposit gathered E_T_guess inside the trial push, so its
+// linear self-term sits in dcu; subtracting ωp0²·E_T_guess and solving with
+// the resummed green_et makes the fixed point EXACT:
+//   (ε₀c²k² + ωp0²)E_T_new = -dJdt_full,T + ωp0²·E_T_guess
+//   → at convergence ε₀c²k²·E_T = -dJdt_full,T (no substitution error).
+template<class Dummy = void>
+__global__ void shift_dcu_kernel(float* dx, float* dy, float* dz,
+                                 const float* ex, const float* ey,
+                                 const float* ez, float wp02, int n) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    dx[i] -= wp02 * ex[i];
+    dy[i] -= wp02 * ey[i];
+    dz[i] -= wp02 * ez[i];
+}
+
 } // namespace detail
 
 class DarwinSpectralSolver {
@@ -229,6 +246,42 @@ public:
     }
     void form_el(Fields& fld, cudaStream_t s)     const { form_e(fld, 0.0f, s); }
     void form_etotal(Fields& fld, cudaStream_t s) const { form_e(fld, 1.0f, s); }
+
+    // darwin_tc: B-only re-solve (corrector sweeps re-deposit the centered cue).
+    void solve_b(const Sources& src, Fields& fld, SpectralEngine& eng,
+                 const RunParams& rp, cudaStream_t s) const {
+        SpectralWorkspace& ws = eng.ws();
+        const KGrid kg = eng.kgrid();
+        SpectralFormFactor ff{ rp.eps0, rp.c };
+        const int Nk = kg.complex_size();
+        constexpr int threads = 256;
+        const int blocks = (Nk + threads - 1) / threads;
+        eng.r2c(src.Jx.data(), ws.Jx_k.data(), s);
+        eng.r2c(src.Jy.data(), ws.Jy_k.data(), s);
+        eng.r2c(src.Jz.data(), ws.Jz_k.data(), s);
+        detail::darwin_b_field_kernel<SpectralFormFactor><<<blocks, threads, 0, s>>>(
+            ws.Jx_k.view(), ws.Jy_k.view(), ws.Jz_k.view(),
+            ws.Bx_k.view(), ws.By_k.view(), ws.Bz_k.view(),
+            kg, ff, eng.grid().nx, eng.grid().ny);
+        CUDA_CHECK(cudaPeekAtLastError());
+        eng.c2r(ws.Bx_k.data(), fld.Bx.data(), s);
+        eng.c2r(ws.By_k.data(), fld.By.data(), s);
+        eng.c2r(ws.Bz_k.data(), fld.Bz.data(), s);
+    }
+
+    // darwin_tc shift-back: dcu -= ωp0²·E_T_guess (kernel doc above). ωp0² = rp.n0,
+    // the SAME constant green_et resums, so the fixed point is exact.
+    void shift_dcu(Sources& src, const Fields& fld, const RunParams& rp,
+                   cudaStream_t s) const {
+        const int n = static_cast<int>(src.dcux.size());
+        constexpr int threads = 256;
+        const int blocks = (n + threads - 1) / threads;
+        detail::shift_dcu_kernel<><<<blocks, threads, 0, s>>>(
+            src.dcux.data(), src.dcuy.data(), src.dcuz.data(),
+            fld.ETx.data(), fld.ETy.data(), fld.ETz.data(),
+            static_cast<float>(rp.n0), n);
+        CUDA_CHECK(cudaPeekAtLastError());
+    }
 
     // One-shot transverse-field solve: dcu,amu (deposited with E_L+pump, NOT E_T) →
     // E_T into fld.ETx/ETy/ETz via the resummed green_et. Caller forms E_total after.

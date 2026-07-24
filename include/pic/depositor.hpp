@@ -24,6 +24,7 @@
 #include "pic/fields.hpp"
 #include "pic/grid.hpp"
 #include "pic/particles.hpp"
+#include "pic/pusher.hpp"   // boris_update_full (darwin_tc trial push)
 #include "pic/sources.hpp"
 
 #include <type_traits>
@@ -323,6 +324,93 @@ __global__ void deposit_dcu_kernel(ParticleViews p, BinViews b, SourceViews src,
     }
 }
 
+// darwin_tc TIME-CENTERED fused deposit (UPIC GDJPPOST1L/GDCJPPOST1L port —
+// docs/DARWIN_UPIC_COMPARISON.md). Runs a TRIAL Boris push per particle
+// (nothing written back) with the gathered E_total-guess and B(t), then
+// deposits everything from the centered pair:
+//   dcu  = (qm w/area)·(v⁺ − v⁻)/dt          acceleration density at t
+//   amu  = (qm w/area)·v̄⊗v̄ (deviatoric)      momentum flux at t
+//   cue  = (qm w/area)·v̄        [WithCue]     current at t → centered B
+// v̄ = (v⁺+v⁻)/2. This is what makes the Darwin sources leapfrog-symmetric;
+// the legacy kernels deposit raw v⁻ and suffer O(dt) free-mode damping.
+template<class Cfg, int TX, int TY, bool WithCue>
+__global__ void deposit_dcj_centered_kernel(ParticleViews p, BinViews b,
+                                            SourceViews src, FieldViews f,
+                                            Grid g, RunParams rp,
+                                            int blocks_per_tile) {
+    constexpr int SW = TX + 1, SCELL = (TX + 1) * (TY + 1);
+    __shared__ float sEx[SCELL], sEy[SCELL], sEz[SCELL], sBx[SCELL], sBy[SCELL], sBz[SCELL];
+    __shared__ float sdx[SCELL], sdy[SCELL], sdz[SCELL];
+    __shared__ float sa0[SCELL], sa1[SCELL], sa2[SCELL], sa3[SCELL];
+    __shared__ float sjx[SCELL], sjy[SCELL], sjz[SCELL];
+    const int tile = blockIdx.x / blocks_per_tile;
+    const int lane = blockIdx.x % blocks_per_tile;
+    if (tile >= b.ntiles) return;
+    const int gi0 = (tile % b.ntx) * TX, gj0 = (tile / b.ntx) * TY;
+    for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
+        const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
+        sEx[c]=f.Ex[gc]; sEy[c]=f.Ey[gc]; sEz[c]=f.Ez[gc];
+        sBx[c]=f.Bx[gc]; sBy[c]=f.By[gc]; sBz[c]=f.Bz[gc];
+        sdx[c]=sdy[c]=sdz[c]=0.0f;
+        sa0[c]=sa1[c]=sa2[c]=sa3[c]=0.0f;
+        if (WithCue) { sjx[c]=sjy[c]=sjz[c]=0.0f; }
+    }
+    __syncthreads();
+    const double coef_base = rp.qm / (g.dx * g.dy);        // J/amu/dcu coef
+    const float  qmh = static_cast<float>(rp.qm * 0.5 * rp.dt);
+    const float  dti = static_cast<float>(1.0 / rp.dt);
+    const int beg = b.off[tile], end = b.off[tile + 1];
+    const int step = blocks_per_tile * blockDim.x;
+    for (int t = beg + lane * blockDim.x + threadIdx.x; t < end; t += step) {
+        const float x = p.x[t], y = p.y[t];
+        const int i0 = static_cast<int>(x), j0 = static_cast<int>(y);
+        const float fx = x - i0, fy = y - j0;
+        const int base = (j0 - gj0) * SW + (i0 - gi0);
+        const float w0=(1.0f-fx)*(1.0f-fy), w1=fx*(1.0f-fy), w2=(1.0f-fx)*fy, w3=fx*fy;
+        #define ARC_G(S) (w0*S[base]+w1*S[base+1]+w2*S[base+SW]+w3*S[base+SW+1])
+        const float Ex=ARC_G(sEx), Ey=ARC_G(sEy), Ez=ARC_G(sEz);
+        const float Bx=ARC_G(sBx), By=ARC_G(sBy), Bz=ARC_G(sBz);
+        #undef ARC_G
+        const float vx = p.ux[t], vy = p.uy[t], vz = p.uz[t];   // v(t-dt/2)
+        float tx = vx, ty = vy, tz = vz;
+        detail::boris_update_full(tx, ty, tz, Ex, Ey, Ez, Bx, By, Bz, qmh);
+        const float mx = 0.5f*(vx+tx), my = 0.5f*(vy+ty), mz = 0.5f*(vz+tz); // v̄(t)
+        const float ax = (tx-vx)*dti, ay = (ty-vy)*dti, az = (tz-vz)*dti;    // a(t)
+        const float coef = static_cast<float>(coef_base * static_cast<double>(p.w[t]));
+        const float a0 = coef*0.5f*(mx*mx - my*my), a1 = coef*mx*my;
+        const float a2 = coef*mz*mx, a3 = coef*mz*my;
+        #pragma unroll
+        for (int e = 0; e < 4; ++e) {
+            const int off = (e==0)?base:(e==1)?base+1:(e==2)?base+SW:base+SW+1;
+            const float w = (e==0)?w0:(e==1)?w1:(e==2)?w2:w3;
+            atomicAdd(&sdx[off], coef*ax*w); atomicAdd(&sdy[off], coef*ay*w);
+            atomicAdd(&sdz[off], coef*az*w);
+            atomicAdd(&sa0[off], a0*w); atomicAdd(&sa1[off], a1*w);
+            atomicAdd(&sa2[off], a2*w); atomicAdd(&sa3[off], a3*w);
+            if (WithCue) {
+                atomicAdd(&sjx[off], coef*mx*w); atomicAdd(&sjy[off], coef*my*w);
+                atomicAdd(&sjz[off], coef*mz*w);
+            }
+        }
+    }
+    __syncthreads();
+    for (int c = threadIdx.x; c < SCELL; c += blockDim.x) {
+        const int gc = g.idx_periodic_far(gi0 + (c % SW), gj0 + (c / SW));
+        if (sdx[c]||sdy[c]||sdz[c]) {
+            atomicAdd(&src.dcux[gc], sdx[c]); atomicAdd(&src.dcuy[gc], sdy[c]);
+            atomicAdd(&src.dcuz[gc], sdz[c]);
+        }
+        if (sa0[c]||sa1[c]||sa2[c]||sa3[c]) {
+            atomicAdd(&src.amu0[gc], sa0[c]); atomicAdd(&src.amu1[gc], sa1[c]);
+            atomicAdd(&src.amu2[gc], sa2[c]); atomicAdd(&src.amu3[gc], sa3[c]);
+        }
+        if (WithCue && (sjx[c]||sjy[c]||sjz[c])) {
+            atomicAdd(&src.Jx[gc], sjx[c]); atomicAdd(&src.Jy[gc], sjy[c]);
+            atomicAdd(&src.Jz[gc], sjz[c]);
+        }
+    }
+}
+
 template<class Cfg>
 struct Depositor {
     static constexpr int kThreads = 256;
@@ -433,6 +521,27 @@ struct Depositor {
         FieldViews fv = const_cast<Fields&>(flds).views();
         deposit_dcu_kernel<Cfg, TX, TY><<<ntiles * bpt, kThreads, 0, s>>>(
             parts.views(), parts.bins(), src.views(), fv, g, rp, bpt);
+        CUDA_CHECK(cudaPeekAtLastError());
+    }
+
+    // darwin_tc centered deposit (kernel above). Caller zeroes dcu+amu (and J
+    // when with_cue) first; reuses the step's tile sort.
+    static void deposit_dcj_centered(Particles& parts, Sources& src,
+                                     const Fields& flds, const Grid& g,
+                                     const RunParams& rp, bool with_cue,
+                                     cudaStream_t s) {
+        const int n = static_cast<int>(parts.n);
+        if (n == 0) return;
+        constexpr int TX = 16, TY = 16;
+        const int ntiles = parts.bin_ntiles;
+        const int bpt = bpt_for(ntiles, n);
+        FieldViews fv = const_cast<Fields&>(flds).views();
+        if (with_cue)
+            deposit_dcj_centered_kernel<Cfg, TX, TY, true><<<ntiles * bpt, kThreads, 0, s>>>(
+                parts.views(), parts.bins(), src.views(), fv, g, rp, bpt);
+        else
+            deposit_dcj_centered_kernel<Cfg, TX, TY, false><<<ntiles * bpt, kThreads, 0, s>>>(
+                parts.views(), parts.bins(), src.views(), fv, g, rp, bpt);
         CUDA_CHECK(cudaPeekAtLastError());
     }
 

@@ -72,6 +72,11 @@ struct Sources {
         dcux.zero(stream); dcuy.zero(stream); dcuz.zero(stream);
     }
 
+    // Clear only J (darwin_tc corrector sweeps re-deposit the centered cue).
+    void zero_j(cudaStream_t stream = nullptr) {
+        Jx.zero(stream); Jy.zero(stream); Jz.zero(stream);
+    }
+
     SourceViews views() {
         SourceViews v;
         v.rho = rho.view();

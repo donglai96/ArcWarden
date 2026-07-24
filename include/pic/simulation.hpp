@@ -97,10 +97,16 @@ public:
         stream_.synchronize();
     }
 
-    // Darwin field solve for the current particle state: deposit ρ,J,amu → E_L,B →
-    // ndc fixed-point sweeps for the transverse E_T (E_total = E_L + E_T). Leaves
-    // fields_.Ex/Ey/Ez = E_total and fields_.Bx/By/Bz = B for the push.
+    // Darwin field solve for the current particle state. Two schemes:
+    //  - legacy (darwin_tc = 0, bit-identical to the pre-fix code): one-shot
+    //    E_T from sources deposited with raw v(t−dt/2); carries O(dt)
+    //    free-mode damping (docs/DARWIN_UPIC_COMPARISON.md).
+    //  - darwin_tc = 1: UPIC mdbeps1 scheme — trial-Boris centered deposits +
+    //    predictor + ndc corrector sweeps with the shift-back, so every source
+    //    sits at time t and E_T converges to the self-consistent field.
+    // Leaves fields_.Ex/Ey/Ez = E_total and fields_.Bx/By/Bz = B for the push.
     void darwin_fields(double t, cudaStream_t s) {
+        if (p_.darwin_tc) { darwin_fields_tc(t, s); return; }
         sources_.zero_rho_j(s);
         sources_.zero_dcu_amu(s);
         Depositor<Cfg>::charge_current_sorted(particles_, sources_, grid_, p_, s); // sorts + ρ,J
@@ -116,6 +122,35 @@ public:
         // total E for the push = E_L + E_T + pump
         dsolver_.form_etotal(fields_, s);
         add_pump_field(fields_, grid_, p_, t, s);
+    }
+
+    // darwin_tc scheme (UPIC mdbeps1 port; docs/DARWIN_UPIC_COMPARISON.md §4):
+    //   predictor: ρ(t) + convection J → E_L(t), B; E-guess = E_L + retained
+    //   E_T(prev step) + pump; centered dcu/amu deposit; shift-back; solve E_T.
+    //   corrector ×ndc: centered cue/dcu/amu with the updated E_total; B(t)
+    //   re-solved from the CENTERED cue; shift-back; solve E_T.
+    void darwin_fields_tc(double t, cudaStream_t s) {
+        sources_.zero_rho_j(s);
+        Depositor<Cfg>::charge_current_sorted(particles_, sources_, grid_, p_, s); // ρ(t) + convection J
+        dsolver_.solve_el_b(sources_, fields_, spectral_, p_, s);
+        add_background_b0(fields_, grid_, p_, s);
+        dsolver_.form_etotal(fields_, s);            // E_L + E_T(prev) — UPIC's cus_old
+        add_pump_field(fields_, grid_, p_, t, s);
+        for (int k = 0; k <= p_.ndc; ++k) {          // k=0 predictor, then ndc correctors
+            const bool corr = k > 0;
+            sources_.zero_dcu_amu(s);
+            if (corr) sources_.zero_j(s);
+            Depositor<Cfg>::deposit_dcj_centered(particles_, sources_, fields_,
+                                                 grid_, p_, corr, s);
+            if (corr) {                              // centered cue → B(t)
+                dsolver_.solve_b(sources_, fields_, spectral_, p_, s);
+                add_background_b0(fields_, grid_, p_, s);
+            }
+            dsolver_.shift_dcu(sources_, fields_, p_, s);   // dcu -= ωp0²·E_T_guess
+            dsolver_.solve_et(sources_, fields_, spectral_, p_, s);
+            dsolver_.form_etotal(fields_, s);
+            add_pump_field(fields_, grid_, p_, t, s);
+        }
     }
 
     const Diagnostics& diagnostics() const { return diag_; }
