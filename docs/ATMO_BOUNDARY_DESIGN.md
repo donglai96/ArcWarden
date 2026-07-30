@@ -261,12 +261,19 @@ physical noise scattering, not Boris μ-error).
 
 **DISCRETE RISING-TONE ELEMENTS RETURN — as a repeating train:**
 
-- **Element 1**: coherent riser sweeping 0.25 → 0.57 Ωe0 over ~1400/We0,
-  ridge fit dω/dt = 2.55×10⁻⁴ We0² = **1.1–1.6× Omura Eq. 88** at the
-  measured equatorial generation amplitude 1.7–1.9×10⁻³ (x10/x5 measured
-  0.72×; amplitude-controlled sweep confirmed at a third lre). Convectively
-  amplified 1.9×10⁻³ (equator) → 8.4×10⁻³ (25°) — never reaches B_opt
-  (fuel-limited, not amplitude-capped).
+- **Element 1**: coherent riser sweeping 0.25 → 0.57 Ωe0. Sweep rate with
+  the exact x10/x5 pipeline (analyze_chen2026_periods.ridge_segments,
+  equator probe, Bw/B0 units): slope 0.7–0.9×10⁻⁴ We0² = **0.14–0.36×
+  Omura Eq. 88** (element-2 segment, r²=0.98, gives 0.36; x10/x5 measured
+  0.72×) — same order, ~2× lower prefactor in this weaker-gradient,
+  cone-consistent configuration. Amplitude-controlled law still holds.
+  CAUTION (methodology): the ridge at the ±25° probes appears ~3× steeper
+  (2.6×10⁻⁴) — that is propagation re-shaping (dispersive arrival-time
+  ordering), not the source chirp; sweep rates must be measured at the
+  generation-region (equator) probe. [Corrects an earlier quick-fit claim
+  of 1.1–1.6× that mixed raw |Bw| into the Bw/B0 slot and the 25° slope
+  with the equator amplitude.] Convectively amplified 1.9×10⁻³ (equator)
+  → 8.4×10⁻³ (25°) — never reaches B_opt (fuel-limited).
 - **Train structure**: WB peak 6.5×10⁻³ at t≈4200 → deep quiet at
   1.0×10⁻⁴ (noise level) t≈7200 → second element rising (8.4×10⁻⁴ by
   t≈9600). Repetition period ~5500–6000/We0 ≈ T_b (6250/We0) — the
