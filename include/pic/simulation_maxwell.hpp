@@ -14,6 +14,7 @@
 #ifndef ARC_PIC_SIMULATION_MAXWELL_HPP
 #define ARC_PIC_SIMULATION_MAXWELL_HPP
 
+#include "pic/rsm_oblique.hpp"
 #include "pic/yee2d.hpp"
 
 #include <cstring>
@@ -29,13 +30,26 @@ public:
           jtmp_(rp.jfilter > 0 ? g.real_size() : 0),
           mask_n_(rp.bnd_x ? g.nx : 0), mask_h_(rp.bnd_x ? g.nx : 0),
           vcy_(rp.cold_nc > 0.0 ? g.real_size() : 0),
-          vcz_(rp.cold_nc > 0.0 ? g.real_size() : 0) {
+          vcz_(rp.cold_nc > 0.0 ? g.real_size() : 0),
+          vcx_(rp.cold_nc > 0.0 && rp.cold_full ? g.real_size() : 0) {
         if (rp_.bnd_x) build_masks();
         if (rp_.cold_nc > 0.0) {
-            if (g.ny != 1)
-                throw std::runtime_error("cold_nc: the linearized cold fluid is "
-                                         "ny = 1 only (Ey/Ez stagger degeneracy)");
+            if (g.ny != 1 && !rp_.cold_full)
+                throw std::runtime_error("cold_nc with ny > 1 needs [field] "
+                                         "cold_model = full (the legacy kernel's "
+                                         "Ey/Ez co-location is exact only in 1D)");
             vcy_.zero(s_); vcz_.zero(s_);
+            if (rp_.cold_full) vcx_.zero(s_);
+        }
+        if (rp_.rsm) {
+            // RSM scope guards (docs/RSM_MODEL_DEFINITION.md): full-f only,
+            // flat deposit path, periodic x, no pump — the excluded features
+            // gain m = 1 counterparts only when a level of the ladder needs
+            // them (bnd_x damping lands with V5 mirror runs).
+            if (rp_.deltaf)        throw std::runtime_error("rsm: full-f only (deltaf unsupported)");
+            if (rp_.tile_sort > 0) throw std::runtime_error("rsm: flat deposit path only (tile_sort = 0)");
+            if (rp_.pump)          throw std::runtime_error("rsm: pump not supported");
+            rsm_.init(g_, rp_, s_);       // validates ny = 1 and Ly = 2π/k1
         }
     }
 
@@ -46,6 +60,8 @@ public:
     CudaStream& stream()    { return s_; }
     DeviceArray<float>& vcy() { return vcy_; }   // M4 cold fluid (tests/seeding)
     DeviceArray<float>& vcz() { return vcz_; }
+    DeviceArray<float>& vcx() { return vcx_; }   // cold_full parallel component
+    RsmState&           rsm() { return rsm_; }   // m = 1 state (empty unless rp.rsm)
 
     // checkpoint/restart (checkpoint_io.hpp): the step counter is the only
     // hidden scalar state; restoring it also schedules a tile re-sort on the
@@ -60,12 +76,27 @@ public:
         const dim3 nb((g_.nx + 15) / 16, (g_.ny + 15) / 16);
         YeeViews v = flds_.views();
         const float dt2 = 0.5f * (float)rp_.dt;
+        // RSM m = 1 harness (empty views/0 blocks unless rp.rsm — no kernel
+        // launches, no allocations on the legacy path BY CONSTRUCTION)
+        RsmViews rv = rsm_.views();
+        const int rblk = rp_.rsm ? (rsm_.nx + 127) / 128 : 0;
 
         yee::k_faraday<<<nb, tb, 0, s_>>>(v, dt2);
+        if (rp_.rsm) {
+            detail::k_rsm_faraday<<<rblk, 128, 0, s_>>>(rv, dt2);
+            rsm_.j1x.zero(s_); rsm_.j1y.zero(s_); rsm_.j1z.zero(s_);
+        }
         if (parts_.n > 0) {
             flds_.zero_j(s_);
             const int threads = 256;
-            if (rp_.tile_sort > 0) {
+            if (rp_.rsm) {
+                // fused total-field push + m0 & m1 deposits (flat path only;
+                // guarded at construction)
+                const int blocks = ((int)parts_.n + threads - 1) / threads;
+                detail::k_rsm_push_esirkepov<<<blocks, threads, 0, s_>>>(
+                    parts_.views(), v, rv, rp_, tnow);
+                parts_.migrate(g_, s_);
+            } else if (rp_.tile_sort > 0) {
                 // tiled path: periodic physical sort + shared-memory deposit
                 if (nstep_ >= next_sort_) {
                     parts_.sort_by_tile(g_, 16, 16, s_);
@@ -81,6 +112,7 @@ public:
                 yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);
                 parts_.migrate(g_, s_);
             }
+            if (rp_.rsm && rp_.jfilter > 0) rsm_.filter_j1(rp_.jfilter, s_);
             // binomial J smoothing (rp.jfilter passes per component; OSIRIS "smooth")
             if (rp_.jfilter > 0) {
                 float* comps[3] = {flds_.jx_.data(), flds_.jy_.data(), flds_.jz_.data()};
@@ -103,14 +135,36 @@ public:
         }
         if (rp_.cold_nc > 0.0) {           // M4 linearized cold fluid (chirp1d port)
             if (parts_.n == 0 && rp_.ant_amp == 0.0) flds_.zero_j(s_);
-            yee::k_cold_fluid<<<nb, tb, 0, s_>>>(v, rp_, vcy_.data(), vcz_.data());
+            if (rp_.cold_full) {           // G2.2 3-component node fluid
+                yee::k_cold_fluid_full<<<nb, tb, 0, s_>>>(v, rp_, vcx_.data(),
+                                                          vcy_.data(), vcz_.data());
+                yee::k_cold_current_full<<<nb, tb, 0, s_>>>(v, rp_, vcx_.data(),
+                                                            vcy_.data(), vcz_.data());
+            } else {
+                yee::k_cold_fluid<<<nb, tb, 0, s_>>>(v, rp_, vcy_.data(), vcz_.data());
+            }
+            if (rp_.rsm) {                 // m = 1 cold twin (rsm_oblique.hpp)
+                detail::k_rsm_cold_fluid<<<rblk, 128, 0, s_>>>(rv, rp_);
+                detail::k_rsm_cold_current<<<rblk, 128, 0, s_>>>(rv, rp_);
+            }
         }
         yee::k_faraday<<<nb, tb, 0, s_>>>(v, dt2);
         yee::k_ampere<<<nb, tb, 0, s_>>>(v);
-        if (rp_.bnd_x)     // M2 absorbing layers: damp wave fields at x ends
+        if (rp_.rsm) {
+            detail::k_rsm_faraday<<<rblk, 128, 0, s_>>>(rv, dt2);
+            detail::k_rsm_ampere<<<rblk, 128, 0, s_>>>(rv, (float)rp_.dt,
+                                                       (float)(rp_.c * rp_.c));
+        }
+        if (rp_.bnd_x) {   // M2 absorbing layers: damp wave fields at x ends
             yee::k_damp_x<<<nb, tb, 0, s_>>>(v, mask_n_.data(), mask_h_.data(),
                                              rp_.cold_nc > 0.0 ? vcy_.data() : nullptr,
-                                             rp_.cold_nc > 0.0 ? vcz_.data() : nullptr);
+                                             rp_.cold_nc > 0.0 ? vcz_.data() : nullptr,
+                                             rp_.cold_full && rp_.cold_nc > 0.0
+                                                 ? vcx_.data() : nullptr);
+            if (rp_.rsm)
+                detail::k_rsm_damp_x<<<rblk, 128, 0, s_>>>(
+                    rv, mask_n_.data(), mask_h_.data(), rp_.cold_nc > 0.0 ? 1 : 0);
+        }
         CUDA_CHECK(cudaPeekAtLastError());
     }
 
@@ -221,6 +275,8 @@ private:
     DeviceArray<float>  rho_, rres_, r0_;   // residuals() scratch (lazy)
     DeviceArray<float>  mask_n_, mask_h_;   // M2 x-damping masks (empty if bnd_x=0)
     DeviceArray<float>  vcy_, vcz_;         // M4 cold-fluid velocity (empty if cold_nc=0)
+    DeviceArray<float>  vcx_;               // cold_full parallel component (empty unless full)
+    RsmState            rsm_;               // m = 1 harmonic state (empty unless rp.rsm)
     DeviceArray<double> wdiag_;             // M3 wd-stats scratch (lazy)
     DeviceArray<unsigned int> wmax_;
     bool have_ref_ = false;      // Gauss reference residual captured?

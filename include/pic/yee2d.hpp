@@ -291,17 +291,41 @@ __device__ inline void yee_advance_particle(ParticleViews& p, const YeeViews& v,
     // wall keeps particles out of the periodic x-wrap). Reflect before the
     // deposit so Esirkepov sees the folded path (still |Δ| < 1 cell).
     if (rp.bnd_x) {
-        if (x1 < 0.f)               { x1 = -x1;                  p.ux[t] = -ux; }
-        else if (x1 >= (float)v.nx) { x1 = 2.f * v.nx - x1;      p.ux[t] = -ux; }
+        bool refl = false;
+        if (x1 < 0.f)               { x1 = -x1;                  p.ux[t] = -ux; refl = true; }
+        else if (x1 >= (float)v.nx) { x1 = 2.f * v.nx - x1;      p.ux[t] = -ux; refl = true; }
         if (x1 >= (float)v.nx)      // float edge x1 == nx: keep off the wrap
             x1 = nextafterf((float)v.nx, 0.f);
+        // atmo mode (bnd_x = 3): adiabatic return — u_perp KEPT (the particle
+        // "mirrored beyond the wall and came back"), EXCEPT the real
+        // atmospheric loss cone mapped to the wall: mirror point beyond the
+        // atmosphere <=> sin²α_local < b_local/b_atm <=> u⊥²·b_atm < b_l·u².
+        if (rp.bnd_x == 3 && refl && rp.bnd_batm > 0.0) {
+            const float bl = rp.b0_prof
+                ? bg::b0x(rp, x1 * (float)v.dxp) / (float)rp.B0[0] : 1.f;
+            const float up2 = uy * uy + uz * uz;
+            if (up2 * (float)rp.bnd_batm < bl * (up2 + ux * ux))
+                { p.uy[t] = 0.f; p.uz[t] = 0.f; }   // precipitated (fixed-N:
+                                                    // returns as u∥ marker)
+        }
         // hybrid mode: damp the transverse momentum inside the layers so the
         // coherent whistler current dies with the field it would re-radiate
         if (rp.bnd_x == 2) {
-            const float nd = (float)rp.bnd_nd;
             float d = 0.f;
-            if (x1 < nd)                 d = (nd - x1) / nd;
-            else if (x1 > v.nx - nd)     d = (x1 - (v.nx - nd)) / nd;
+            if (rp.bnd_carve_lo >= 0.f) {
+                // FIXED latitude-band carve (carving-location test): damp u_perp
+                // only where |s|=|x-equator| in [carve_lo,carve_hi] (c/wpe),
+                // d=0 at inner edge -> 1 at outer. Decouples the carving LOCATION
+                // from the wall position (bigger box, same carve band).
+                const float s = fabsf(x1 * (float)v.dxp - (float)rp.b0_xc);
+                if (s > (float)rp.bnd_carve_lo && s < (float)rp.bnd_carve_hi)
+                    d = (s - (float)rp.bnd_carve_lo)
+                      / ((float)rp.bnd_carve_hi - (float)rp.bnd_carve_lo);
+            } else {
+                const float nd = (float)rp.bnd_nd;   // default: wall-adjacent layer
+                if (x1 < nd)                 d = (nd - x1) / nd;
+                else if (x1 > v.nx - nd)     d = (x1 - (v.nx - nd)) / nd;
+            }
             if (d > 0.f) {
                 const float m = __expf((float)(-rp.bnd_numax * rp.dt) * d * d);
                 p.uy[t] = uy * m; p.uz[t] = uz * m;
@@ -522,7 +546,8 @@ static __global__ void k_rho_nodes(ParticleViews p, YeeViews v, float* rho, doub
 // the y stagger is irrelevant for x-direction masks.
 static __global__ void k_damp_x(YeeViews v, const float* __restrict__ mn,
                                 const float* __restrict__ mh,
-                                float* vcy = nullptr, float* vcz = nullptr) {
+                                float* vcy = nullptr, float* vcz = nullptr,
+                                float* vcx = nullptr) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
     if (i >= v.nx || j >= v.ny) return;
@@ -532,6 +557,7 @@ static __global__ void k_damp_x(YeeViews v, const float* __restrict__ mn,
     v.ey[c] *= a; v.ez[c] *= a; v.bx[c] *= a;
     v.ex[c] *= b; v.by[c] *= b; v.bz[c] *= b;
     if (vcy) { vcy[c] *= a; vcz[c] *= a; }   // cold fluid dies with its wave
+    if (vcx) { vcx[c] *= a; }                // cold_full parallel component
 }
 
 // M4: linearized cold-electron fluid update on the x-nodes (chirp1d k_cold
@@ -563,6 +589,81 @@ static __global__ void k_cold_fluid(YeeViews v, RunParams rp,
     const float jc = (float)(rp.qm * rp.cold_nc);
     v.jy[c] += jc * uy;
     v.jz[c] += jc * uz;
+}
+
+// cold_full (G2.2): 3-component linearized cold fluid at NODES (i, j).
+//   dv/dt = qm (E + v × B_bg(x, y))
+// E gathered with SYMMETRIC averages from the staggered sites (real transfer
+// function cos(k d/2) — zero phase error, hence zero numerical damping for
+// oblique modes; the ny=1 legacy kernel's Ey/Ez co-location shortcut has an
+// asymmetric e^{i ky dy/2} phase error instead). Rotation is EXACT
+// (Rodrigues) about the LOCAL analytic background b̂: mirror2d (b0_prof=3)
+// uses (b0x, b0y2d, 0); 1D profiles (b0x,0,0); uniform rp.B0. vx restores
+// the longitudinal cold response (E∥ shielding for oblique waves).
+static __global__ void k_cold_fluid_full(YeeViews v, RunParams rp,
+                                         float* __restrict__ vcx,
+                                         float* __restrict__ vcy,
+                                         float* __restrict__ vcz) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const int c = j * v.nx + i;
+    // symmetric gather to the node: Ex sites (i±1/2, j), Ey sites (i, j±1/2)
+    const float Ex = 0.5f * (v.ex[v.idx(i - 1, j)] + v.ex[c]);
+    const float Ey = 0.5f * (v.ey[v.idx(i, j - 1)] + v.ey[c]);
+    const float Ez = v.ez[c];
+    const float h  = (float)(0.5 * rp.dt * rp.qm);
+    float vx = vcx[c] + h * Ex;
+    float vy = vcy[c] + h * Ey;
+    float vz = vcz[c] + h * Ez;
+    // local background field at the node
+    float Bx, By;
+    if (rp.b0_prof == 3) {
+        const float xph = i * v.dxp, yph = j * v.dyp;
+        Bx = bg::b0x(rp, xph); By = bg::b0y2d(rp, xph, yph);
+    } else if (rp.b0_prof) {
+        Bx = bg::b0x(rp, i * v.dxp); By = 0.f;
+    } else {
+        Bx = rp.B0[0]; By = rp.B0[1];
+    }
+    const float Bz = rp.b0_prof ? 0.f : rp.B0[2];
+    const float Bm = sqrtf(Bx * Bx + By * By + Bz * Bz);
+    if (Bm > 0.f) {
+        const float bx = Bx / Bm, by = By / Bm, bz = Bz / Bm;
+        float sn, cs;
+        sincosf((float)(-rp.qm * rp.dt) * Bm, &sn, &cs);
+        // Rodrigues: v' = v cosφ + (b̂×v) sinφ + b̂ (b̂·v)(1−cosφ)
+        const float bv = bx * vx + by * vy + bz * vz;
+        const float cx_ = by * vz - bz * vy;
+        const float cy_ = bz * vx - bx * vz;
+        const float cz_ = bx * vy - by * vx;
+        const float omc = 1.f - cs;
+        const float vx2 = vx * cs + cx_ * sn + bx * bv * omc;
+        const float vy2 = vy * cs + cy_ * sn + by * bv * omc;
+        const float vz2 = vz * cs + cz_ * sn + bz * bv * omc;
+        vx = vx2; vy = vy2; vz = vz2;
+    }
+    vcx[c] = vx + h * Ex;
+    vcy[c] = vy + h * Ey;
+    vcz[c] = vz + h * Ez;
+}
+
+// cold_full current: J_c = qm·nc·vc scattered from nodes to the staggered J
+// sites with the SAME symmetric averages (Jx between nodes i,i+1; Jy between
+// nodes j,j+1; Jz at the node). Runs after k_cold_fluid_full (new v level,
+// matching the legacy kernel's Ampère timing).
+static __global__ void k_cold_current_full(YeeViews v, RunParams rp,
+                                           const float* __restrict__ vcx,
+                                           const float* __restrict__ vcy,
+                                           const float* __restrict__ vcz) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= v.nx || j >= v.ny) return;
+    const int c = j * v.nx + i;
+    const float jc = (float)(rp.qm * rp.cold_nc);
+    v.jx[c] += jc * 0.5f * (vcx[c] + vcx[v.idx(i + 1, j)]);
+    v.jy[c] += jc * 0.5f * (vcy[c] + vcy[v.idx(i, j + 1)]);
+    v.jz[c] += jc * vcz[c];
 }
 
 // M2/M10 antenna: add the rotating transverse current column (see RunParams

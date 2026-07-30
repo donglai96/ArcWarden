@@ -151,3 +151,94 @@ layer — i.e. for the faster group velocity and longer wavelength there.
       < 1% gate. ctest `boundary_vacuum`: EM pulse R = 0.14%.
 - [ ] (deferred) vacuum-gap/PML candidate — only if a future run needs
       θ ≥ 30° absorption the masks can't provide.
+
+## R-TEST IN THE CHEN CONFIG (2026-07-27) — cavity hypothesis KILLED,
+## hybrid self-burst artifact found, element-sink hypothesis sharpened
+
+Method: 0.25 We0 antenna packet (amp 8e-4, linear) from the equator in the
+REAL case-2 medium (98% cold fluid + 2% hot, dipole), hot made ISOTROPIC
+(A=1: no growth contaminating R), ppc=8000 (noise energy 10x down; the
+coherent same-seed subtraction trick FAILS on reflection timescales —
+atomics decorrelate runs in ~500/We0). Decks decks/rtest_*.ini, data
+build/rtest_*. Three boundaries: damping / hybrid / damping+refresh+precip.
+
+RESULTS:
+1. DAMPING ABSORBS WHISTLER PACKETS FINE. The incident V dies at the
+   walls; only a weak diffuse return (~3e-4 local max vs 8e-4 incident).
+   The all-PIC boundary_reflection.cu R~1 verdict does NOT transfer to
+   the cold-fluid-dominated chen config (there the layer damps the cold
+   current = the wave's main carrier). => the damping-giant's no-element
+   cavity turbulence CANNOT be blamed on wave reflection.
+2. HYBRID + ISOTROPIC f = PATHOLOGY (R unmeasurable): the no-antenna
+   control SELF-BURSTS (interior <|B|^2> x10 at t~900-1200/We0) at
+   0.25-0.75 We0 on the whistler branch (probe peak 0.49 We0 = 0.2x the
+   LOCAL We at the layer). Cause from the ckpt post-mortem: the layer
+   u_perp-damping carves the isotropic f catastrophically — 60% of ALL
+   hot markers perp-cold by t=9000/wpe, global A 1.00->0.83, boundary
+   A->0, near-layer f(u_par) bumpy — a free-energy structure that goes
+   unstable. In CHEN runs the loss-cone-subtracted f0 keeps the cone
+   ~empty, so the carving flux is small and hybrid is benign — the
+   pathology is specific to cone-filled distributions. (The "return
+   packet" in the hybrid R panel was this burst, not reflection.)
+3. PRECIP ~= DAMPING for packets (weak return, no burst): precip acts
+   only at the wall on the true cone — no interface carving, no emitter.
+
+SYNTHESIS — why hybrid grows elements and damping does not, given both
+absorb waves: the difference is the SCATTERED-PARTICLE SINK. During
+growth, waves pitch-scatter resonant electrons into the (empty) cone;
+hybrid permanently silences them on their first boundary visit (energy
+sink => the box can go quiet between bursts => threshold-gated discrete
+elements); damping returns them at full energy and they keep exchanging
+with the field => perpetual marginal turbulence at dB/B ~ 1e-3, no quiet
+reloading, no elements, free energy never tapped (ckpt: A within 1% of
+load after 9000/We0). PRECIP IS EXACTLY THAT SINK done cleanly (wall
+strip, true cone only, energy counted, bath-recycled ghosts).
+
+SHARPENED 3-ARM PREDICTION (giant, damping base): closed = marginal
+turbulence (verified); +refresh = sustained turbulence (verified at
+ppc800); +refresh+precip = DISCRETE ELEMENT TRAINS RETURN and are
+endless with stationary period. Falsifiable at 3x ~3.2 h.
+
+CORRECTION (2026-07-27, user caught the propagation direction): quadrant
+k-w decomposition CALIBRATED against the known-southbound incident packet
+(the By+iBz helicity puts propagation power in the OPPOSITE (w,k)-sign
+quadrant — always calibrate direction analyses against a known signal).
+Corrected reading of the self-burst: waves are generated at MID-LATITUDE
+in each hemisphere and propagate EQUATORWARD (south half: northbound x6;
+north half: southbound x5), converging/crossing at the equator — the
+inward Lambda. Mechanism corrected accordingly: this is BEAM-driven
+whistler growth (normal cyclotron resonance w - k v_par = We(x)/gamma,
+wave counter-propagates to the driving streamer; mu=0 streamers have
+CONSTANT v_par, so each w tunes to a mid-latitude shell where We(x)
+matches — hence off-equator generation and the 0.25-0.75 We0 upshifted
+band at the equator), NOT the trapped-anisotropy equatorial-amplifier
+logic (which requires orbit-varying v_par and does not apply to mu=0
+streamers).
+
+## BURST MECHANISM NAILED (2026-07-27 burst_study: ppc=32k, probes +-150,
+## 4 ckpt snapshots; figs build/burst_waves.png, build/burst_mechanism.png)
+
+The hybrid-layer self-burst (cone-filled loads) is a COUNTER-STREAMING
+CARVED-BEAM WHISTLER INSTABILITY, normal cyclotron resonance, generated
+mid-latitude, propagating equatorward:
+- Timeline: carving first (perp-cold fraction 0.39 by t=600/We0), burst
+  second (WB x30 at t~900-1400), then carving jumps 0.55->0.60 (the burst
+  scatters more markers into the cone — the snowball's second turn).
+- Streamer f(u_par) at t=1200: counter-streaming beams at u_par ~ +-0.15
+  -0.2 near the equator (transiting ghosts); a stalled u_par~0 population
+  at high |h| (markers carved AT their mirror points — dead weight).
+- RESONANCE CLOSURE: dominant burst waves (w = 0.45-0.53 We0, k =
+  0.79-0.96 wpe/c) have v_res = (w - We(x)/gamma)/k lying INSIDE the
+  southbound-beam bulk (-0.1..-0.35) across |h| ~ 50-550 — equatorward
+  waves ride normal cyclotron resonance against the counter-streaming
+  carved beam, gain integrated along the whole path (hence mid-latitude
+  apparent origin + equator crossing, the X in the h-t map). The lower
+  0.26 We0 component is beam-resonant only near the equator — the
+  frequency-latitude mapping behind the upshifted 0.25-0.75 band.
+- Probes +-150 show clean discrete RISING elements (0.4->0.55 We0,
+  dw/dt ~ +3.6e-4 We0^2 — chorus-like sweep magnitude, amplitude-
+  controlled scaling is mechanism-agnostic); weaker later events mixed/
+  falling. A boundary artifact can fake rising-tone elements: any novel
+  hybrid-base signal must be screened against this channel.
+- Direction decomposition (calibrated): equatorward dominance 13x (S)
+  and 17x (N) during the burst.

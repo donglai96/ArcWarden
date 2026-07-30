@@ -9,12 +9,19 @@
 // --resume   continue from <outdir>/ckpt.bin (same deck; diagnostics append)
 // Dumps into outdir:
 //   bline_XXXXXX.bin   float32 By[nx] then Bz[nx], every bline_every steps
+//   eline_XXXXXX.bin   float32 Ex[nx],Ey[nx],Ez[nx] — with bline gives Poynting
+//                      S_x = EyBz−EzBy (x-t source/direction map)
+//   jline_XXXXXX.bin   float32 Jx[nx],Jy[nx],Jz[nx] — HOT deposit only (cold
+//                      fluid enters Ampère separately) ⇒ J·E ledger localizes
+//                      generation: J⊥·E⊥ = cyclotron channel, JxEx = Landau
 //   probe.bin          float32 (By,Bz) at nprobe x-locations, every probe_every
+//   probe_e.bin        float32 (Ey,Ez) same probes/cadence (probe Poynting)
 //   energy.csv         step,time,WE,WB,wd_sum,wd_rms,wd_max
 //   meta.txt           geometry + cadence for the plot script
 
 #include "pic/checkpoint_io.hpp"
 #include "pic/deck.hpp"
+#include "pic/refresh.hpp"
 #include "pic/run_meta.hpp"
 #include "pic/simulation_maxwell.hpp"
 
@@ -36,13 +43,19 @@ int main(int argc, char** argv) {
     std::string outdir = (argc > 2 && argv[2][0] != '-') ? argv[2] : "chirp2d_out";
     long ckpt_every = 0;          // --ckpt=N: save outdir/ckpt.bin every N steps
     bool resume = false;          // --resume: continue from outdir/ckpt.bin
+    bool ckpt_seq = false;        // --ckptseq: write unique ckpt_<step>.bin (no overwrite,
+                                  //            no watcher needed) for dense phase-space series
+    bool no_eline = false;        // --noeline: skip eline_*.bin (the full-nx E line = the
+                                  //            biggest "probe"; probe_e keeps probe Poynting)
     for (int i = 2; i < argc; ++i) {
         if      (!std::strncmp(argv[i], "--ppc=", 6))    d.species[0].ppc = atoi(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--amp=", 6))    d.rp.ant_amp = atof(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--nsteps=", 9)) d.rp.nsteps = atol(argv[i] + 9);
         else if (!std::strcmp(argv[i], "--fullf"))       d.species[0].deltaf = false;
         else if (!std::strncmp(argv[i], "--ckpt=", 7))   ckpt_every = atol(argv[i] + 7);
+        else if (!std::strcmp(argv[i], "--ckptseq"))     ckpt_seq = true;
         else if (!std::strcmp(argv[i], "--resume"))      resume = true;
+        else if (!std::strcmp(argv[i], "--noeline"))     no_eline = true;
     }
     RunParams rp = d.rp;
     Grid g(d.nx, d.ny, d.Lx, d.Ly);
@@ -70,6 +83,14 @@ int main(int argc, char** argv) {
     MaxwellSimulation sim(g, rp);
     sim.particles().initialize_mirror(q, g, rp, sim.stream());
     if (rp.deltaf) sim.particles().enable_deltaf(sim.stream());
+    // RSM: randomize the particle phase θ = 2π·y (R1 — the ny=1 loader pins
+    // y = 0.5, a coherent fake oblique seed otherwise). Fresh starts only:
+    // on --resume the θ stream is restored from the checkpoint ("py").
+    if (rp.rsm && !resume) rsm_theta_init(sim.particles(), rp, sim.stream());
+    // boundary-refresh bath (REFRESH_DESIGN.md): stateless, so fresh start
+    // and --resume initialize identically (per-step-seeded RNG replays).
+    RefreshState rfr;
+    rfr.init(q, g, rp, sim.stream());
     sim.stream().synchronize();
 
     const std::string ckpt_path = outdir + "/ckpt.bin";
@@ -146,10 +167,20 @@ int main(int argc, char** argv) {
             (uintmax_t)(n0 / probe_every) * 2 * nprobe * 4, ec);
         if (ec) std::fprintf(stderr, "chirp2d: probe.bin truncate: %s\n",
                              ec.message().c_str());
+        std::error_code ec2;   // probe_e.bin may not exist in pre-eline runs
+        std::filesystem::resize_file(outdir + "/probe_e.bin",
+            (uintmax_t)(n0 / probe_every) * 2 * nprobe * 4, ec2);
     }
     std::FILE* fpb = std::fopen((outdir + "/probe.bin").c_str(), resume ? "ab" : "wb");
+    std::FILE* fpe = std::fopen((outdir + "/probe_e.bin").c_str(), resume ? "ab" : "wb");
     std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
     if (!resume) std::fprintf(fen, "step,time,WE,WB,wd_sum,wd_rms,wd_max\n");
+    std::FILE* frf = nullptr;
+    if (rfr.on) {
+        frf = std::fopen((outdir + "/refresh.csv").c_str(), resume ? "a" : "w");
+        if (!resume) std::fprintf(frf, "step,time,redraws,dE_injected,draw_fails,"
+                                       "precips,dE_precip\n");
+    }
     {   std::FILE* fm = std::fopen((outdir + "/meta.txt").c_str(), "w");
         std::fprintf(fm, "nx %d\ndx %.9g\ndt %.9g\nnsteps %ld\nbline_every %d\n"
                          "probe_every %d\nnprobe %d\nwce %.9g\nb0_a %.9g\nb0_xc %.9g\n"
@@ -160,37 +191,79 @@ int main(int argc, char** argv) {
                      rp.wce, rp.b0_a, rp.b0_xc, rp.b0_prof, rp.b0_lre,
                      rp.ant_w0, rp.ant_amp, rp.ant_toff,
                      q.density, rp.cold_nc, q.ppc, rp.deltaf, sim.particles().n);
+        std::fprintf(fm, "eline 1\njline 1\nprobe_e 1\n");
         for (int p = 0; p < nprobe; ++p) std::fprintf(fm, "probe_ix %d\n", probe_ix[p]);
         std::fclose(fm); }
 
     std::vector<float> by(g.real_size()), bz(g.real_size());
+    std::vector<float> ex(g.real_size()), ey(g.real_size()), ez(g.real_size());
+    std::vector<float> jx(g.real_size()), jy(g.real_size()), jz(g.real_size());
     const long nsteps = rp.nsteps;
     for (long n = n0 + 1; n <= nsteps; ++n) {
         sim.step();
+        if (rfr.on) rfr.apply(sim.particles(), g, rp, n, sim.stream());
         if (ckpt_every > 0 && n % ckpt_every == 0) {
             sim.stream().synchronize();
-            checkpoint_save(ckpt_path, sim, n, n * rp.dt,
+            const std::string cp = ckpt_seq
+                ? outdir + "/ckpt_" + std::to_string(n) + ".bin" : ckpt_path;
+            checkpoint_save(cp, sim, n, n * rp.dt,
                             (uint64_t)rp.rng_seed, deck_text);
-            std::printf("ckpt @ step %ld -> %s\n", n, ckpt_path.c_str());
+            std::printf("ckpt @ step %ld -> %s\n", n, cp.c_str());
         }
         const bool want_line  = n % bline_every == 0;
         const bool want_probe = n % probe_every == 0;
         if (want_line || want_probe) {
             CUDA_CHECK(cudaMemcpy(by.data(), sim.fields().by_.data(), by.size() * 4, cudaMemcpyDeviceToHost));
             CUDA_CHECK(cudaMemcpy(bz.data(), sim.fields().bz_.data(), bz.size() * 4, cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(ey.data(), sim.fields().ey_.data(), ey.size() * 4, cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(ez.data(), sim.fields().ez_.data(), ez.size() * 4, cudaMemcpyDeviceToHost));
         }
         if (want_probe) {
-            std::vector<float> pb(2 * nprobe);
-            for (int p = 0; p < nprobe; ++p) { pb[2 * p] = by[probe_ix[p]]; pb[2 * p + 1] = bz[probe_ix[p]]; }
+            std::vector<float> pb(2 * nprobe), pe(2 * nprobe);
+            for (int p = 0; p < nprobe; ++p) {
+                pb[2 * p] = by[probe_ix[p]]; pb[2 * p + 1] = bz[probe_ix[p]];
+                pe[2 * p] = ey[probe_ix[p]]; pe[2 * p + 1] = ez[probe_ix[p]];
+            }
             std::fwrite(pb.data(), 4, 2 * nprobe, fpb);
+            std::fwrite(pe.data(), 4, 2 * nprobe, fpe);
         }
         if (want_line) {
+            CUDA_CHECK(cudaMemcpy(ex.data(), sim.fields().ex_.data(), ex.size() * 4, cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(jx.data(), sim.fields().jx_.data(), jx.size() * 4, cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(jy.data(), sim.fields().jy_.data(), jy.size() * 4, cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(jz.data(), sim.fields().jz_.data(), jz.size() * 4, cudaMemcpyDeviceToHost));
             char fn[512];
             std::snprintf(fn, sizeof fn, "%s/bline_%06ld.bin", outdir.c_str(), n / bline_every);
             std::FILE* f = std::fopen(fn, "wb");
             std::fwrite(by.data(), 4, g.nx, f);
             std::fwrite(bz.data(), 4, g.nx, f);
             std::fclose(f);
+            if (!no_eline) {
+                std::snprintf(fn, sizeof fn, "%s/eline_%06ld.bin", outdir.c_str(), n / bline_every);
+                f = std::fopen(fn, "wb");
+                std::fwrite(ex.data(), 4, g.nx, f);
+                std::fwrite(ey.data(), 4, g.nx, f);
+                std::fwrite(ez.data(), 4, g.nx, f);
+                std::fclose(f);
+            }
+            std::snprintf(fn, sizeof fn, "%s/jline_%06ld.bin", outdir.c_str(), n / bline_every);
+            f = std::fopen(fn, "wb");
+            std::fwrite(jx.data(), 4, g.nx, f);
+            std::fwrite(jy.data(), 4, g.nx, f);
+            std::fwrite(jz.data(), 4, g.nx, f);
+            std::fclose(f);
+            if (rp.rsm) {   // m1 complex lines: B1y, B1z, E1x (E_par), E1y
+                std::snprintf(fn, sizeof fn, "%s/m1line_%06ld.bin", outdir.c_str(), n / bline_every);
+                f = std::fopen(fn, "wb");
+                std::vector<float2> mb(g.nx);
+                RsmState& r = sim.rsm();
+                for (auto* arr : { &r.b1y, &r.b1z, &r.e1x, &r.e1y }) {
+                    CUDA_CHECK(cudaMemcpy(mb.data(), arr->data(),
+                                          g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
+                    std::fwrite(mb.data(), sizeof(float2), g.nx, f);
+                }
+                std::fclose(f);
+            }
         }
         if (n % 2000 == 0) {
             const auto e = sim.field_energy();
@@ -198,11 +271,19 @@ int main(int argc, char** argv) {
             std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
                          n, n * rp.dt, e.we, e.wb, w.sum, w.rms, w.max);
             std::fflush(fen);
+            if (frf) {
+                const auto r = rfr.drain(sim.stream());
+                std::fprintf(frf, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+                             n, n * rp.dt, r.redraws, r.de, r.fails,
+                             r.precips, r.de_precip);
+                std::fflush(frf);
+            }
             if (n % 20000 == 0)
                 std::printf("t=%8.0f  WB=%.3e  wd_rms=%.3e\n", n * rp.dt, e.wb, w.rms);
         }
     }
-    std::fclose(fpb); std::fclose(fen);
+    if (frf) std::fclose(frf);
+    std::fclose(fpb); std::fclose(fpe); std::fclose(fen);
     std::printf("done: %s\n", outdir.c_str());
     return 0;
 }

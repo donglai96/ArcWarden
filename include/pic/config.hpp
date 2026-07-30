@@ -185,6 +185,20 @@ struct RunParams {
     int      bnd_x     = 0;     // 0 = periodic, 1 = field damping, 2 = hybrid
     int      bnd_nd    = 64;    // damping cells per side
     double   bnd_numax = 1.0;   // peak damping rate
+    double   bnd_carve_lo = -1.0; // if >=0: hybrid (bnd_x=2) carves u_perp in the
+    double   bnd_carve_hi = -1.0; // FIXED band |x-equator| in [lo,hi] (c/wpe)
+                                  // instead of the wall layer -> decouples carve
+                                  // LOCATION from wall position (carving-loc test)
+    // bnd_x = 3 ("atmo"): realistic-atmosphere particle wall. Fields + cold
+    // fluid damped by the mask as in mode 1 (the fluid carries ~all the wave
+    // current in production, so mode 1 already absorbs; the mode-2 R ≈ 1
+    // measurement was in a MARKER-cold test — see boundary_reflection.cu).
+    // Particles reflect specularly with u_perp KEPT (adiabatic return from a
+    // virtual mirror point beyond the wall), EXCEPT the mapped atmospheric
+    // loss cone: precipitate (u_perp -> 0) iff sin²α_local < b_local/bnd_batm,
+    // i.e. the mirror point would lie beyond the atmosphere. bnd_batm =
+    // B_atm/B_eq of the real field line (dipole L = 5 -> ~230); 0 = no cone.
+    double   bnd_batm = 0.0;
 
     // —— M3 delta-f (Yee branch): nonlinear two-weight scheme, g = f0 ——
     // Markers sample the bi-Maxwellian reference f0 ∝ exp(-ux²/2Tpar
@@ -212,6 +226,54 @@ struct RunParams {
     // response is absent (quasi-parallel whistlers have E∥ ≈ 0; chirp1d drops
     // E∥ entirely). Total wpe² = cold_nc + hot density.
     double   cold_nc   = 0.0;
+    // cold_full = 1 ([field] cold_model = full): 3-COMPONENT cold fluid at
+    // NODES with symmetric staggered E-gather/J-scatter and exact rotation
+    // about the LOCAL analytic background b̂(x,y) (mirror2d aware). Restores
+    // the longitudinal cold response (E∥ shielding for oblique waves) and is
+    // phase-error-free for ky ≠ 0 (the ny=1 legacy kernel treats Ey/Ez sites
+    // as co-located — exact only in 1D). Required for cold_nc with ny > 1.
+    // 0 = legacy transverse-only path, bit-identical.
+    int      cold_full = 0;
+
+    // —— RSM: reduced spectral mirror, m = ±1 oblique harmonic (flagship,
+    // docs/RSM_MODEL_DEFINITION.md = model constitution; rsm_oblique.hpp) ——
+    // ny = 1 ONLY: the fields gain one complex transverse Fourier harmonic
+    // F1(x)·e^{ik1·y} (∂y → ik1 exact, no y grid). Particle y (cell units at
+    // ny = 1) IS the phase θ/2π: the deck must set Ly = 2π/k1 so the legacy
+    // advance ẏ = v_y/Δy ≡ θ̇/2π is exact and the periodic y-wrap is
+    // phase-periodic. rsm = 0: legacy path untouched by construction (no new
+    // kernel launches, no allocations — regress_case2.py gates every commit).
+    int      rsm      = 0;
+    double   rsm_k1   = 0.0;   // k_perp (physical); deck derives 2π/Ly if 0
+    double   rsm_seed = 0.0;   // m=1 eigenmode seed amplitude relative to wce
+
+    // —— Boundary-refresh thermal bath (docs/REFRESH_DESIGN.md; refresh.hpp) ——
+    // Stateless high-latitude bath: OUTWARD-moving hot markers inside the
+    // thin shell s(λ_R) < |s| < s(λ_R) + shell are redrawn from the local
+    // (E,mu)-mapped f0 every step ⇒ ~one refresh per outward λ_R crossing
+    // (knob-free bounce-flux supply — the "infinite train" experiment; see
+    // refresh.hpp for why a shell, not the whole high-|λ| region).
+    // Runner-level feature: consumed by RefreshState, dipole profile +
+    // full-f only. refresh = 0: no allocations, no kernel launches.
+    int      refresh        = 0;
+    double   refresh_lambda = 15.0;   // shell inner boundary λ_R (degrees)
+    double   refresh_shell  = 15.0;   // shell width (physical length, c/ωpe)
+    int      refresh_precip = 0;      // real precipitation: zero u⊥ in the
+                                      // one-cell wall strips + count the
+                                      // removed energy (needs bnd_x = 1;
+                                      // the bath recycles the ghosts)
+    double   refresh_precip_cells = 1.0; // width of each precip u⊥-strip in
+                                      // cells (default 1 = wall-toucher only).
+                                      // Set to bnd_nd to make the precip layer
+                                      // match the hybrid (bnd_x=2) u⊥ layer
+                                      // WIDTH — isolates whether it's the
+                                      // u⊥-removal geometry that lets the wave
+                                      // reach B_th (else refresh side stalls).
+    int      refresh_precip_soft = 0; // 0 = hard-zero u⊥ (default); 1 = soft
+                                      // depth-graded exp fold like hybrid layer
+                                      // (keeps mid-lat amplifier warm -> retains
+                                      // convective gain). Tests soft-vs-hard.
+    double   refresh_precip_numax = 0.1; // fold rate for precip_soft (=bnd_numax)
 
     // —— M4 background B0(x) profile (background_b0.hpp) ——
     // b0_prof = 1: parabolic B0(x) = B0[0]·(1 + b0_a (x − b0_xc)²) x̂ along the

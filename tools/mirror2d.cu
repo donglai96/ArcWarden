@@ -45,8 +45,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "mirror2d: needs [background] profile=mirror2d and >=1 species\n");
         return 1;
     }
-    if (rp.cold_nc > 0.0) {
-        std::fprintf(stderr, "mirror2d: all-PIC only (cold_nc must be 0)\n");
+    if (rp.cold_nc > 0.0 && !rp.cold_full) {
+        std::fprintf(stderr, "mirror2d: cold_nc needs [field] cold_model = full "
+                             "(3-component staggered-correct fluid)\n");
         return 1;
     }
     if (rp.dt >= 0.999 * g.dx / (rp.c * std::sqrt(2.0))) {
@@ -105,12 +106,13 @@ int main(int argc, char** argv) {
                          "wl_every %d\nf2d_every %d\nwl_acc %d\n"
                          "nreg %d\nnpar %d\nnperp %d\nnwb %d\nvmax %.9g\n"
                          "nprobe %d\nnsp %d\nwce %.9g\nb0_a %.9g\nb0_xc %.9g\n"
+                         "cold_nc %.9g\n"
                          "b0_yc %.9g\nbnd_x %d\nnmarkers %zu\n",
                      g.nx, g.ny, g.dx, g.dy, rp.dt, rp.nsteps,
                      bline_every, probe_every, fv_every, wl_every, f2d_every,
                      wl_acc, NREG, NPAR, NPERP, NWB, (double)VMAX,
                      nprobe, (int)d.species.size(), rp.B0[0], rp.b0_a,
-                     rp.b0_xc, rp.b0_yc, rp.bnd_x, sim.particles().n);
+                     rp.b0_xc, rp.cold_nc, rp.b0_yc, rp.bnd_x, sim.particles().n);
         for (const auto& q : d.species)
             std::fprintf(fm, "species %s density %.9g ppc %d uth %.9g %.9g %.9g\n",
                          q.name.c_str(), q.density, q.ppc,

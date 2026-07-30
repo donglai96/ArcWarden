@@ -428,7 +428,7 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
                                    double uth_par, double uth_perp_eq,
                                    float weight, unsigned long seed,
                                    int dist, double lc_rho, double lc_kappa,
-                                   long base, long cnt) {
+                                   double cone_b, long base, long cnt) {
     // multi-species: markers [base, base+cnt) belong to this species; off[]
     // holds ABSOLUTE offsets (off[0] = base). RNG streams use the absolute
     // index t, so the single-species path (base = 0) is bit-identical to
@@ -454,10 +454,29 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
     const double r1 = fmax(rng_uniform(static_cast<int>(t), 1, seed), 1e-12);
     const double r2 = rng_uniform(static_cast<int>(t), 2, seed);
     const double r4 = rng_uniform(static_cast<int>(t), 4, seed);
-    const double upar = uth_par * sqrt(-2.0 * log(r1)) * cos(2.0 * M_PI * r2);
+    double upar = uth_par * sqrt(-2.0 * log(r1)) * cos(2.0 * M_PI * r2);
 
     double uperp;
-    if (dist == 1) {
+    if (dist == 2) {
+        // Cone-cut bi-Max (x4-atmo arm): joint (u∥,u⊥) rejection off the local
+        // bi-Max — the cut couples the components, so both are resampled per
+        // trial. Accept sin²α_local ≥ b/cone_b  ⇔  u⊥²·cone_b ≥ b·u².
+        // Host guarantees b < cone_b for every loaded cell (nfac = 0 beyond);
+        // worst-case acceptance at the outermost cells is kept > ~1e-2 by the
+        // density taper, so 96 trials overwhelm the tail.
+        const double scut = b / cone_b;
+        uperp = 0.0;
+        for (int k = 0; k < 96; ++k) {
+            const double ra = fmax(rng_uniform(static_cast<int>(t), 10 + 3 * k, seed), 1e-12);
+            const double rb = rng_uniform(static_cast<int>(t), 11 + 3 * k, seed);
+            const double rc = fmax(rng_uniform(static_cast<int>(t), 12 + 3 * k, seed), 1e-12);
+            upar  = uth_par * sqrt(-2.0 * log(ra)) * cos(2.0 * M_PI * rb);
+            const double u2p = -2.0 * Tp * log(rc);
+            if (u2p >= scut * (u2p + upar * upar)) { uperp = sqrt(u2p); break; }
+        }
+        if (uperp == 0.0)   // exhausted (P < 1e-4 given the host K-taper):
+            uperp = fabs(upar) * sqrt(scut / (1.0 - scut)) * 1.0001;  // cone edge
+    } else if (dist == 1) {
         // Loss-cone SUBTRACTED bi-Max (Chen PoP 2026 Eq. 1): both Gaussian
         // components are (E,mu) equilibria, so each maps separately,
         //   1/T2(x) = (1 - 1/b)/Tpa + (1/b)/(kappa Tpe),  T2 < Tp always.
@@ -653,6 +672,8 @@ struct Particles {
             if (q.dist == 1 && (q.lc_rho < 0.0 || q.lc_rho > 1.0 ||
                                 q.lc_kappa <= 0.0 || q.lc_kappa >= 1.0))
                 throw std::runtime_error("initialize_mirror: losscone needs 0<=rho<=1, 0<kappa<1");
+            if (q.dist == 2 && q.cone_b <= 1.0)
+                throw std::runtime_error("initialize_mirror: conecut needs cone_b > 1");
             if (q.kappa_v > 0.0)
                 throw std::runtime_error("initialize_mirror: kappa_v not supported by the mirror loader");
             const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
@@ -667,6 +688,20 @@ struct Particles {
                     const double T2 = 1.0 / ((1.0 - 1.0 / b) / Tpa
                                              + (1.0 / b) / (q.lc_kappa * Tpe));
                     nfac = (T1 - q.lc_rho * T2) / (Tpe * (1.0 - q.lc_rho * q.lc_kappa));
+                } else if (q.dist == 2) {
+                    // cone-cut kept fraction of the LOCAL bi-Max: with
+                    // s² = b/cone_b, c² = s²/(1−s²),
+                    //   K(b) = P(sin²α_local ≥ s²) = 1/√(1 + c²·Tpa/T1).
+                    // K is also the kernel's rejection acceptance — taper to 0
+                    // (no markers) where K < 0.1 (last ~0.1° before the wall)
+                    // so the 96-trial loop never runs out in practice.
+                    const double s2 = b / q.cone_b;
+                    if (s2 >= 1.0) nfac = 0.0;
+                    else {
+                        const double c2 = s2 / (1.0 - s2);
+                        const double K  = 1.0 / std::sqrt(1.0 + c2 * Tpa / T1);
+                        nfac = (K < 0.1) ? 0.0 : nfac * K;
+                    }
                 }
                 offs[si][c] = static_cast<int>(base + tot);
                 tot += std::lround(q.ppc * nfac) * g.ny;   // per x-COLUMN, uniform in y
@@ -691,7 +726,7 @@ struct Particles {
             detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
                 views(), g, rp, doffs.back().data(), q.uth[0], q.uth[1],
                 static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed,
-                q.dist, q.lc_rho, q.lc_kappa, bases[si], cnts[si]);
+                q.dist, q.lc_rho, q.lc_kappa, q.cone_b, bases[si], cnts[si]);
             CUDA_CHECK(cudaPeekAtLastError());
         }
         CUDA_CHECK(cudaStreamSynchronize(s));   // doffs are scoped to this call

@@ -141,3 +141,154 @@ needed by both); (3) candidate new experiment: J_B ablation in ArcWarden
 REPETITION + threshold scaling survive without J_B? Nobody has run the
 ablation in a dipole with repetitive elements. No arXiv preprint found;
 AIP blocks fetch — user will drop the PDF in docs/ for a deep read.
+
+## IMPLEMENTATION RECORD (2026-07-26) — landed, gates PASS
+
+Code: include/pic/refresh.hpp (all logic), [refresh] deck block
+(enable/lambda_deg/shell), RunParams::refresh/refresh_lambda/refresh_shell,
+chirp2d wiring (RefreshState + refresh.csv: step,time,redraws,dE,fails).
+simulation_maxwell.hpp UNTOUCHED (runner-level call after sim.step() —
+stronger isolation than planned). Gate test: tests/test_refresh_null.cu
+(ctest refresh_null; runs a zero-dynamics sampler probe + Gate 1 + Gate 2).
+
+FINAL FORM (differs from the design sketch in three load-bearing ways —
+each forced by a measured Gate-1 failure, all five variants kept in the
+refresh.hpp header as methods material):
+1. THIN SHELL s(15deg) < |s| < s(15deg)+15, not the whole |lambda|>15deg
+   region. Wide bath + hybrid absorber churns +16x hot KE per 450/wpe
+   (absorber re-drains every refreshed u_perp); wide bath +
+   trapped-conditioning perp-piles the deep bath (closing trapped cone:
+   Tpar -45% in ONE application) and pumps the whistler instability.
+2. PROBABILITY GATE q = |u_par| dt / w per step => expected redraws per
+   outward crossing EXACTLY 1, velocity-independent, still stateless.
+   Redrawing every step while inside the shell (~250x per crossing)
+   re-randomizes the shell current each step = white-noise whistler
+   antenna: +38% hot KE per 450/wpe radiated even with reflecting walls.
+3. FLUX-WEIGHTED u_par (|u| Rayleigh, random sign; u_perp stays the
+   loader's density-weighted local (E,mu) form). The swap fires once per
+   CROSSING (a flux event); the density-weighted Gaussian left a -6.8%
+   shell-adjacent Tpar dip (classic boundary-injection result).
+Also: refresh REJECTS bnd_x = 2 (hybrid) decks — the particle absorber
+makes the closed steady state deviate from f0 and any f0-restoring bath
+fights it (variants 1,2,4 above + thin-shell-unconditioned all fail on
+hybrid). Gate-3 decks use x = damping (particles reflect specularly),
+which is also closer to Chen 2026's own bare-reflection boundary.
+
+GATE RESULTS (RTX 5090, chen2026-case2-like deck, 3000 steps, ppc 400):
+- Sampler probe (zero dynamics, one application): every bin moment within
+  +-0.4% (distribution-identity with the mirror loader confirmed).
+- Gate 1 (bath ON vs OFF, same seed): interior n 0.18% / Tpar 0.69% /
+  Tperp 0.16% (all shot-noise); net dE = -1.2e-6 = 3e-6 of hot KE;
+  redraws 27/step = the bounce flux; 0 draw failures.
+- Gate 2 (lambda_R 12/15/18): interior insensitive, worst 0.66%.
+- Gate 0 (feature compiled+disabled, statistical non-regression,
+  scripts/regress_case2.py): tiled PASS outright; flat PASS with pooled
+  3+3-run envelope (WE 0.97x, WB 1.45x, bline 1.00x of same-build
+  envelope; the 2-run WE/WB envelope is unreliable — energies are sparse
+  scalars, always pool >=3 runs).
+
+GATE 3 LAUNCHED (this session): decks/chen2026_case2_refl.ini (closed) vs
+decks/chen2026_case2_refresh.ini (shell bath), both x=damping, same seed,
+t_end 10000/We0, outputs build/gate3_closed + build/gate3_refresh.
+Question: does the element train persist with stationary ACF period?
+
+## GATE 3 RESULT (2026-07-26) — refill sustains the drive; discreteness
+## lost to the cavity boundary (both arms), claim scoped accordingly
+
+Runs: build/gate3_closed vs build/gate3_refresh (same seed, x=damping,
+t_end 10000/We0, ppc 800). Figures: gate3_{closed,refresh}/gate3_*_final.png
+(standard 4-panel), gate3_compare.png (A/B overlay).
+
+VERDICT — the refill hypothesis holds on this base:
+- WB(t): identical through the growth phase (ratio 1.0 at t=2000), then
+  monotonic divergence as the closed box drains: 1.7x (4000), 2.1x (6000),
+  2.6x (8000), 5.0x (9800/We0).
+- Envelope: closed decays 0.0045 -> 0.0037 (-18%, peak at t=1765);
+  refreshed flat 0.0043 -> 0.0044 with its RUN PEAK AT t=9528 — activity
+  undiminished at end-of-run.
+- ACF period of the envelope: closed stretches 436 -> 927/We0 (first-half
+  vs second-half medians — the fuel-drain clock slowdown, same signature
+  as the hybrid x10 894 -> ~1500); refreshed stationary 727 -> 748 (+3%).
+- Supply: 55 redraws/step steady (vs 27 in the noise-window null test —
+  the bath responds to wave-driven pitch-angle traffic, no knob); total
+  injected energy 9.8e-3 = 2.4% of hot KE over the full run.
+
+SCOPE CAVEAT (honest): with x=damping both arms produce CONTINUOUS
+broadband whistler turbulence (dense counter-propagating packets in the
+h-t maps), NOT the discrete element trains of the hybrid decks — the
+field-only damping layers reflect too much (boundary_reflection.cu R~1;
+the df7 lesson that reflectivity sets the timeline applies). So Gate 3 as
+run demonstrates "refresh turns a draining box into a statistically
+steady driven state" (limit-cycle throughput), but the design's original
+"endless DISCRETE element train with period ~ T_b" claim remains open —
+it needs a wave-absorbing, particle-clean boundary. Candidate next steps:
+(a) reproduce df7's partial-reflection (R~10%) configuration full-f and
+rerun both arms; (b) revisit a hot-current-aware field absorber that does
+not touch f (so refresh stays compatible); (c) accept hybrid for the
+closed arm only and compare refresh on the damping base against closed
+on BOTH bases. Gate 4 (x7 lre clock split) unaffected — it can run on
+whichever base recovers discreteness.
+
+## PRECIPITATION MODE LANDED (2026-07-27) — refresh + real precipitation,
+## smoke-tested, ready for the production A/B
+
+User call after the Gate-3 giant closed-arm forensics (free energy never
+tapped on the damping base; hybrid's absorber both sinks u_perp AND
+enables wave absorption but is refresh-incompatible): build the complete
+loss+refill loop as refresh + REAL precipitation.
+
+Scheme ([refresh] precip = true, requires bnd_x = 1 + refresh enabled;
+all in refresh.hpp, same kernel, velocity-only => charge continuity safe,
+fixed N):
+- WALL STRIPS (one cell at x = 0 / Lx): any marker there gets u_perp
+  ZEROED, u_par kept; removed energy counted (refresh.csv dE_precip).
+  Only true loss-cone markers (alpha_eq < asin(b_wall^-1/2) = 39.5 deg)
+  ever reach the strips — the hybrid layers' 39.5-43.5 deg buffer band is
+  untouched. Ghost keeps incident u_par => mu = 0, no mirror trapping,
+  streams across the box in ~T_b/5, minimal density pile-up.
+- RECYCLING: the ghost crosses the FAR shell outward and the ordinary
+  bath rule swaps it for a fresh trapped-f0 sample — precipitation
+  removes the energy at the wall, the bath re-injects it at the
+  bounce-flux rate. Net budget = dE_injected - dE_precip, both logged.
+- Counting: dE ledger takes every zeroing event; the precips counter
+  only fires above u_perp^2 > 1e-6 (strip-dwelling ghosts re-accrete
+  ~1e-8 of wave-noise u_perp between zeroings — 12x count inflation
+  before the threshold, energy unaffected).
+
+SMOKE RESULTS (ppc = 50 throwaway, decks/refresh_precip_smoke.ini):
+- test_refresh_null still PASS (precip off = untouched path).
+- compute-sanitizer memcheck: 0 errors.
+- Loop closure (t to 3000/We0 = 2.3 ghost transits): injection rate
+  ramps 1e-4 -> 1.9e-3 per 300/We0 interval while the initial loss-cone
+  drain decays 5.8e-3 -> 2.3e-3; late-window injection/precipitation =
+  0.82 and still converging — the pipeline fills over the transit time
+  exactly as predicted. Late rates: 1.2 first-arrival precips/step,
+  3.0 redraws/step.
+- CAVEAT: ppc-50 noise floor is enormous (WB ~ 5e-4) => the smoke's
+  precip flux is noise-scattering-driven; production numbers need giant
+  scale. NOT run (user: smoke only).
+
+Production next step (when user green-lights GPU): the three-arm giant
+set on x = damping — closed / refresh / refresh+precip — answers both
+"does refill sustain the drive" and "does precipitation restore the
+element-forming free-energy cycling that hybrid provided", with the full
+energy budget (bath in, wall out, wave field) closed in refresh.csv.
+
+## DESIGN RULING (2026-07-27, user): the bath refills the SUBTRACTED
+## (empty-cone) f0 — and that is the physical choice
+
+Question: should redraws sample the loss-cone-subtracted f0 or the full
+one? Ruling: SUBTRACTED. Drift-resupplied particles arrive from
+neighboring flux tubes that also touch the atmosphere; tau_drift /
+tau_bounce ~ 1e3, so the supply is pre-emptied — cone occupancy is set
+by the LOCAL balance (wave scattering in vs precipitation out), never by
+the supply. The implementation already complies (redraw inherits the
+species' dist/lc_rho/lc_kappa verbatim). The R-test's cone-filled
+isotropic bath is an unphysical drift model — mechanism-study use only.
+COROLLARY: with subtracted refill + precip, refresh.csv dE_precip is a
+pure WAVE-DRIVEN precipitation flux meter — chorus elements should pulse
+it (the chorus <-> pulsating-aurora correspondence, free diagnostic for
+the 3-arm run). Known small inconsistency, accepted: Chen's smooth
+rho=1/kappa=0.3 subtraction vs the box's sharp 39.5-deg geometric cone —
+the system relaxes to its own self-consistent cone-edge shape;
+mirror-before-wall conditioning exists in git history if ever needed.

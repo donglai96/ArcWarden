@@ -9,7 +9,7 @@
 //   [DeckBlock]   u64 nbytes + verbatim deck text (self-describing physics)
 //   [GitBlock]    u64 nbytes + git hash string
 //   [Manifest]    u32 narrays, then per array: u32 name_len + name,
-//                 u32 dtype (0=f32,1=f64,2=i32,3=u64), u64 count
+//                 u32 dtype (0=f32,1=f64,2=i32,3=u64,4=c64/float2), u64 count
 //   [Arrays]      raw payloads in manifest order (M7; may be absent in a
 //                 schema-only file, manifest counts say what WOULD follow)
 //
@@ -30,7 +30,7 @@ namespace arc {
 
 struct CheckpointArray {
     std::string name;
-    uint32_t    dtype = 0;      // 0=f32 1=f64 2=i32 3=u64
+    uint32_t    dtype = 0;      // 0=f32 1=f64 2=i32 3=u64 4=c64(float2)
     uint64_t    count = 0;
 };
 

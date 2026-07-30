@@ -505,3 +505,368 @@ kinetic engine.
   engine (3x/step cost, 10x coarser dt than Yee) — cross-confirmation of
   flagship results is back on the menu, and the methods-paper section
   writes itself (task #13).
+
+## Lu-group 2D gcPIC audit (2026-07-23, verified from PDFs in docs/)
+
+- Ke 2017 JGR mirror field = OUR EXACT prof=3 FORMULA (their Eq.1:
+  B0x = -2 xi x z B0eq, B0z = (1+xi z^2)B0eq — incl. the factor 2; field
+  lines x0/(1+xi z^2)). Their hot off-equator profile (Chan 1994 force
+  balance) = ALGEBRAICALLY IDENTICAL to our (E,mu) mapping. Geometry and
+  loader independently validated by the field standard.
+- COLD = MASSLESS PRESSURELESS FLUID in ALL their 2D runs (KO2007
+  electron-hybrid closure) — the user's "back to fluid" call is the field
+  standard. wpe/We = 5 everywhere.
+- Boundaries: absorbing waves (Tao 2014 masks) + specular particles = our
+  bnd_x scheme. Full-f, ppc 500-1000 (hot only!), NO smoothing documented.
+- THE difference vs our G2.2: SCALE + ASPECT. Ke 2017 box ~ +-495 x +-354
+  c/wpe (near-square; field-line tilt to ~35 deg IN the box -> real
+  curvature, WNA grows to 25-50 deg); our ribbon 205 x 6.4 (max tilt 3.5
+  deg). Same formula, different transverse extent = the curvature knob.
+  Their gamma = 1.4e-2 We = 2.8e-3 wpe (same as our linear estimate!) but
+  runway L ~ 700 c/wpe -> single-pass gain ~7 e-folds: convective design
+  that WORKS with absorbing walls. Onset We t ~ 400, elements at
+  amplitudes ~1e-2 B0, chirping in 3-25 deg latitude, 1-2 elements per
+  run; repetition needs injection (Lu 2021 1D delta-f, tau_D ~ 2000/We).
+- Hot: nh = 1-2%, Tperp/Tpar = 4.5-6, beta_par = 0.01, wpar ~ 0.14c,
+  RELATIVISTIC push. A threshold for rising tones drops 1D->2D (7 -> 3.8).
+- NO GAP, NO UPPER BAND anywhere in the series (lower band only; Ke 2025:
+  upper band would need finer grids). FLAGSHIP NICHE CONFIRMED OPEN.
+- G2.2 REFRAME: make it a Ke-2017-style run on ArcWarden — fluid cold
+  (cold_model=full upgrade: vcx + symmetric stagger + local-bhat rotation),
+  wide box (aspect toward theirs; fluid cold removes the cold-Debye grid
+  constraint so dx can grow), hot nh~0.01 A=4.5-6 wpar 0.14c rel=1.
+  Known target figures = clean gates; flagship then = + kinetic delta-f
+  cold (Landau channel for the gap, which THEY cannot do with T=0 fluid).
+
+## G2.2 v2 BUILD (2026-07-23 evening) — cold_model=full LANDED+GATED; Ke17 deck staged
+
+- cold_model=full ([field] key; legacy transverse path bit-identical off):
+  3-component cold fluid at NODES — vcx restores the longitudinal cold
+  response (E_par shielding for oblique waves); SYMMETRIC staggered
+  E-gather/J-scatter (real transfer cos(kd/2): zero phase error);
+  EXACT Rodrigues rotation about the LOCAL analytic b-hat (mirror2d aware,
+  reduces to the legacy sincos for B || x). Files: config/deck/yee2d
+  (k_cold_fluid_full + k_cold_current_full + mask vcx)/simulation_maxwell
+  (vcx_ alloc + dispatch)/checkpoint_io (vcx entry)/mirror2d (unlock).
+- GATE test_cold_fluid_oblique (2-level convergence): fine level omega
+  errors 0.003-0.46% vs exact Stix cold dispersion across theta=0-63 deg;
+  coarse-level 0.35-1.4% residual converges (grid dispersion, documented);
+  energy drift -0.04%/-0.10% over T=2000 -> ZERO numerical damping.
+  Estimator lessons burned in: frequency-bin quantization (parabolic peak
+  interp) + elliptic-polarization mirror-line sidelobes (Hann window).
+  Legacy test_cold_fluid_dispersion untouched, passes.
+- decks/mirror2d_ke17.ini staged (NOT run — user hold on long runs):
+  Ke 2017 Table-1 faithful (xi=6.94e-6, dx=0.345/dy=0.966, wpe/We=5,
+  cold_nc=0.99 fluid, hot 1% A=4.5 wpar=0.141c rel, dt=0.1, 150k steps
+  = 3000/We; deviations documented in deck header: half transverse width,
+  periodic y, jfilter=3). 300-step smoke: 275M markers, ~21 GB, clean.
+- Targets when launched: onset We*t~400, elements ~1e-2 B0, chirping
+  Gamma=3.5-7.7e-4 We^2, WNA < 25 deg (Ke Figs. 3-4, 8).
+
+## RSM pivot (2026-07-24, user-directed): bridge model = new minimal flagship arm
+
+- User insight chain: (a) 2D expensive -> add a few k_perp to 1D; (b) user
+  correction: Li 2019 is OBLIQUE (15-deg tilted B0) — k_perp is the gap's
+  admission ticket, NOT a robustness check (my "1D parallel repro" claim
+  was wrong; the plan header itself says E_par=0 -> no loop); (c) System
+  Design Document commissioned and written.
+- docs/RSM_MODEL_DEFINITION.md v1.0 = PROJECT CONSTITUTION (scope +
+  boxed hypothesis, retained/neglected physics, why {0,+-k1} only,
+  controlled-not-cheap, Li/Lu bridge table, math structure, full-orbit
+  rationale, success Levels 0-4, failure Cases A-D, model hierarchy).
+  Key refinements over the outline: refraction split (along-field WNA
+  evolution RETAINED via kx at fixed k_perp; transverse ray bending
+  neglected); Level-3 gap defined as deepening LOCAL MINIMUM with finite
+  upper shoulder (gap != cutoff); Levels 0/1 gate against IN-HOUSE
+  reproductions (Chen 2026 chirp; Li 2019 tilted gap), not literature.
+- Implementation audit (source-verified): particles already carry (x,y)
+  + full 3V (particles.hpp Particles struct) with 2D Esirkepov deposit
+  -> no eta_p phase variable needed; cold_model=full IS the oblique
+  field response (gated 0.003-0.46%, zero damping); ONLY new code =
+  per-step ky projection of J keeping m in {0,+-1} (+ initial-seed
+  masking) + deck flag. Feature-isolated as always.
+- Mirror choice for clean truncation: parametrized mc-term (b0_prof 1/2,
+  y-homogeneous background -> ALL linear ops diagonal in m, truncation
+  exact) FIRST; prof=3 resolved slab leaks m->m+-1 through B0y~y (weak
+  at small Ly) and is the rung toward full 2D. TODO when implementing:
+  verify the mc term is applied for ny>1 (chirp2d enforces ny==1 today).
+- Benchmark ladder (maps to constitution Levels): (i) uniform-B single-
+  oblique-mode KINETIC benchmark: omega(k) shift, E_par/E_perp vs Stix,
+  Landau Vp, Li-type mid-energy reshaping (cold half already gated);
+  (ii) Li-type plateau in RSM geometry = Level 1 (~1000 tau_g run);
+  (iii) both channels on = Level 2; (iv) mirror chirp+gap = Level 3.
+- Ke17 full-2D (decks/mirror2d_ke17.ini, staged+smoked) demoted from
+  "next launch" to literature-anchor arm (constitution Section 10).
+
+## RSM non-regression gate on the Chen 2026 case-2 path (2026-07-24)
+
+- User requirement: RSM code must not affect the chirp2d path that
+  reproduces Chen 2026 case 2.
+- Bit-identity is IMPOSSIBLE at run level: two runs of the SAME binary
+  on chen2026_case2.ini differ from step 1 (GPU float atomicAdd
+  ordering); measured same-build envelope at 5000 steps: WE 4.2e-6,
+  WB 1.3e-5, bline rms 3.6e-4, probe rms 1.9e-4.
+- Gate = STATISTICAL EQUIVALENCE (scripts/regress_case2.py): candidate
+  envelope <= 3x same-build envelope, three short runs (~s each).
+- EXECUTED for the evening cold_full changes vs HEAD b4499e9 (worktree
+  twin build, identical Release flags): cross-build WE 4.3e-6 /
+  WB 9.1e-6 / bline 3.6e-4 / probe 2.1e-4 — indistinguishable from
+  same-build noise. PASS: cold_full landing did not perturb the case-2
+  physics. Run data: build/rsm_regress_20260724/.
+- Constitution amended (Section 6): ky projection = separate kernel,
+  off-by-default flag, no signature/call-path changes to the validated
+  parallel path; flag-off must pass this gate before any RSM commit.
+
+## RSM implementation switched to PURE SPECTRAL (2026-07-24, user decision)
+
+- User: "i dont want to add ny, I said i want this to be 1d code, just
+  have spectrum in ky". Constitution Section 6 amended: first
+  implementation = (A) direct spectral. ny = 1 forever on this arm.
+- Architecture: m=0 = untouched legacy 1D path; m=1 = NEW complex 1D
+  arrays {E1,B1,J1,cold v1}(x) evolved with d/dy -> ik1 (exact, no y
+  grid dispersion); particles keep stored y as pure phase coordinate;
+  gather adds 2 Re[F1 e^{ik1 y_p}] in a SEPARATE rsm pusher kernel;
+  deposit adds a k_deposit_j1 pass (shape x phase, complex atomics).
+  Flag off -> no new kernel launches, no allocations: legacy path
+  untouched BY CONSTRUCTION (+ statistical gate anyway).
+- Care point: m=1 Gauss consistency (dt rho1 + dx J1x + ik1 J1y = 0);
+  direct deposit + per-step 1D complex Gauss correction of E1;
+  E_par/E_perp vs Stix is the acceptance test (B2 benchmark).
+
+## Case-2 regression gate EXTENDED to the tiled-deposit path (2026-07-24)
+
+- User clarified: THE successful Chen 2026 case-2 reproduction is the
+  GIANT deck (ppc 110000 + tile_sort=25, build/chen2026_case2_giant) —
+  which exercises the M9 TILED deposit, not the flat-atomics path my
+  first regression covered; depositor.hpp was touched by darwin_tc.
+- Reran the statistical gate on base deck + tile_sort=25 (ppc 800,
+  5000 steps, HEAD worktree twin): all ratios 0.6-1.6 vs the 3x margin
+  -> PASS. Both deposit paths now verified unperturbed by the evening
+  changes. Data: build/rsm_regress_20260724/tiled_*.
+- Note for future gates: run regress_case2.py protocol on BOTH decks
+  (flat + tile_sort) — the giant/tiled configuration is the canonical
+  reproduction path.
+
+## RSM design review absorbed (2026-07-24, user's static code audit)
+
+- User-side reviewer (no CUDA device; static read) delivered a 6-risk
+  audit; all file:line claims SOURCE-VERIFIED here: (1) ny=1 loaders set
+  y=0.5 for ALL particles -> direct e^{-ik1 y} deposit = coherent fake
+  oblique seed (the trap my plan would have hit); (2) mirror loader
+  rejects kappa_v; (3) cold_full off by default in the Chen deck.
+- Constitution amended: Section 6.1 "Implementation risk register" =
+  R1 theta_p phase state (uniform load, k_perp*uy/gamma advance),
+  R2 full m=1 state incl rho1 + div-free oblique seed + divB1 monitor,
+  R3 modal Esirkepov / cold-INCLUSIVE Gauss projection (hot-only
+  projection fakes E_par -> fake plateau/gap), R4 one total-field Boris
+  push (two deposits same worldline OK, two pushes NOT), R5 spectral
+  cold fluid needs its own gate (test_cold_fluid_oblique covers the
+  real-space path only) + cross-check vs BOTH Stix and real-space
+  cold_full, R6 factor-2 ledger (W = W0 + 2W1, P = J0.E0 + 2Re(J1*.E1)).
+  Plus semantics: m=-1 = reality conjugate NOT counter-prop; fixed
+  k_perp != fixed WNA under chirp; commensurate-only multi-mode; no y
+  box (line-density weights, phase period 2pi); jfilter on Re/Im J1 AND
+  rho1; boundary A/B scan required for long runs; checkpoint must carry
+  m=1 state + theta; Level 1 renamed Li-TYPE benchmark (kappa_v loader
+  gap).
+- Validation ladder now V0-V6 (V0 = case-2 statistical regression both
+  deposit paths, EXECUTED+PASS today; V6 = notch forensics: never claim
+  a gap from a single fixed-phase lineout — m0/m1 interference fakes
+  notches; y-averaged modal spectra only).
+
+## 2026-07-24 (evening): RSM first code block LANDED — V1 phase-load gate PASS
+
+Green-lit ("go continue"). First implementation block written and gated:
+
+- **theta-storage decision (better than both planned options)**: p.y at
+  ny = 1 is ALREADY a pure phase coordinate — the legacy pusher advances
+  it by v_y dt/dy and wraps mod 1, and the m = 0 gather/deposit are
+  invariant to it. With the deck contract **Ly = 2 pi / k1** (enforced
+  in [rsm] finalize + RsmState::init), cell-unit y IS theta/2pi and the
+  legacy advance IS dtheta/dt = k_perp u_y/gamma EXACTLY. No new
+  particle array, no sort/migrate/checkpoint plumbing, no pusher change
+  for the phase. Constitution R1 amended (RESOLVED block).
+- **Code**: config.hpp RunParams {rsm, rsm_k1, rsm_seed} (off by
+  default); deck.hpp [rsm] section (enable, k1, seed) + finalize
+  validation (ny = 1 required, k1 derived from Ly or checked against
+  it); include/pic/rsm_oblique.hpp = RsmViews/RsmState (complex float2
+  m=1 arrays E1/B1/J1/rho1 on x-nodes), rsm_theta_init (R1 remedy: y
+  uniform [0,1) on RNG stream 11, loaders use 0-5), rsm_deposit_moments
+  (CIC-in-x rho1/J1 moment snapshot; dynamical worldline-Esirkepov J1
+  comes with the field update). Nothing launches/allocates unless
+  rp.rsm = 1.
+- **Gate V1 PASS** (tests/test_rsm_phaseload.cu, ctest rsm_phaseload):
+  pinned y = 0.5 load -> |S|/N = 1.000000 (R1 trap demonstrated live);
+  after rsm_theta_init: E|S_rho|^2/N = 1.06 / 0.87 and
+  E|S_jz|^2/(N<uz^2>) = 0.92 / 0.73 at N = 2^18 / 2^20 (32 seeds,
+  Exp(1) statistics, bounds [0.5, 1.6]) — shot noise + N^{-1/2} law.
+- **Non-regression gate re-EXECUTED both paths** (RunParams layout
+  changed -> full recompile): flat ratios WE 1.89 / WB 0.39 / bline
+  0.98 / probe 1.03; tiled 0.94 / 0.98 / 1.01 / 1.03 vs 3x margin —
+  PASS, PASS (build/rsm_regress_20260724/{rsm_cand_v1,tiled_cand_v1}).
+- NEXT (V2): spectral m = 1 cold-fluid + Maxwell update (Dx, ik1) in
+  rsm_oblique.hpp, uniform-B periodic-x oblique dispersion/polarization
+  /E_par gate vs Stix AND real-space cold_full (R5), div-free eigenmode
+  seed (R2). Then V3 conservation ledger, V4 Li-type plateau (long run
+  — ask user first).
+
+## 2026-07-24 (late evening): RSM V2 LANDED — spectral m=1 cold solver Stix-exact
+
+- **Solver** (rsm_oblique.hpp): m=1 Maxwell with staggered Dx + EXACT ik1
+  (k_rsm_faraday/k_rsm_ampere) + complex twin of cold_full
+  (k_rsm_cold_fluid/k_rsm_cold_current: symmetric staggered gather/scatter,
+  half-kick/exact-rotation/half-kick; Re/Im rotate identically since the
+  rotation is a real operator). Staggering: x-staggered like Yee (E1x, B1y,
+  B1z at i+1/2) but COLLOCATED in y — inheriting the Yee y half-shift would
+  be e^{i k1 dy/2} = e^{i pi} = -1 at ny = 1, a sign catastrophe. Time
+  layout identical to legacy step_at (faraday-half -> [hot J1 slot] -> cold
+  -> faraday-half -> ampere) via rsm_cold_step().
+- **Gate V2 PASS** (tests/test_rsm_cold_dispersion.cu, ctest
+  rsm_cold_dispersion): k1 = 0.4, kx modes theta = 22-64 deg, div-free
+  B1z-only white seed (k.B1 = 0 exactly, R2 satisfied w/o projection).
+  Refined level: omega vs Stix <= 0.80% all modes (worst = the omega =
+  0.07 wce mx=1 mode, measurement-floor-limited); interior modes 0.03-0.4%
+  with clean 2nd-order convergence; energy drift +0.0000 EXACTLY (zero
+  numerical damping, better than the real-space gate's margin);
+  polarization |Ex/Ey| (= E_par response, B0 || x) and |Ez/Ey| match the
+  Stix eigenvector to <= 1.1% relative (gate 5%). R5 cross-check satisfied
+  transitively: same whistler_w_exact solver as test_cold_fluid_oblique
+  which gates the real-space cold_full path.
+- No shared-file changes this block (rsm_oblique.hpp + new test +
+  CMakeLists only) -> legacy binary unchanged, regression gate not
+  re-triggered.
+- NEXT (V3, the big one): particle coupling — one-push total-field gather
+  (E0 + 2Re[E1 e^{i theta}], R4), charge-conserving modal J1 deposit
+  (worldline Esirkepov, R3), MaxwellSimulation::step_at integration under
+  rp.rsm, complex continuity/Gauss(cold-inclusive)/energy ledger gates;
+  then V4 Li-type plateau.
+
+## 2026-07-24 (night): RSM V3 LANDED — particle coupling + conservation gates PASS
+
+- **k_rsm_push_esirkepov** (rsm_oblique.hpp): ONE Boris push with the total
+  field (m0 staggered gather + 1D complex m1 gather, force = 2Re[F1 e^{i
+  theta}], m1 dB rides in the wave dB so b0_prof mirror branches work) +
+  m0 esirkepov_scatter + charge-conserving MODAL m1 deposit from the same
+  worldline. The modal deposit uses the exact factorization S1e1 - S0e0 =
+  ebar(S1-S0) + Sbar(e1-e0): x-flow -> 1D Esirkepov prefix sum (J1x links,
+  phase ebar), phase-flow -> J1y = i qw Sbar (e1-e0)/(k1 dt dV) = the
+  analytic worldline integral. NO Gauss projection anywhere -> the
+  cold-inclusive-projection trap (R3) cannot fire by design. Constitution
+  R3 + R4 amended with RESOLVED blocks.
+- **MaxwellSimulation integration** (shared file touched): RsmState member
+  + step_at branches under rp.rsm (m1 faraday halves / fused rsm push /
+  1D binomial filter_j1 / m1 cold twin / m1 ampere), all zero-cost when
+  rsm = 0. Scope guards at construction: rsm rejects deltaf (full-f only),
+  tile_sort (flat path only), bnd_x (periodic until V5), pump.
+- **Gate V3 PASS** (tests/test_rsm_conservation.cu, ctest rsm_conservation):
+  A) deterministic kick = qm dt 2Re[E1 e^{i theta}] to 1e-6 (factor-2 +
+  phase, kernel-level); B) modal continuity residual 4.9e-5 of largest
+  term (float atomics roundoff); C) divB1/(k1|B1|) = 3.1e-6 after 200
+  steps; D) energy ledger W = KE + Wm0 + 2Wm1 conserved to 3.6% of
+  transferred energy through a T_perp/T_par = 12 anisotropy instability
+  where the m1 harmonic grew from 1e-8 seed to 2W1 = 2.2 (ledger
+  exercised at saturation amplitude).
+- **Non-regression gate re-EXECUTED both paths** (simulation_maxwell.hpp
+  changed): flat ratios WE 2.43 / WB 0.63 / bline 1.00 / probe 1.00;
+  tiled 0.56 / 1.18 / 1.03 / 1.02 vs 3x margin — PASS, PASS
+  (rsm_cand_v3 / tiled_cand_v3). Full project builds clean; all 10
+  unit-label ctests pass.
+- NEXT: V4 = uniform-B Li-TYPE kinetic benchmark: hot kappa-tail load +
+  cold_nc, m0 parallel chorus band + m1 oblique response, Landau plateau
+  formation in f(v_par) around Vp(0.5) — LONG run (~1000 tau_g class),
+  ASK USER before launching. Then V5 mirror + chirp coexistence
+  (needs bnd_x m1 damping + chirp2d runner wiring: theta init + rsm
+  deck + m1 diagnostics dumps).
+
+## 2026-07-24 (night, cont.): V4 full run LAUNCHED + V5 infrastructure landed
+
+- **V4 pilot PASS (wiring)**: rsm_band runner (liband_yee RSM twin: B0
+  strictly along x, obliquity = spectral k1 = 0.16; theta init wired; m1
+  complex line dumps; 2W1 in energy.csv) + decks/rsm_band_li.ini (Li G2.1
+  plasma, geometry inverted, tile_sort = 0) + scripts/plot_rsm_band.py.
+  Pilot 30k steps: m0 anisotropy band growing (WB x6), m1 at shot-noise
+  floor with whistler-branch structure already visible in the SEPARATE P1
+  spectrum, f(vpar) unchanged (expected at t = 120/We). 145 steps/s
+  (flat-path atomics on the 1024-cell grid = the cost of the rsm
+  tile_sort guard). FULL RUN launched: 500k steps = t 2000/We = 318
+  tau_g, ~58 min (build/rsm_band_full). Level-1 criteria: m0 band vs
+  G2.1; m1 oblique band on Stix; Landau plateau at +-Vp ~ 0.1c formed by
+  the m1 channel ONLY (m0 is strictly E_par = 0 now — the clean
+  two-channel separation).
+- **V5 infrastructure landed (compiled, GPU-gated after V4)**:
+  k_rsm_damp_x (complex twin of the Umeda masks, node/half sites + m1
+  cold); bnd_x guard removed; specular wall + hybrid transverse damping
+  copied into k_rsm_push_esirkepov (fold BEFORE deposits; phase y
+  untouched); checkpoint m1 schema (dtype 4 = float2, e1*/b1*/vc1*
+  conditional manifest entries — theta rides in "py"); chirp2d wiring
+  (rsm_theta_init on fresh start only — resume restores theta; m1line
+  dumps). PENDING GPU: checkpoint round-trip smoke + regression gate
+  re-run (chirp2d.cu, simulation_maxwell.hpp, checkpoint_io.hpp touched).
+
+## 2026-07-24 (late night): V4 VERDICT (honest) + V5 infra GPU-gated PASS
+
+- **V4 full run COMPLETE** (rsm_band_full, 500k steps = 318 tau_g, 37 min):
+  both channels grew from shot noise and saturated (WB = 1.6e-2,
+  2W1 = 2.0e-2 — m1 comparable to m0); omega-k emission falls EXACTLY on
+  the cold whistler branch (kinetic self-consistency at saturation);
+  resonance-region f(vpar) gain 1.35-1.9x in v = 0.08-0.25.
+- **V6 forensics BLOCKED a false gap claim**: crude window stats showed
+  "gap/LB = 1.6e-5 at 0.45-0.55" — quarter-by-quarter analysis proved it
+  is the INTER-LINE VALLEY of the discrete mode comb (dk = 0.123 ->
+  whistler-mode spacing ~0.03-0.05 wce; valley floor ~constant across
+  quarters = NOT progressive carving). P0 envelope is continuous 0.2-0.7;
+  NO two-band, NO gap at 318 tau_g in the 51.2 c/wpe box. Verdict:
+  V4 = engine + channels PASS; band/gap study needs the finer-k longer
+  setup (Li repro needed 900+ tau_g) + an rsm-OFF control for clean
+  Landau attribution (tail heating is two-sided -> cyclotron scattering
+  contributes; the control subtracts it).
+- **V5 infra GPU checks ALL PASS**: legacy checkpoint format test OK;
+  RSM save/resume round-trip OK on decks/rsm_chirp_case2.ini (the
+  HYPOTHESIS deck runs end-to-end: dipole mirror + cold + hybrid bnd +
+  rel + rsm; m1 state restored, fields finite/continuous across resume);
+  case-2 regression gate re-PASS both paths (flat <= 1.90x, tiled
+  <= 0.98x; rsm_cand_v5/tiled_cand_v5).
+- Level-1 completion options (user decision): (A) bigger-box longer V4
+  (nx 4096, Lx 204.8 -> dk/4; ~2000+ tau_g; hours) for real band/gap
+  statistics + rsm-off control run; (B) proceed to V5 chirp+m1 pilot
+  (rsm_chirp_case2, 333k steps ~ 2-3 h at ppc 800) and study the
+  processing question directly in the mirror geometry.
+
+## 2026-07-25: rsm-OFF CONTROL BASELINE COMPLETE (band_ctrl_big, 1000 tau_g)
+
+- **Parallel null hypothesis QUANTIFIED**: strictly parallel two-population
+  physics alone produces a SHALLOW 0.5 depression — smoothed min(0.45-0.55)
+  /LB per quarter = 0.22 / 0.11 / 0.10 / 0.082 (deepens only 2.7x over
+  1000 tau_g). Mechanism: cold-kappa cyclotron damping strongest where
+  |v_R| = (We-w)/k_par is minimal (= 0.5). This is the no-Landau baseline
+  the RSM gap must beat: Li/G2.1 gap class is 3e-4.
+- **f(vpar) heating PERFECTLY symmetric** (+1.337 vs -1.335 at [0.08,0.12];
+  all bands match to 3 digits): pure pitch-angle scattering, zero E_par by
+  geometry. Any +/- asymmetry or +Vp-localized excess in the RSM run is
+  the m1 Landau channel, cleanly.
+- Retrospective: small-box RSM resonance gain (1.35) ~= this parallel
+  baseline (1.34) -> confirms the V4-small "attribution unclean" verdict;
+  m1 Landau net effect was not yet visible there.
+- **Quantitative criteria for rsm_band_big**: gap min/LB << 8.2e-2 AND
+  faster-than-baseline deepening; Landau = excess + asymmetry at
+  +[0.08,0.16]. Spectrum quasi-continuous at dk = 0.031 (comb resolved);
+  WB saturates 0.28 (dB/B ~ 4%); omega-k textbook whistler branch.
+- Big RSM run NOT yet launched (user directive) — launch command in
+  memory/state; ~6-8 h flat path.
+
+## 2026-07-25 CRITERIA CORRECTION (user caught it): NO +/- asymmetry expected
+
+- The "Landau = +/- asymmetry" criterion was WRONG: the periodic box grows
+  +-k_par waves symmetrically (also within m1; k_perp does not break
+  x -> -x), so Landau plateaus form at BOTH +-Vp (as in Li 2019 itself).
+- CORRECTED discriminant = LOCATION in velocity space: cyclotron acts at
+  |v_R| = (We-w)/k_par ~ 0.15-0.3c (tails, smooth monotonic gain profile —
+  measured in the control: 1.11/1.34/1.51/1.81 rising with |v|); Landau
+  acts at |Vp| ~ 0.08-0.12c INSIDE it. Signature = localized excess
+  flattening at |v| in [0.06,0.14] deviating from the smooth control
+  profile, both signs, in the RSM-minus-control difference.
+- Why the big box can show it at all: (1) resonance OVERLAP — dk/4 turns
+  isolated-mode trapping oscillations (no net diffusion) into quasilinear
+  diffusion once mode spacing < trapping width; (2) cumulative time
+  (900+ tau_g for spectral back-reaction in G2.1); (3) statistics
+  (32.8M markers resolve the localized deformation).

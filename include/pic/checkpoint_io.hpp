@@ -61,6 +61,7 @@ template <class T> constexpr uint32_t dtype();
 template <> constexpr uint32_t dtype<float>()  { return 0; }
 template <> constexpr uint32_t dtype<double>() { return 1; }
 template <> constexpr uint32_t dtype<int>()    { return 2; }
+template <> constexpr uint32_t dtype<float2>() { return 4; }   // RSM m=1 complex
 
 struct Entry {
     const char* name;
@@ -77,6 +78,15 @@ inline void for_each_array(MaxwellSimulation& sim, Fn&& fn) {
     fn("ex", F.ex_); fn("ey", F.ey_); fn("ez", F.ez_);
     fn("bx", F.bx_); fn("by", F.by_); fn("bz", F.bz_);
     if (sim.vcy().size()) { fn("vcy", sim.vcy()); fn("vcz", sim.vcz()); }
+    if (sim.vcx().size()) { fn("vcx", sim.vcx()); }
+    // RSM m = 1 state (allocated only when rp.rsm; the particle phase θ is
+    // p.y and rides in "py"). j1/rho1/j1tmp are per-step scratch — rebuilt.
+    auto& R = sim.rsm();
+    if (R.e1x.size()) {
+        fn("e1x", R.e1x); fn("e1y", R.e1y); fn("e1z", R.e1z);
+        fn("b1x", R.b1x); fn("b1y", R.b1y); fn("b1z", R.b1z);
+        fn("vc1x", R.vc1x); fn("vc1y", R.vc1y); fn("vc1z", R.vc1z);
+    }
     fn("px", P.x); fn("py", P.y);
     fn("pux", P.ux); fn("puy", P.uy); fn("puz", P.uz);
     fn("pw", P.w); fn("pcell", P.cell);

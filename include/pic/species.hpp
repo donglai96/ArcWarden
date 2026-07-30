@@ -29,9 +29,17 @@ struct Species {
     //   f_perp ∝ exp(−u⊥²/2 U⊥²) − lc_rho · exp(−u⊥²/(2 lc_kappa U⊥²)),
     // U⊥ = uth[1] (Chen et al. Eq. 1; their Ut⊥). Only the mirror loader
     // (initialize_mirror) honors it; delta-f ∂lnf0 for it is a later step.
-    int         dist     = 0;           // 0 = bi-Max, 1 = loss-cone subtracted
+    int         dist     = 0;           // 0 = bi-Max, 1 = loss-cone subtracted,
+                                        // 2 = cone-cut ([species] dist = conecut)
     double      lc_rho   = 1.0;         // subtraction amplitude ρ ∈ [0,1]
     double      lc_kappa = 0.3;         // subtracted-component width κ ∈ (0,1)
+    // dist = 2 (x4-atmo arm, 07-30): HARD pitch-cone cut on the bi-Maxwellian,
+    //   f = biMax(uth) · Θ(sin²α_eq − 1/cone_b),  cone_b = B_wall/B_eq.
+    // Trapped population only: markers whose mirror point lies beyond the wall
+    // are never loaded (same criterion as the atmo boundary with batm = cone_b
+    // — load and boundary are the SAME operator, zero initial transient).
+    // Local form at mirror ratio b: reject sin²α_local < b/cone_b.
+    double      cone_b   = 0.0;         // wall mirror ratio (>1 required)
     double      taud     = 0.0;         // delta-f drift-injection timescale
                                         // (physical time; RunParams::df_taud)
     double      kappa_v  = 0.0;         // G1.1: bi-kappa velocity index (0 =

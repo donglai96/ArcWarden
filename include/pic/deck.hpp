@@ -167,8 +167,10 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "rep") sp.deltaf = (val == "deltaf");   // M3 (Yee branch)
             // M5a: loss-cone subtracted bi-Max (mirror loader only)
             else if (key == "dist") { if (val == "losscone") sp.dist = 1;
+                                      else if (val == "conecut") sp.dist = 2;
                                       else if (val != "bimax")
-                                          throw std::runtime_error("deck: species dist must be bimax|losscone"); }
+                                          throw std::runtime_error("deck: species dist must be bimax|losscone|conecut"); }
+            else if (key == "cone_b") sp.cone_b = dv();  // dist=conecut wall mirror ratio
             else if (key == "kappa") sp.lc_kappa = dv();
             else if (key == "kappa_v") sp.kappa_v = dv();   // G1.1 bi-kappa index
             else if (key == "rho")   sp.lc_rho = dv();
@@ -180,6 +182,11 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "c")        d.c_direct = dv();
             else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());
             else if (key == "tc")       d.rp.darwin_tc = detail::deck_bool(val) ? 1 : 0;
+            else if (key == "cold_model") {
+                if (val == "full") d.rp.cold_full = 1;
+                else if (val != "transverse")
+                    throw std::runtime_error("deck: [field] cold_model must be transverse|full");
+            }
             else if (key == "jfilter")  d.rp.jfilter = static_cast<int>(iv());
             else if (key == "tile_sort") d.rp.tile_sort = static_cast<int>(iv());
         } else if (section == "antenna") {
@@ -192,10 +199,14 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "toff")  d.rp.ant_toff = dv();
         } else if (section == "boundary") {
             // M2 (Yee branch): [boundary] x = damping|periodic, nd, numax
-            if      (key == "x")     d.rp.bnd_x = (val == "hybrid") ? 2
+            if      (key == "x")     d.rp.bnd_x = (val == "atmo")   ? 3
+                                                : (val == "hybrid") ? 2
                                                 : (val == "damping") ? 1 : 0;
             else if (key == "nd")    d.rp.bnd_nd = static_cast<int>(iv());
             else if (key == "numax") d.rp.bnd_numax = dv();
+            else if (key == "carve_lo") d.rp.bnd_carve_lo = dv();
+            else if (key == "carve_hi") d.rp.bnd_carve_hi = dv();
+            else if (key == "batm")  d.rp.bnd_batm = dv();
         } else if (section == "background") {
             if      (key == "wce")       { d.wce = dv(); d.rp.wce = d.wce; }
             else if (key == "theta_deg") d.theta_deg = dv();
@@ -223,6 +234,20 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "amp")    d.pump_amp = dv();
             else if (key == "trmp")   d.pump_trmp = dv();
             else if (key == "toff")   d.pump_toff = dv();
+        } else if (section == "rsm") {
+            // RSM m = ±1 oblique harmonic (docs/RSM_MODEL_DEFINITION.md).
+            if      (key == "enable") d.rp.rsm = detail::deck_bool(val) ? 1 : 0;
+            else if (key == "k1")     d.rp.rsm_k1 = dv();
+            else if (key == "seed")   d.rp.rsm_seed = dv();
+        } else if (section == "refresh") {
+            // Boundary-refresh thermal bath (docs/REFRESH_DESIGN.md).
+            if      (key == "enable")     d.rp.refresh = detail::deck_bool(val) ? 1 : 0;
+            else if (key == "lambda_deg") d.rp.refresh_lambda = dv();
+            else if (key == "shell")      d.rp.refresh_shell = dv();
+            else if (key == "precip")     d.rp.refresh_precip = detail::deck_bool(val) ? 1 : 0;
+            else if (key == "precip_cells") d.rp.refresh_precip_cells = dv();
+            else if (key == "precip_soft") d.rp.refresh_precip_soft = detail::deck_bool(val) ? 1 : 0;
+            else if (key == "precip_numax") d.rp.refresh_precip_numax = dv();
         } else if (section == "diagnostics") {
             if      (key == "enable") { std::istringstream is(val); std::string m;
                                         while (is >> m) d.diag_enable.push_back(m); }
@@ -267,6 +292,19 @@ inline Deck load_deck(const std::string& path) {
             bg::fit_dipole(d.rp, 1.01 * smax);                 // 1% margin past the wall
         }
     }
+    if (d.rp.rsm) {                                            // RSM m=±1 harmonic
+        if (d.ny != 1)
+            throw std::runtime_error("deck: [rsm] needs ny = 1 (pure spectral k_perp; "
+                                     "a resolved-y grid is the 2D code, not RSM)");
+        const double twopi = 2.0 * 3.14159265358979323846;
+        if (d.rp.rsm_k1 <= 0.0) d.rp.rsm_k1 = twopi / d.Ly;
+        else if (std::abs(d.rp.rsm_k1 * d.Ly / twopi - 1.0) > 1e-9)
+            throw std::runtime_error("deck: [rsm] k1 must satisfy Ly = 2*pi/k1 — "
+                                     "particle y IS the phase theta/2*pi (set Ly, omit k1)");
+    }
+    if (d.rp.refresh && d.rp.b0_prof != 2)                     // refresh bath
+        throw std::runtime_error("deck: [refresh] needs [background] profile = "
+                                 "dipole (lambda_R is a dipole latitude)");
     if (d.pump_enable) {                                       // whistler pump (An et al. Table I)
         const double s = d.pump_amp * dx / 1e4;               // Ẽα0 = 1e4·eEα0/(me ωpe² Δx)
         d.rp.pump    = true;

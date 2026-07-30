@@ -96,6 +96,10 @@ target_include_directories(liband_yee PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_executable(mirror2d tools/mirror2d.cu)
 target_include_directories(mirror2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+add_executable(rsm_band tools/rsm_band.cu)
+target_include_directories(rsm_band PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(rsm_band PRIVATE CUDA::cudart CUDA::cufft)
+
 add_executable(liband_darwin tools/liband_darwin.cu)
 target_include_directories(liband_darwin PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(liband_darwin PRIVATE CUDA::cudart CUDA::cufft)
@@ -174,7 +178,7 @@ target_link_libraries(test_darwin_magnetostatic PRIVATE CUDA::cudart CUDA::cufft
 add_test(NAME darwin_magnetostatic COMMAND test_darwin_magnetostatic)
 
 # M1 gates: Yee vacuum dispersion / Esirkepov continuity / dual-path Langmuir.
-foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau yee_mirror_bounce deltaf_mirror_hold cold_fluid_dispersion dipole_profile mirror2d)
+foreach(t yee_vacuum esirkepov_continuity yee_langmuir yee_tiled yee_vs_darwin_lowfreq boundary_vacuum boundary_whistler deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau yee_mirror_bounce deltaf_mirror_hold cold_fluid_dispersion dipole_profile mirror2d cold_fluid_oblique)
   add_executable(test_${t} tests/test_${t}.cu)
   target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/include)
   target_link_libraries(test_${t} PRIVATE CUDA::cudart CUDA::cufft)
@@ -217,10 +221,39 @@ target_include_directories(test_weibel PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_weibel PRIVATE CUDA::cudart CUDA::cufft)
 add_test(NAME weibel COMMAND test_weibel)
 
+# RSM gate V1 (docs/RSM_MODEL_DEFINITION.md §6.1 R1): the phase load must be
+# N^{-1/2} shot noise, not the coherent y = 0.5 loader artifact.
+add_executable(test_rsm_phaseload tests/test_rsm_phaseload.cu)
+target_include_directories(test_rsm_phaseload PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_rsm_phaseload PRIVATE CUDA::cudart)
+add_test(NAME rsm_phaseload COMMAND test_rsm_phaseload)
+
+# RSM gate V2: spectral m=1 cold oblique dispersion/polarization/E_par vs
+# Stix (same solver as test_cold_fluid_oblique = the R5 cross-check).
+add_executable(test_rsm_cold_dispersion tests/test_rsm_cold_dispersion.cu)
+target_include_directories(test_rsm_cold_dispersion PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_rsm_cold_dispersion PRIVATE CUDA::cudart)
+add_test(NAME rsm_cold_dispersion COMMAND test_rsm_cold_dispersion)
+
+# RSM gate V3: particle-coupling conservation (kick factor-2, modal
+# continuity, divB1, energy ledger through the anisotropy instability).
+add_executable(test_rsm_conservation tests/test_rsm_conservation.cu)
+target_include_directories(test_rsm_conservation PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_rsm_conservation PRIVATE CUDA::cudart)
+add_test(NAME rsm_conservation COMMAND test_rsm_conservation)
+
+# REFRESH Gates 1+2 (docs/REFRESH_DESIGN.md): thermal-bath null test (bath
+# invisible at f = f0) + lambda_R geometric insensitivity.
+add_executable(test_refresh_null tests/test_refresh_null.cu)
+target_include_directories(test_refresh_null PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_refresh_null PRIVATE CUDA::cudart)
+add_test(NAME refresh_null COMMAND test_refresh_null)
+
 # ---- ctest labels (L-shell plan M0): unit / physics / regression ----
 set_tests_properties(smoke_device fft_roundtrip poisson_sine particle_load
                      charge_conservation single_particle magnetized_boris
-                     checkpoint_format diagnostics PROPERTIES LABELS "unit")
+                     checkpoint_format diagnostics rsm_phaseload
+                     PROPERTIES LABELS "unit")
 set_tests_properties(langmuir two_stream weibel darwin_magnetostatic
                      chirp1d_mirror chirp1d_dispersion chirp1d_growth
                      yee_vacuum esirkepov_continuity yee_langmuir
