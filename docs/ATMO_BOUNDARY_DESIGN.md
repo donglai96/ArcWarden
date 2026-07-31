@@ -327,3 +327,31 @@ it is not the mechanism of chorus. Combined with the x2 flood result, the
 lre scan closes: **gradient strength (through B_th vs noise/B_opt ordering)
 selects suppressed / discrete-riser / complex / hiss regimes; the equatorial
 anisotropy generates; the boundary, when honest, only precipitates.**
+
+## 11. Extension to t = 20000/We0 (resume run, 07-30 evening)
+
+- **Element train confirmed at 5+ elements.** Catalog (peak-local |Bw|,
+  lat+15 probe): E1 t=3270 (7.0×10⁻³), then 11370, 14250, 17130, 19890
+  (1.9–4.2×10⁻³); southern hemisphere runs an offset series (10410, 13650,
+  17970 at −25°). N/S elements alternate.
+- **Period resolved — two clocks.** The post-E1 recovery is anomalously
+  long (~8100/We0 ≈ full driver T_b + depth of the E1 depletion: the first
+  element, born from the pristine cone-cut f0, is 2–3× stronger than all
+  later ones). The STEADY-STATE train period is 2800–4400/We0 ≈ **T_b/2**
+  of the core drivers (T_b = 5100–7000/We0): each half-bounce equator
+  crossing feeds a wave in the alternating propagation direction, and the
+  hemispheres interleave. This also retro-resolves x5: its ACF period 2795
+  = T_b/2 at lre=2661 (T_b/2 = 2050–2800 ✓), and the naive lre scaling
+  2795×1.25 = 3494 matches the x4 steady intervals — period ∝ T_b across
+  lre confirmed once the first-element transient is excluded.
+- **Sweep-rate ratios trend toward the x10/x5 value as the initial-f0
+  transient decays:** E1 0.22 → E2 0.36 (r²=0.98) → E3 0.47 (r²=0.94)
+  vs 0.72 at x10/x5 (equator probe, Bw/B0, exact same pipeline).
+- **Fuel gauge (t=19500): equatorial A = +0.862** — RISING through the
+  train era (+0.747 load → +0.761 → +0.862): the honest wall loss-cone
+  valve removes scattered-down particles while bounce dynamics restores
+  high-pitch flux — legitimate anisotropy maintenance sustaining the
+  train (the physical counterpart of what hybrid's 44° carve did
+  artificially and 150× too strongly).
+- Ghost pool 8.9% at t=20000 (6.6% at t≈10⁴; growth decelerating).
+  In-cone standing population 22.5% (incl. ghosts).
