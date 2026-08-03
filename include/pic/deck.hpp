@@ -168,9 +168,11 @@ inline Deck load_deck(const std::string& path) {
             // M5a: loss-cone subtracted bi-Max (mirror loader only)
             else if (key == "dist") { if (val == "losscone") sp.dist = 1;
                                       else if (val == "conecut") sp.dist = 2;
+                                      else if (val == "prodkappa") sp.dist = 3;
                                       else if (val != "bimax")
-                                          throw std::runtime_error("deck: species dist must be bimax|losscone|conecut"); }
+                                          throw std::runtime_error("deck: species dist must be bimax|losscone|conecut|prodkappa"); }
             else if (key == "cone_b") sp.cone_b = dv();  // dist=conecut wall mirror ratio
+            else if (key == "kappa_par") sp.kappa_par = dv();  // dist=prodkappa index
             else if (key == "kappa") sp.lc_kappa = dv();
             else if (key == "kappa_v") sp.kappa_v = dv();   // G1.1 bi-kappa index
             else if (key == "rho")   sp.lc_rho = dv();

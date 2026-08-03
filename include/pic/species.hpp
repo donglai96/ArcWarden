@@ -30,7 +30,9 @@ struct Species {
     // U⊥ = uth[1] (Chen et al. Eq. 1; their Ut⊥). Only the mirror loader
     // (initialize_mirror) honors it; delta-f ∂lnf0 for it is a later step.
     int         dist     = 0;           // 0 = bi-Max, 1 = loss-cone subtracted,
-                                        // 2 = cone-cut ([species] dist = conecut)
+                                        // 2 = cone-cut ([species] dist = conecut),
+                                        // 3 = product-kappa-par + cone-cut
+                                        //     ([species] dist = prodkappa)
     double      lc_rho   = 1.0;         // subtraction amplitude ρ ∈ [0,1]
     double      lc_kappa = 0.3;         // subtracted-component width κ ∈ (0,1)
     // dist = 2 (x4-atmo arm, 07-30): HARD pitch-cone cut on the bi-Maxwellian,
@@ -40,6 +42,18 @@ struct Species {
     // — load and boundary are the SAME operator, zero initial transient).
     // Local form at mirror ratio b: reject sin²α_local < b/cone_b.
     double      cone_b   = 0.0;         // wall mirror ratio (>1 required)
+    // dist = 3 (x4 Arm K, 08-01): PRODUCT form — kappa PARALLEL x Maxwellian
+    // PERP, with the same hard cone cut as dist = 2:
+    //   f = [1 + u∥²/(2κθ∥²)]^(−κ) · exp(−u⊥²/(2u⊥th²)) · Θ(sin²α_eq − 1/cone_b)
+    // θ∥ = uth[0] (CORE width, not the moment: <u∥²> = 2κθ∥²/(2κ−3)),
+    // u⊥th = uth[1]. KP anisotropy A(v∥) = (u⊥th²/θ∥²)/(1+v∥²/(2κθ∥²)) − 1
+    // DECREASES with energy: upper-band resonant (low-v∥) electrons see the
+    // anisotropic core, lower-band (tail) electrons a mild A — the B<->C
+    // balance (docs/X4_PRODKAPPA_PLAN.md). NOT the bi-kappa kappa_v (whose
+    // A(v) is constant). Loaded as an InvGamma (Student-t, ν = 2κ−1) scale
+    // mixture of bi-Max (E,μ) equilibria — superposition of equilibria is an
+    // equilibrium; see initialize_mirror for the tilted-mixture sampling.
+    double      kappa_par = 0.0;        // dist=3 parallel kappa index (> 1.5)
     double      taud     = 0.0;         // delta-f drift-injection timescale
                                         // (physical time; RunParams::df_taud)
     double      kappa_v  = 0.0;         // G1.1: bi-kappa velocity index (0 =

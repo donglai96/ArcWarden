@@ -60,12 +60,23 @@ int main(int argc, char** argv) {
     RunParams rp = d.rp;
     Grid g(d.nx, d.ny, d.Lx, d.Ly);
 
-    if (g.ny != 1 || d.species.size() != 1 || !rp.b0_prof || rp.cold_nc <= 0.0) {
-        std::fprintf(stderr, "chirp2d: needs ny=1, one hot species, [background] "
+    if (g.ny != 1 || d.species.empty() || d.species.size() > 2 ||
+        !rp.b0_prof || rp.cold_nc <= 0.0) {
+        std::fprintf(stderr, "chirp2d: needs ny=1, 1-2 hot species, [background] "
                              "profile=parabolic|dipole and [plasma] cold_nc > 0\n");
         return 1;
     }
     const Species& q = d.species[0];
+    if (d.species.size() == 2 && (q.deltaf || d.species[1].deltaf)) {
+        // exp G (08-01): second species = low-energy anisotropic injection
+        // pancake on top of the B engine — fullf only (no multi-species δf)
+        std::fprintf(stderr, "chirp2d: two species requires rep = fullf\n");
+        return 1;
+    }
+    if (q.deltaf && q.dist == 3) {
+        std::fprintf(stderr, "chirp2d: prodkappa has no delta-f dlnf0 — fullf only\n");
+        return 1;
+    }
     if (q.deltaf) {
         rp.deltaf = 1;
         rp.df_tpar  = q.uth[0] * q.uth[0];
@@ -81,7 +92,7 @@ int main(int argc, char** argv) {
     write_run_meta(outdir, argv[1], argc, argv);
 
     MaxwellSimulation sim(g, rp);
-    sim.particles().initialize_mirror(q, g, rp, sim.stream());
+    sim.particles().initialize_mirror(d.species, g, rp, sim.stream());
     if (rp.deltaf) sim.particles().enable_deltaf(sim.stream());
     // RSM: randomize the particle phase θ = 2π·y (R1 — the ny=1 loader pins
     // y = 0.5, a coherent fake oblique seed otherwise). Fresh starts only:
@@ -191,6 +202,10 @@ int main(int argc, char** argv) {
                      rp.wce, rp.b0_a, rp.b0_xc, rp.b0_prof, rp.b0_lre,
                      rp.ant_w0, rp.ant_amp, rp.ant_toff,
                      q.density, rp.cold_nc, q.ppc, rp.deltaf, sim.particles().n);
+        if (d.species.size() == 2)
+            std::fprintf(fm, "nh2 %.9g\nppc2 %d\nuth2 %.9g %.9g %.9g\n",
+                         d.species[1].density, d.species[1].ppc,
+                         d.species[1].uth[0], d.species[1].uth[1], d.species[1].uth[2]);
         std::fprintf(fm, "eline 1\njline 1\nprobe_e 1\n");
         for (int p = 0; p < nprobe; ++p) std::fprintf(fm, "probe_ix %d\n", probe_ix[p]);
         std::fclose(fm); }

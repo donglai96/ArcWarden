@@ -423,12 +423,22 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
 // velocities, chirp1d convention) — quiet mirror load is a future refinement;
 // the delta-f noise floor is set by the wd seed, not marker sampling (see
 // test_deltaf_growth header).
+// dist = 3 (prodkappa) inverse-CDF table geometry: rows = mirror ratio
+// b ∈ [1, cone_b] (linear), cols = quantiles q_j = (j+0.5)/NQ of the local
+// TILTED parallel-temperature mixture p(T∥|b) ∝ w_Γ(G)·nfac(T∥(G), b),
+// T∥(G) = κθ∥²/G, G ~ Gamma(κ−1/2). Bilinear lerp; the (j+0.5)/NQ grid
+// soft-truncates the extreme T∥ tail at quantile 1−1/(2NQ) (≈0.4 % — an
+// intentional cap in the same spirit as the kappa_v 0.6c guard).
+constexpr int kPkNB = 96;    // b rows
+constexpr int kPkNQ = 64;    // quantile cols
+
 __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
                                    const int* __restrict__ off,
                                    double uth_par, double uth_perp_eq,
                                    float weight, unsigned long seed,
                                    int dist, double lc_rho, double lc_kappa,
-                                   double cone_b, long base, long cnt) {
+                                   double cone_b, long base, long cnt,
+                                   const float* __restrict__ pk_tab) {
     // multi-species: markers [base, base+cnt) belong to this species; off[]
     // holds ABSOLUTE offsets (off[0] = base). RNG streams use the absolute
     // index t, so the single-species path (base = 0) is bit-identical to
@@ -476,6 +486,48 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
         }
         if (uperp == 0.0)   // exhausted (P < 1e-4 given the host K-taper):
             uperp = fabs(upar) * sqrt(scut / (1.0 - scut)) * 1.0001;  // cone edge
+    } else if (dist == 3) {
+        // Product-kappa-parallel x Maxwellian-perp WITH the cone cut (Arm K).
+        // Per TRIAL: draw a parallel temperature T∥m from the b-local tilted
+        // mixture (pk_tab inverse CDF — the nfac(T∥,b) density tilt), then a
+        // joint (u∥, u⊥) bi-Max sample at (T∥m, Tp(T∥m,b)), accepted by the
+        // cone test. Redrawing T∥m each trial keeps the cone-acceptance tilt
+        // K(T∥,b) exact: accepted-marker T∥ ~ w·nfac·K, matching the host
+        // count quadrature. Host taper keeps mean cone acceptance > ~0.1,
+        // so 96 trials overwhelm the tail as in dist = 2.
+        const double scut = b / cone_b;
+        const double fb = fmin(fmax((b - 1.0) / (cone_b - 1.0), 0.0), 1.0)
+                        * (kPkNB - 1);
+        const int    ib = min(static_cast<int>(fb), kPkNB - 2);
+        const double wb = fb - ib;
+        uperp = 0.0;
+        for (int k = 0; k < 96; ++k) {
+            const double rq = rng_uniform(static_cast<int>(t), 10 + 4 * k, seed)
+                            * (kPkNQ - 1);
+            const int    iq = min(static_cast<int>(rq), kPkNQ - 2);
+            const double wq = rq - iq;
+            const double Tpa_m =
+                (1.0 - wb) * ((1.0 - wq) * pk_tab[ib * kPkNQ + iq]
+                                    + wq * pk_tab[ib * kPkNQ + iq + 1])
+                      + wb * ((1.0 - wq) * pk_tab[(ib + 1) * kPkNQ + iq]
+                                    + wq * pk_tab[(ib + 1) * kPkNQ + iq + 1]);
+            const double ra = fmax(rng_uniform(static_cast<int>(t), 11 + 4 * k, seed), 1e-12);
+            const double rb = rng_uniform(static_cast<int>(t), 12 + 4 * k, seed);
+            upar = sqrt(Tpa_m) * sqrt(-2.0 * log(ra)) * cos(2.0 * M_PI * rb);
+            const double Tp_m = 1.0 / ((1.0 - 1.0 / b) / Tpa_m + (1.0 / b) / Tpe);
+            const double rc = fmax(rng_uniform(static_cast<int>(t), 13 + 4 * k, seed), 1e-12);
+            const double u2p = -2.0 * Tp_m * log(rc);
+            if (u2p >= scut * (u2p + upar * upar)) { uperp = sqrt(u2p); break; }
+        }
+        if (uperp == 0.0)   // exhausted (host taper keeps this < ~1e-4)
+            uperp = fabs(upar) * sqrt(scut / (1.0 - scut)) * 1.0001;  // cone edge
+        // kappa-tail guard (kappa_v precedent): keep rare fat-tail draws
+        // subluminal-safe for the nonrel push + 1-cell Esirkepov moves.
+        const double u2t = upar * upar + uperp * uperp;
+        if (u2t > 0.36) {
+            const double r = 0.6 / sqrt(u2t);
+            upar *= r; uperp *= r;
+        }
     } else if (dist == 1) {
         // Loss-cone SUBTRACTED bi-Max (Chen PoP 2026 Eq. 1): both Gaussian
         // components are (E,mu) equilibria, so each maps separately,
@@ -663,6 +715,7 @@ struct Particles {
 
         const std::size_t nsp = list.size();
         std::vector<std::vector<int>> offs(nsp);
+        std::vector<std::vector<float>> pktabs(nsp);   // dist=3 inverse-CDF tables
         std::vector<long> bases(nsp), cnts(nsp);
         long base = 0;
         for (std::size_t si = 0; si < nsp; ++si) {
@@ -674,9 +727,42 @@ struct Particles {
                 throw std::runtime_error("initialize_mirror: losscone needs 0<=rho<=1, 0<kappa<1");
             if (q.dist == 2 && q.cone_b <= 1.0)
                 throw std::runtime_error("initialize_mirror: conecut needs cone_b > 1");
+            if (q.dist == 3 && (q.kappa_par <= 1.5 || q.cone_b <= 1.0))
+                throw std::runtime_error("initialize_mirror: prodkappa needs kappa_par > 1.5 and cone_b > 1");
             if (q.kappa_v > 0.0)
                 throw std::runtime_error("initialize_mirror: kappa_v not supported by the mirror loader");
             const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
+
+            // dist = 3: Gamma-mixture quadrature. G ~ Gamma(a = κ−1/2) on a
+            // log grid; each G-slice is a bi-Max equilibrium with parallel
+            // temperature T∥(G) = κθ∥²/G. Reused below for the per-cell
+            // density factor <nfac·K>_G and the kernel's inverse-CDF table.
+            std::vector<double> pkG, pkW;   // abscissae, prior weights w_Γ·dG
+            if (q.dist == 3) {
+                const int NG = 512;
+                const double a = q.kappa_par - 0.5, lo = std::log(1e-4), hi = std::log(50.0);
+                pkG.resize(NG); pkW.resize(NG);
+                for (int i = 0; i < NG; ++i) {
+                    const double G = std::exp(lo + (hi - lo) * (i + 0.5) / NG);
+                    pkG[i] = G;
+                    pkW[i] = std::pow(G, a) * std::exp(-G);   // G^{a-1}·e^{-G}·G dlnG
+                }
+            }
+            auto pk_nfac_K = [&](double b, double& nfac_eff, double& meanK) {
+                double sw = 0, swn = 0, swnk = 0;
+                const double s2 = b / q.cone_b;
+                const double c2 = (s2 < 1.0) ? s2 / (1.0 - s2) : 0.0;
+                for (std::size_t i = 0; i < pkG.size(); ++i) {
+                    const double Tpam = q.kappa_par * Tpa / pkG[i];
+                    const double T1m  = 1.0 / ((1.0 - 1.0 / b) / Tpam + (1.0 / b) / Tpe);
+                    const double nf   = T1m / Tpe;
+                    const double K    = (s2 < 1.0)
+                                      ? 1.0 / std::sqrt(1.0 + c2 * Tpam / T1m) : 0.0;
+                    sw += pkW[i]; swn += pkW[i] * nf; swnk += pkW[i] * nf * K;
+                }
+                nfac_eff = swnk / sw;
+                meanK    = (swn > 0.0) ? swnk / swn : 0.0;
+            };
             offs[si].resize(g.nx + 1);
             long tot = 0;
             for (int c = 0; c < g.nx; ++c) {
@@ -702,6 +788,12 @@ struct Particles {
                         const double K  = 1.0 / std::sqrt(1.0 + c2 * Tpa / T1);
                         nfac = (K < 0.1) ? 0.0 : nfac * K;
                     }
+                } else if (q.dist == 3) {
+                    // mixture average <nfac·K>_G; same K < 0.1 taper rule but
+                    // on the MEAN cone acceptance (kernel trial-success guard).
+                    double meanK;
+                    pk_nfac_K(b, nfac, meanK);
+                    if (meanK < 0.1) nfac = 0.0;
                 }
                 offs[si][c] = static_cast<int>(base + tot);
                 tot += std::lround(q.ppc * nfac) * g.ny;   // per x-COLUMN, uniform in y
@@ -710,11 +802,46 @@ struct Particles {
             bases[si] = base; cnts[si] = tot; base += tot;
             if (base > 2147483647L)
                 throw std::runtime_error("initialize_mirror: marker count overflows int32 offsets");
+
+            if (q.dist == 3) {
+                // Kernel inverse-CDF table: rows b ∈ [1, cone_b], cols =
+                // quantiles of p(T∥|b) ∝ w_Γ(G)·nfac(T∥(G), b). The cone
+                // factor K is NOT folded in — the kernel's joint rejection
+                // applies it exactly (see mirror_init_kernel dist = 3).
+                const int NB = detail::kPkNB, NQ = detail::kPkNQ;
+                pktabs[si].resize(static_cast<std::size_t>(NB) * NQ);
+                std::vector<double> cdf(pkG.size());
+                for (int r = 0; r < NB; ++r) {
+                    const double br = 1.0 + (q.cone_b - 1.0) * r / (NB - 1);
+                    double acc = 0.0;
+                    for (std::size_t i = 0; i < pkG.size(); ++i) {
+                        const double Tpam = q.kappa_par * Tpa / pkG[i];
+                        const double T1m  = 1.0 / ((1.0 - 1.0 / br) / Tpam
+                                                   + (1.0 / br) / Tpe);
+                        acc += pkW[i] * (T1m / Tpe);
+                        cdf[i] = acc;
+                    }
+                    std::size_t i = 0;
+                    for (int j = 0; j < NQ; ++j) {
+                        const double target = acc * (j + 0.5) / NQ;
+                        while (i + 1 < cdf.size() && cdf[i] < target) ++i;
+                        const double c0 = (i == 0) ? 0.0 : cdf[i - 1];
+                        const double fr = (cdf[i] > c0)
+                                        ? (target - c0) / (cdf[i] - c0) : 0.0;
+                        const double G0 = (i == 0) ? pkG[0] : pkG[i - 1];
+                        const double Gq = G0 + (pkG[i] - G0) * fr;
+                        pktabs[si][static_cast<std::size_t>(r) * NQ + j] =
+                            static_cast<float>(q.kappa_par * Tpa / Gq);
+                    }
+                }
+            }
         }
         allocate_n(static_cast<std::size_t>(base));
 
         std::vector<DeviceArray<int>> doffs;
         doffs.reserve(nsp);
+        std::vector<DeviceArray<float>> dtabs;
+        dtabs.reserve(nsp);
         constexpr int threads = 256;
         for (std::size_t si = 0; si < nsp; ++si) {
             const Species& q = list[si];
@@ -722,14 +849,22 @@ struct Particles {
             CUDA_CHECK(cudaMemcpyAsync(doffs.back().data(), offs[si].data(),
                                        (g.nx + 1) * sizeof(int),
                                        cudaMemcpyHostToDevice, s));
+            const float* tab = nullptr;
+            if (!pktabs[si].empty()) {
+                dtabs.emplace_back(pktabs[si].size());
+                CUDA_CHECK(cudaMemcpyAsync(dtabs.back().data(), pktabs[si].data(),
+                                           pktabs[si].size() * sizeof(float),
+                                           cudaMemcpyHostToDevice, s));
+                tab = dtabs.back().data();
+            }
             const int blocks = static_cast<int>((cnts[si] + threads - 1) / threads);
             detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
                 views(), g, rp, doffs.back().data(), q.uth[0], q.uth[1],
                 static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed,
-                q.dist, q.lc_rho, q.lc_kappa, q.cone_b, bases[si], cnts[si]);
+                q.dist, q.lc_rho, q.lc_kappa, q.cone_b, bases[si], cnts[si], tab);
             CUDA_CHECK(cudaPeekAtLastError());
         }
-        CUDA_CHECK(cudaStreamSynchronize(s));   // doffs are scoped to this call
+        CUDA_CHECK(cudaStreamSynchronize(s));   // doffs/dtabs are scoped to this call
     }
 
     void initialize_mirror(const Species& q, const Grid& g, const RunParams& rp,
