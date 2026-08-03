@@ -21,8 +21,12 @@
 // (particles.hpp mirror loader; quiet-start loaders are sub-cell coherent),
 // so a direct e^{−iθ} deposit off the load is COHERENT — |ρ1| ~ N, a fake
 // oblique seed at macroscopic amplitude instead of N^{−1/2} shot noise.
-// rsm_theta_init randomizes θ uniformly AFTER the load, on its own RNG
-// stream (11; loaders use 0–5), independent of position and gyrophase.
+// rsm_theta_init randomizes θ uniformly AFTER the load, on a SALTED seed so
+// no loader stream can ever alias it. (2026-07-31 bug: it used stream 11 on
+// the bare seed; the conecut loader's trial-0 draw rb — stream 11 — sets
+// u∥ ∝ cos(2π·rb), so θ ≡ 2π·rb gave ⟨u∥e^{−iθ}⟩ = |u∥|/2: a macroscopic
+// coherent J1x at half the thermal flux, the R1 trap resurrected by stream
+// collision. Caught by the x4_rsm_smoke WB 5× anomaly vs rsm-off control.)
 // Gate V1 (tests/test_rsm_phaseload.cu) demonstrates the trap and verifies
 // the remedy: E|Σ e^{−iθ}|² = N.
 //
@@ -80,7 +84,9 @@ namespace detail {
 static __global__ void rsm_theta_init_kernel(ParticleViews p, unsigned long seed) {
     const int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t >= p.n) return;
-    p.y[t] = (float)rng_uniform(t, 11, seed);
+    // salted seed: loaders draw on the bare seed, so no (t, stream) tuple
+    // here can reproduce a loader draw — θ independent by construction
+    p.y[t] = (float)rng_uniform(t, 11, seed ^ 0x9E3779B97F4A7C15ULL);
 }
 
 // m = 1 moment deposit (diagnostic / V1 form — the dynamical charge-conserving
@@ -237,15 +243,14 @@ __device__ inline float2 rsm_lin(const DeviceView<float2>& a, int i0, int i1,
 // — the analytic worldline integral: for Δθ = k1·v_y·Δt this is
 // qw·ṽ_y·S̄·e^{−iθ̄}, ṽ_y = 2·sin(Δθ/2)/(k1·Δt) → v_y. Then
 //   Δρ1/Δt + Dx J1x + i·k1·J1y = 0   to float roundoff (gate V3).
-static __global__ void k_rsm_push_esirkepov(ParticleViews p, YeeViews v,
-                                            RsmViews r, RunParams rp,
-                                            double tnow) {
-    const int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= p.n) return;
+__device__ inline void rsm_advance_particle(ParticleViews p, YeeViews v,
+                                            RsmViews r, RunParams rp, int t,
+                                            float& x0, float& y0,
+                                            float& x1, float& y1,
+                                            float& vz1, float& s0, float& c0) {
     constexpr float TWO_PI = 6.283185307179586f;
 
-    const float x0 = p.x[t], y0 = p.y[t];
-    float s0, c0;
+    x0 = p.x[t]; y0 = p.y[t];
     __sincosf(TWO_PI * y0, &s0, &c0);                 // e^{iθ0} = c0 + i·s0
 
     float Ex  = yee::gather_stag(v.ex, v, x0, y0, 0.5f, 0.f);
@@ -299,17 +304,32 @@ static __global__ void k_rsm_push_esirkepov(ParticleViews p, YeeViews v,
     ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
     p.ux[t] = ux; p.uy[t] = uy; p.uz[t] = uz;
     const float gni = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
-    const float vz1 = uz * gni;
+    vz1 = uz * gni;
 
-    float x1 = x0 + (float)(ux * gni * rp.dt / (double)v.dxp);
-    const float y1 = y0 + (float)(uy * gni * rp.dt / (double)v.dyp);
+    x1 = x0 + (float)(ux * gni * rp.dt / (double)v.dxp);
+    y1 = y0 + (float)(uy * gni * rp.dt / (double)v.dyp);
     // M2 bounded x (mirror runs): specular wall + optional hybrid transverse
-    // damping — same scheme as yee_advance_particle, fold BEFORE the deposits
-    // so Esirkepov sees the reflected path. y (the phase) is untouched.
+    // damping or atmo loss cone — same scheme as yee_advance_particle, fold
+    // BEFORE the deposits so Esirkepov sees the reflected path. y (the
+    // phase) is untouched.
     if (rp.bnd_x) {
-        if (x1 < 0.f)               { x1 = -x1;             p.ux[t] = ux = -ux; }
-        else if (x1 >= (float)v.nx) { x1 = 2.f * v.nx - x1; p.ux[t] = ux = -ux; }
+        bool refl = false;
+        if (x1 < 0.f)               { x1 = -x1;             p.ux[t] = ux = -ux; refl = true; }
+        else if (x1 >= (float)v.nx) { x1 = 2.f * v.nx - x1; p.ux[t] = ux = -ux; refl = true; }
         if (x1 >= (float)v.nx) x1 = nextafterf((float)v.nx, 0.f);
+        // atmo mode (bnd_x = 3): adiabatic return — u_perp KEPT, except the
+        // real atmospheric loss cone mapped to the wall: mirror point beyond
+        // the atmosphere <=> u⊥²·b_atm < b_l·u² -> precipitate (u⊥ = 0
+        // return). Identical operator to yee2d.hpp; only the stored p.uy/uz
+        // change — locals (and vz1, already computed) stay pre-zeroed so the
+        // deposits match the flat path's op order exactly.
+        if (rp.bnd_x == 3 && refl && rp.bnd_batm > 0.0) {
+            const float bl = rp.b0_prof
+                ? bg::b0x(rp, x1 * (float)v.dxp) / (float)rp.B0[0] : 1.f;
+            const float up2 = uy * uy + uz * uz;
+            if (up2 * (float)rp.bnd_batm < bl * (up2 + ux * ux))
+                { p.uy[t] = 0.f; p.uz[t] = 0.f; }
+        }
         if (rp.bnd_x == 2) {
             const float nd = (float)rp.bnd_nd;
             float d = 0.f;
@@ -321,16 +341,33 @@ static __global__ void k_rsm_push_esirkepov(ParticleViews p, YeeViews v,
             }
         }
     }
-    p.x[t] = x1; p.y[t] = y1;         // unwrapped; Particles::migrate wraps
+}
 
-    // ---- m = 0 deposit (unchanged physics: same scatter as the flat path) --
-    const int ib = (int)floorf(fminf(x0, x1));
-    const int jb = (int)floorf(fminf(y0, y1));
-    const float qw = (float)rp.qm * p.w[t];
-    yee::esirkepov_scatter(x0, y0, x1, y1, qw, vz1, v, (float)(1.0 / rp.dt),
-                           ib, jb, yee::GlobalJSink{v});
+// m = 1 modal-deposit sinks. Global: flat path + tiled-path strays (full
+// wrap). The shared-tile twin lives inside k_rsm_push_esirkepov_tiled.
+struct GlobalJ1Sink {
+    RsmViews r;
+    __device__ void j1x(int i, float re, float im) {
+        const int w = r.wrap(i);
+        atomicAdd(&r.j1x[w].x, re); atomicAdd(&r.j1x[w].y, im);
+    }
+    __device__ void j1y(int i, float re, float im) {
+        const int w = r.wrap(i);
+        atomicAdd(&r.j1y[w].x, re); atomicAdd(&r.j1y[w].y, im);
+    }
+    __device__ void j1z(int i, float re, float im) {
+        const int w = r.wrap(i);
+        atomicAdd(&r.j1z[w].x, re); atomicAdd(&r.j1z[w].y, im);
+    }
+};
 
-    // ---- m = 1 deposit (charge-conserving modal form, header note) --------
+// ---- m = 1 deposit (charge-conserving modal form, header note) ------------
+template<class J1Sink>
+__device__ inline void rsm_modal_scatter(float x0, float x1, float y1,
+                                         float qw, float vz1, float s0, float c0,
+                                         const RsmViews& r, const RunParams& rp,
+                                         int ib, J1Sink sink) {
+    constexpr float TWO_PI = 6.283185307179586f;
     float s1v, c1v;
     __sincosf(TWO_PI * y1, &s1v, &c1v);
     // e⁰ = (c0, −s0), e¹ = (c1, −s1); ē and i·(e¹−e⁰)
@@ -346,20 +383,134 @@ static __global__ void k_rsm_push_esirkepov(ParticleViews p, YeeViews v,
     float W = 0.f;
     #pragma unroll
     for (int n = 0; n < 4; ++n) {
-        const int i = r.wrap(ib - 1 + n);
+        const int i = ib - 1 + n;                      // sink resolves wrap/offset
         if (n < 3) {                                   // links (ib-1+n)+½
             W += Sx1[n] - Sx0[n];
-            if (W != 0.f) {
-                atomicAdd(&r.j1x[i].x, cJx * W * ebr);
-                atomicAdd(&r.j1x[i].y, cJx * W * ebi);
-            }
+            if (W != 0.f) sink.j1x(i, cJx * W * ebr, cJx * W * ebi);
         }
         const float Sb = 0.5f * (Sx0[n] + Sx1[n]);     // nodes
         if (Sb != 0.f) {
-            atomicAdd(&r.j1y[i].x, cJy * Sb * pfr);
-            atomicAdd(&r.j1y[i].y, cJy * Sb * pfi);
-            atomicAdd(&r.j1z[i].x, cJz * Sb * ebr);
-            atomicAdd(&r.j1z[i].y, cJz * Sb * ebi);
+            sink.j1y(i, cJy * Sb * pfr, cJy * Sb * pfi);
+            sink.j1z(i, cJz * Sb * ebr, cJz * Sb * ebi);
+        }
+    }
+}
+
+// Flat-path kernel: advance + m0 global scatter + m1 global modal scatter.
+static __global__ void k_rsm_push_esirkepov(ParticleViews p, YeeViews v,
+                                            RsmViews r, RunParams rp,
+                                            double tnow) {
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= p.n) return;
+    float x0, y0, x1, y1, vz1, s0, c0;
+    rsm_advance_particle(p, v, r, rp, t, x0, y0, x1, y1, vz1, s0, c0);
+    p.x[t] = x1; p.y[t] = y1;         // unwrapped; Particles::migrate wraps
+
+    const int ib = (int)floorf(fminf(x0, x1));
+    const int jb = (int)floorf(fminf(y0, y1));
+    const float qw = (float)rp.qm * p.w[t];
+    yee::esirkepov_scatter(x0, y0, x1, y1, qw, vz1, v, (float)(1.0 / rp.dt),
+                           ib, jb, yee::GlobalJSink{v});
+    rsm_modal_scatter(x0, x1, y1, qw, vz1, s0, c0, r, rp, ib, GlobalJ1Sink{r});
+}
+
+// TiledBinnedDeposit for the RSM path (2026-07-31): the flat path's ~22
+// extra global atomics/particle for m1 on top of the unsorted global m0
+// scatter ran at 1.9e9 p-steps/s vs 1.6e10 on the tiled m0 path (the first
+// x4×RSM arm priced at 26 h — stopped and redone). Same machinery as
+// yee::k_push_esirkepov_tiled: one block per TX*TY tile, physical sort,
+// DRIFT apron, stray fallback to the global sinks, fused migrate. The m1
+// lines are x-only, so their tile adds just 3·SW float2 (~0.6 KB) of
+// shared memory beside the m0 tile; the m0 apron test covers the m1
+// stencil exactly (same {ib-1..ib+2} x-support).
+template<int TX, int TY, int DRIFT>
+static __global__ void k_rsm_push_esirkepov_tiled(ParticleViews p, BinViews b,
+                                                  YeeViews v, RsmViews r,
+                                                  RunParams rp, double tnow,
+                                                  int blocks_per_tile) {
+    constexpr int PAD = DRIFT + 3;               // node reach below tile origin
+    constexpr int SW  = TX + 2 * DRIFT + 6;      // local nodes [-PAD, TX+DRIFT+2]
+    constexpr int SH  = TY + 2 * DRIFT + 6;
+    __shared__ float  s_jx[SH * SW], s_jy[SH * SW], s_jz[SH * SW];
+    __shared__ float2 s_j1x[SW], s_j1y[SW], s_j1z[SW];
+
+    const int tile = blockIdx.x / blocks_per_tile;
+    const int lane = blockIdx.x % blocks_per_tile;
+    if (tile >= b.ntiles) return;
+    const int gi0 = (tile % b.ntx) * TX;
+    const int gj0 = (tile / b.ntx) * TY;
+
+    for (int c = threadIdx.x; c < SH * SW; c += blockDim.x)
+        s_jx[c] = s_jy[c] = s_jz[c] = 0.f;
+    for (int c = threadIdx.x; c < SW; c += blockDim.x)
+        s_j1x[c] = s_j1y[c] = s_j1z[c] = float2{0.f, 0.f};
+    __syncthreads();
+
+    struct SharedJSink {
+        float *jx_, *jy_, *jz_; int i0, j0;
+        __device__ void jx(int i, int j, float a) { atomicAdd(&jx_[(j - j0) * SW + (i - i0)], a); }
+        __device__ void jy(int i, int j, float a) { atomicAdd(&jy_[(j - j0) * SW + (i - i0)], a); }
+        __device__ void jz(int i, int j, float a) { atomicAdd(&jz_[(j - j0) * SW + (i - i0)], a); }
+    } shs{s_jx, s_jy, s_jz, gi0 - PAD, gj0 - PAD};
+    struct SharedJ1Sink {
+        float2 *jx_, *jy_, *jz_; int i0;
+        __device__ void j1x(int i, float re, float im) { atomicAdd(&jx_[i - i0].x, re); atomicAdd(&jx_[i - i0].y, im); }
+        __device__ void j1y(int i, float re, float im) { atomicAdd(&jy_[i - i0].x, re); atomicAdd(&jy_[i - i0].y, im); }
+        __device__ void j1z(int i, float re, float im) { atomicAdd(&jz_[i - i0].x, re); atomicAdd(&jz_[i - i0].y, im); }
+    } sh1{s_j1x, s_j1y, s_j1z, gi0 - PAD};
+
+    const float invdt = (float)(1.0 / rp.dt);
+    const int beg = b.off[tile], end = b.off[tile + 1];
+    const int step = blocks_per_tile * blockDim.x;
+    for (int t = beg + lane * blockDim.x + threadIdx.x; t < end; t += step) {
+        float x0, y0, x1, y1, vz1, s0, c0;
+        rsm_advance_particle(p, v, r, rp, t, x0, y0, x1, y1, vz1, s0, c0);
+
+        const int ib = (int)floorf(fminf(x0, x1));
+        const int jb = (int)floorf(fminf(y0, y1));
+        const float qw = (float)rp.qm * p.w[t];
+        // union stencil {ib-1..ib+2} inside the shared apron?
+        const int il = ib - gi0, jl = jb - gj0;
+        if (il - 1 >= -PAD && il + 2 <= TX + DRIFT + 2 &&
+            jl - 1 >= -PAD && jl + 2 <= TY + DRIFT + 2) {
+            yee::esirkepov_scatter(x0, y0, x1, y1, qw, vz1, v, invdt, ib, jb, shs);
+            rsm_modal_scatter(x0, x1, y1, qw, vz1, s0, c0, r, rp, ib, sh1);
+        } else {                                        // stray since last sort
+            yee::esirkepov_scatter(x0, y0, x1, y1, qw, vz1, v, invdt, ib, jb,
+                                   yee::GlobalJSink{v});
+            rsm_modal_scatter(x0, x1, y1, qw, vz1, s0, c0, r, rp, ib,
+                              GlobalJ1Sink{r});
+        }
+
+        // fused migrate (yee tiled scheme; the y-wrap IS the phase wrap)
+        float xw = fmodf(x1, (float)v.nx); if (xw < 0.f) xw += (float)v.nx;
+        float yw = fmodf(y1, (float)v.ny); if (yw < 0.f) yw += (float)v.ny;
+        if (xw >= (float)v.nx) xw = 0.f;
+        if (yw >= (float)v.ny) yw = 0.f;
+        p.x[t] = xw; p.y[t] = yw;
+        int ci = (int)floorf(xw); if (ci >= v.nx) ci = v.nx - 1;
+        int cj = (int)floorf(yw); if (cj >= v.ny) cj = v.ny - 1;
+        p.cell[t] = cj * v.nx + ci;
+    }
+    __syncthreads();
+
+    for (int c = threadIdx.x; c < SH * SW; c += blockDim.x) {
+        const float jx = s_jx[c], jy = s_jy[c], jz = s_jz[c];
+        if (jx != 0.f || jy != 0.f || jz != 0.f) {
+            const int gc = v.idx(gi0 - PAD + (c % SW), gj0 - PAD + (c / SW));
+            atomicAdd(&v.jx[gc], jx);
+            atomicAdd(&v.jy[gc], jy);
+            atomicAdd(&v.jz[gc], jz);
+        }
+    }
+    for (int c = threadIdx.x; c < SW; c += blockDim.x) {
+        const float2 a = s_j1x[c], e = s_j1y[c], d = s_j1z[c];
+        if (a.x != 0.f || a.y != 0.f || e.x != 0.f || e.y != 0.f ||
+            d.x != 0.f || d.y != 0.f) {
+            const int gc = r.wrap(gi0 - PAD + c);
+            atomicAdd(&r.j1x[gc].x, a.x); atomicAdd(&r.j1x[gc].y, a.y);
+            atomicAdd(&r.j1y[gc].x, e.x); atomicAdd(&r.j1y[gc].y, e.y);
+            atomicAdd(&r.j1z[gc].x, d.x); atomicAdd(&r.j1z[gc].y, d.y);
         }
     }
 }

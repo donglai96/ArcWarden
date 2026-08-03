@@ -47,7 +47,6 @@ public:
             // gain m = 1 counterparts only when a level of the ladder needs
             // them (bnd_x damping lands with V5 mirror runs).
             if (rp_.deltaf)        throw std::runtime_error("rsm: full-f only (deltaf unsupported)");
-            if (rp_.tile_sort > 0) throw std::runtime_error("rsm: flat deposit path only (tile_sort = 0)");
             if (rp_.pump)          throw std::runtime_error("rsm: pump not supported");
             rsm_.init(g_, rp_, s_);       // validates ny = 1 and Ly = 2π/k1
         }
@@ -89,9 +88,20 @@ public:
         if (parts_.n > 0) {
             flds_.zero_j(s_);
             const int threads = 256;
-            if (rp_.rsm) {
-                // fused total-field push + m0 & m1 deposits (flat path only;
-                // guarded at construction)
+            if (rp_.rsm && rp_.tile_sort > 0) {
+                // RSM tiled path (2026-07-31): same sort cadence as the yee
+                // tiled branch; fused push + shared-tile m0 & m1 deposits
+                if (nstep_ >= next_sort_) {
+                    parts_.sort_by_tile(g_, 16, 16, s_);
+                    next_sort_ = nstep_ + rp_.tile_sort;
+                }
+                constexpr int bpt = 2;   // blocks per tile (fill the GPU)
+                const BinViews b = parts_.bins();
+                detail::k_rsm_push_esirkepov_tiled<16, 16, 2><<<b.ntiles * bpt, threads, 0, s_>>>(
+                    parts_.views(), b, v, rv, rp_, tnow, bpt);
+                // migrate is fused into the tiled kernel (wrap + cell recompute)
+            } else if (rp_.rsm) {
+                // fused total-field push + m0 & m1 global deposits (flat path)
                 const int blocks = ((int)parts_.n + threads - 1) / threads;
                 detail::k_rsm_push_esirkepov<<<blocks, threads, 0, s_>>>(
                     parts_.views(), v, rv, rp_, tnow);
