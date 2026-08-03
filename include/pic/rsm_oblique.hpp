@@ -511,7 +511,10 @@ static __global__ void k_rsm_push_esirkepov_tiled(ParticleViews p, BinViews b,
     for (int c = threadIdx.x; c < SH * SW; c += blockDim.x) {
         const float jx = s_jx[c], jy = s_jy[c], jz = s_jz[c];
         if (jx != 0.f || jy != 0.f || jz != 0.f) {
-            const int gc = v.idx(gi0 - PAD + (c % SW), gj0 - PAD + (c / SW));
+            // wrap_far, NOT v.idx: ny = 1 stencil rows run two periods out —
+            // same OOB-flush bug as k_push_esirkepov_tiled (2026-08-03).
+            const int gc = Grid::wrap_far(gj0 - PAD + (c / SW), v.ny) * v.nx
+                         + Grid::wrap_far(gi0 - PAD + (c % SW), v.nx);
             atomicAdd(&v.jx[gc], jx);
             atomicAdd(&v.jy[gc], jy);
             atomicAdd(&v.jz[gc], jz);

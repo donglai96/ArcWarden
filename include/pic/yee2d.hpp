@@ -505,7 +505,15 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
     for (int c = threadIdx.x; c < SH * SW; c += blockDim.x) {
         const float jx = s_jx[c], jy = s_jy[c], jz = s_jz[c];
         if (jx != 0.f || jy != 0.f || jz != 0.f) {
-            const int gc = v.idx(gi0 - PAD + (c % SW), gj0 - PAD + (c / SW));
+            // wrap_far, NOT v.idx: at ny = 1 the stencil rows run TWO periods
+            // out of range (jb-1 = -2 .. jb+2 = +2), beyond idx's one-period
+            // contract — idx maps row -2 to -1, i.e. an OUT-OF-BOUNDS
+            // atomicAdd before jx[0] (found 2026-08-03: the tao17_ctrl
+            // delta-f "detonation" at t~11000/wpe was this memory corruption;
+            // GlobalJSink already carried the wrap_far fix for the same
+            // reason — see its comment).
+            const int gc = Grid::wrap_far(gj0 - PAD + (c / SW), v.ny) * v.nx
+                         + Grid::wrap_far(gi0 - PAD + (c % SW), v.nx);
             atomicAdd(&v.jx[gc], jx);
             atomicAdd(&v.jy[gc], jy);
             atomicAdd(&v.jz[gc], jz);
