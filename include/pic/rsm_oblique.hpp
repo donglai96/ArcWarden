@@ -421,7 +421,8 @@ static __global__ void k_rsm_push_esirkepov(ParticleViews p, YeeViews v,
 
     const int ib = (int)floorf(fminf(x0, x1));
     const int jb = (int)floorf(fminf(y0, y1));
-    const float qw = (float)rp.qm * p.w[t];
+    float qw = (float)rp.qm * p.w[t];
+    if (rp.deltaf) qw *= p.wd[t];              // DeltaF policy: δJ = q w wd v
     yee::esirkepov_scatter(x0, y0, x1, y1, qw, vz1, v, (float)(1.0 / rp.dt),
                            ib, jb, yee::GlobalJSink{v});
     rsm_modal_scatter(x0, x1, y1, qw, vz1, s0, c0, r, rp, ib, GlobalJ1Sink{r});
