@@ -229,7 +229,8 @@ __device__ inline float2 rsm_lin(const DeviceView<float2>& a, int i0, int i1,
                    (1.f - f) * a.ptr[i0].y + f * a.ptr[i1].y };
 }
 
-// FULL-F ONLY (constitution scope; the constructor rejects rsm + deltaf).
+// Full-f AND δf (δf since rsm-tao17: wd rides the same worldline, deposit
+// weights carry wd — see yee_deltaf_update call and the DeltaF policy lines).
 // Gather: F_tot = F0 (staggered 2D gather, ny = 1) + 2·Re[F1(x)·e^{iθ}],
 // θ = 2π·y (deck contract Ly = 2π/k1). The m = 1 B rides in the WAVE dB so
 // the b0_prof mirror branches see the total wave field in one rotation.
@@ -284,8 +285,11 @@ __device__ inline void rsm_advance_particle(ParticleViews p, YeeViews v,
     }
 
     // Boris kick-rotate-kick, identical op sequence to yee_advance_particle
-    // (minus δf/pump/bnd_x, all rejected for rsm at construction).
+    // (minus the [pump] plane-wave driver, still rejected at construction —
+    // the [antenna] current column is a pure m = 0 J source and needs nothing
+    // here; δf supported since rsm-tao17, see yee_deltaf_update call below).
     float ux = p.ux[t], uy = p.uy[t], uz = p.uz[t];
+    const float uxo = ux, uyo = uy, uzo = uz;   // u^{n-1/2} (delta-f centering)
     const float qmh = (float)(rp.qm * 0.5 * rp.dt);
     ux += qmh * Ex; uy += qmh * Ey; uz += qmh * Ez;
     const float gri = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
@@ -305,6 +309,15 @@ __device__ inline void rsm_advance_particle(ParticleViews p, YeeViews v,
     p.ux[t] = ux; p.uy[t] = uy; p.uz[t] = uz;
     const float gni = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
     vz1 = uz * gni;
+
+    // δf weight update (rsm-tao17): the shared legacy kernel, fed the TOTAL
+    // wave fields (Ex..dBz above include 2·Re[F1 e^{iθ}]). f0 is θ-independent
+    // by construction, so ∂lnf0/∂u is unchanged and the m = 1 force simply
+    // rides in F — no new terms. Same call site as the legacy pusher (after
+    // the second kick, before the move).
+    if (rp.deltaf)
+        yee::yee_deltaf_update(p, rp, t, x0, v.dxp, Ex, Ey, Ez, dBx, dBy, dBz,
+                               uxo, uyo, uzo, ux, uy, uz);
 
     x1 = x0 + (float)(ux * gni * rp.dt / (double)v.dxp);
     y1 = y0 + (float)(uy * gni * rp.dt / (double)v.dyp);
@@ -468,7 +481,8 @@ static __global__ void k_rsm_push_esirkepov_tiled(ParticleViews p, BinViews b,
 
         const int ib = (int)floorf(fminf(x0, x1));
         const int jb = (int)floorf(fminf(y0, y1));
-        const float qw = (float)rp.qm * p.w[t];
+        float qw = (float)rp.qm * p.w[t];
+        if (rp.deltaf) qw *= p.wd[t];              // DeltaF policy: δJ = q w wd v
         // union stencil {ib-1..ib+2} inside the shared apron?
         const int il = ib - gi0, jl = jb - gj0;
         if (il - 1 >= -PAD && il + 2 <= TX + DRIFT + 2 &&
@@ -622,6 +636,40 @@ inline void rsm_cold_step(RsmState& r, const RunParams& rp, cudaStream_t s) {
     }
     detail::k_rsm_faraday<<<blocks, threads, 0, s>>>(v, dt2);
     detail::k_rsm_ampere<<<blocks, threads, 0, s>>>(v, (float)rp.dt, c2);
+    CUDA_CHECK(cudaPeekAtLastError());
+}
+
+namespace detail {
+// rsm-tao17: div-free m = 1 field seed — B1z ONLY (div B1 = Dx·B1x + ik1·B1y
+// never sees B1z, so ∇·B1 = 0 by construction), per-node uniform random
+// phase, white in k∥ (every parallel wavelength seeded equally; the Umeda
+// masks eat the layer content). δf REQUIRES this: weights start at 0, so the
+// m = 1 system has no wd-weighted shot-noise floor to self-seed from — the
+// full-f runs ignite from load noise, an unseeded δf run stays at exactly 0
+// (the G1 null gate). Salted hash stream, disjoint from loader and θ-init.
+static __global__ void rsm_seed_kernel(RsmViews r, float amp,
+                                       unsigned long seed) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= r.nx) return;
+    const float ph = 6.283185307179586f
+                   * (float)rng_uniform(i, 12, seed ^ 0xC2B2AE3D27D4EB4FULL);
+    float sn, cs;
+    __sincosf(ph, &sn, &cs);
+    r.b1z[i].x = amp * cs;
+    r.b1z[i].y = amp * sn;
+}
+} // namespace detail
+
+// Seed the m = 1 harmonic with rp.rsm_seed ([rsm] seed, amplitude relative to
+// wce): coefficient magnitude 0.5·amp·|B0eq| so the physical per-node field
+// 2·Re[B1z e^{iθ}] has amplitude amp·wce (factor-2 ledger R6). Call once
+// after init, before the first step; no-op when rsm_seed = 0.
+inline void rsm_seed_init(RsmState& r, const RunParams& rp, cudaStream_t s) {
+    if (rp.rsm_seed <= 0.0) return;
+    const float amp = 0.5f * (float)(rp.rsm_seed * std::abs(rp.B0[0]));
+    constexpr int threads = 128;
+    detail::rsm_seed_kernel<<<(r.nx + threads - 1) / threads, threads, 0, s>>>(
+        r.views(), amp, rp.rng_seed);
     CUDA_CHECK(cudaPeekAtLastError());
 }
 

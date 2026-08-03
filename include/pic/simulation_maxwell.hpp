@@ -42,11 +42,14 @@ public:
             if (rp_.cold_full) vcx_.zero(s_);
         }
         if (rp_.rsm) {
-            // RSM scope guards (docs/RSM_MODEL_DEFINITION.md): full-f only,
-            // flat deposit path, periodic x, no pump — the excluded features
-            // gain m = 1 counterparts only when a level of the ladder needs
-            // them (bnd_x damping lands with V5 mirror runs).
-            if (rp_.deltaf)        throw std::runtime_error("rsm: full-f only (deltaf unsupported)");
+            // RSM scope guards (docs/RSM_MODEL_DEFINITION.md): excluded
+            // features gain m = 1 counterparts only when a level of the
+            // ladder needs them (bnd_x damping landed with V5; δf landed on
+            // rsm-tao17 for the GRL17-triggered arm — shared yee_deltaf_update
+            // on the fused worldline, wd-weighted m0+m1 deposits, rsm_seed
+            // div-free B1z seed since δf has no shot-noise floor to ignite
+            // the m = 1 system). The [pump] plane-wave driver stays excluded;
+            // the [antenna] current column is m = 0 pure and needs nothing.
             if (rp_.pump)          throw std::runtime_error("rsm: pump not supported");
             rsm_.init(g_, rp_, s_);       // validates ny = 1 and Ly = 2π/k1
         }

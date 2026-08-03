@@ -98,6 +98,11 @@ int main(int argc, char** argv) {
     // y = 0.5, a coherent fake oblique seed otherwise). Fresh starts only:
     // on --resume the θ stream is restored from the checkpoint ("py").
     if (rp.rsm && !resume) rsm_theta_init(sim.particles(), rp, sim.stream());
+    // RSM m = 1 field seed ([rsm] seed, amplitude/wce): mandatory for δf runs
+    // (weights start at 0 → no wd-weighted shot noise to ignite m = 1),
+    // optional for full-f (which self-seeds from load noise). Fresh starts
+    // only — --resume restores the m = 1 lines from the checkpoint.
+    if (rp.rsm && !resume) rsm_seed_init(sim.rsm(), rp, sim.stream());
     // boundary-refresh bath (REFRESH_DESIGN.md): stateless, so fresh start
     // and --resume initialize identically (per-step-seeded RNG replays).
     RefreshState rfr;
