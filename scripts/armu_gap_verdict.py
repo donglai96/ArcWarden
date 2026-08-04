@@ -132,6 +132,30 @@ def main():
     fig.savefig(out, dpi=140)
     print(f"fig -> {out}")
 
+    # multi-probe spectrogram grid: rows = ctrl/rsm, cols = probe locations
+    probes = sorted(PROBE_LAT)
+    fig2, axs2 = plt.subplots(2, len(probes), figsize=(4 * len(probes), 7),
+                              sharex=True, sharey=True, constrained_layout=True)
+    for row, (lab, t, a) in enumerate([("ctrl", tc, ac), ("rsm", tr, ar)]):
+        for col, ip in enumerate(probes):
+            wsp, tt, S = spectrogram(t, a, ip, dtrec_we)
+            msel = (wsp >= 0) & (wsp <= 1.0)
+            ax = axs2[row, col]
+            pc = ax.pcolormesh(tt, wsp[msel], np.log10(S[msel] + 1e-12),
+                               shading="auto", cmap="jet")
+            for yv in (0.45, 0.55):
+                ax.axhline(yv, color="w", lw=0.6, ls="--")
+            ax.set_title(f"{lab} @{PROBE_LAT[ip]}", fontsize=10)
+            if col == len(probes) - 1:
+                fig2.colorbar(pc, ax=ax, label=r"log$_{10}$ spec")
+            if row == 1:
+                ax.set_xlabel(r"t $\Omega_e$")
+            if col == 0:
+                ax.set_ylabel(r"$\omega/\Omega_e$")
+    out2 = out.replace("_verdict", "_specs")
+    fig2.savefig(out2, dpi=140)
+    print(f"fig -> {out2}")
+
 
 if __name__ == "__main__":
     sys.exit(main())
