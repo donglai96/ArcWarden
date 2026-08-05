@@ -11,9 +11,13 @@
 // Usage: ./rsm_band <deck.ini> [outdir] [--nsteps=N]
 // Dumps into outdir:
 //   bline_XXXXXX.bin   float32 By[nx], Bz[nx], Ex[nx]      (m0; Ex = E_par)
-//   m1line_XXXXXX.bin  float32 (re,im)x nx for B1y, B1z, E1x, E1y
+//   m1line_XXXXXX.bin  float2 x nx for B1y, B1z, E1x, E1y, E1z, B1x
+//                      (first four = legacy order; E1z/B1x appended 2026-08-04)
 //   fhist_XXXXXX.bin   float64 w-weighted f(vpar), NB bins over [-VMAX,VMAX]
-//   probe.bin, energy.csv (incl. 2*W1), meta.txt
+//   probe.bin, meta.txt, energy.csv: step,time,WE,WB,W1,PJ1E1,PJ1xE1x
+//   (W1 = 2*W1 field energy of the +-k1 pair; PJ1E1 = 2 Re sum dV J1.E1* =
+//    total m=1 power to plasma, hot+cold current combined; PJ1xE1x = its
+//    x-component = the E_par Landau work channel)
 #include "pic/deck.hpp"
 #include "pic/run_meta.hpp"
 #include "pic/simulation_maxwell.hpp"
@@ -71,7 +75,7 @@ int main(int argc, char** argv) {
 
     std::FILE* fpb = std::fopen((outdir + "/probe.bin").c_str(), "wb");
     std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), "w");
-    std::fprintf(fen, "step,time,WE,WB,W1\n");
+    std::fprintf(fen, "step,time,WE,WB,W1,PJ1E1,PJ1xE1x\n");
     {   std::FILE* fm = std::fopen((outdir + "/meta.txt").c_str(), "w");
         std::fprintf(fm, "nx %d\ndx %.9g\ndt %.9g\nnsteps %ld\nbline_every %d\n"
                          "probe_every %d\nfhist_every %d\nnb %d\nvmax %.9g\n"
@@ -113,11 +117,12 @@ int main(int argc, char** argv) {
             std::fwrite(bz.data(), 4, g.nx, f);
             std::fwrite(ex.data(), 4, g.nx, f);   // m0 E_par (B0 || x)
             std::fclose(f);
-            // m1 complex lines: B1y, B1z (wave), E1x (the Landau E_par), E1y
+            // m1 complex lines: B1y, B1z (wave), E1x (the Landau E_par), E1y,
+            // then the full-vector completion E1z, B1x (legacy order kept)
             std::snprintf(fn, sizeof fn, "%s/m1line_%06ld.bin", outdir.c_str(), n / bline_every);
             f = std::fopen(fn, "wb");
             RsmState& r = sim.rsm();
-            for (auto* arr : { &r.b1y, &r.b1z, &r.e1x, &r.e1y }) {
+            for (auto* arr : { &r.b1y, &r.b1z, &r.e1x, &r.e1y, &r.e1z, &r.b1x }) {
                 CUDA_CHECK(cudaMemcpy(m1buf.data(), arr->data(), g.nx * sizeof(float2),
                                       cudaMemcpyDeviceToHost));
                 std::fwrite(m1buf.data(), sizeof(float2), g.nx, f);
@@ -143,24 +148,38 @@ int main(int argc, char** argv) {
         }
         if (n % 2000 == 0) {
             const auto e = sim.field_energy();
-            // m1 field energy 2*W1 (R6 ledger: the +-k1 pair)
-            double w1 = 0;
+            // m1 field energy 2*W1 (R6 ledger: the +-k1 pair) and the J1.E1
+            // power ledger. After step(), j1 holds THIS step's total m=1
+            // current (hot deposit + cold twin); physical y-averaged power of
+            // the +-k1 pair = 2 Re(J1 . E1*) summed over x.
+            double w1 = 0, pj = 0, pjx = 0;
             RsmState& r = sim.rsm();
             const double c2 = rp.c * rp.c;
-            for (auto* arr : { &r.e1x, &r.e1y, &r.e1z }) {
-                CUDA_CHECK(cudaMemcpy(m1buf.data(), arr->data(), g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
-                for (auto& z : m1buf) w1 += 0.5 * ((double)z.x * z.x + (double)z.y * z.y);
+            std::vector<float2> jbuf(g.nx);
+            const decltype(&r.e1x) epair[3] = { &r.e1x, &r.e1y, &r.e1z };
+            const decltype(&r.j1x) jpair[3] = { &r.j1x, &r.j1y, &r.j1z };
+            for (int c = 0; c < 3; ++c) {
+                CUDA_CHECK(cudaMemcpy(m1buf.data(), epair[c]->data(), g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(jbuf.data(),  jpair[c]->data(), g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
+                double pc = 0;
+                for (int i = 0; i < g.nx; ++i) {
+                    w1 += 0.5 * ((double)m1buf[i].x * m1buf[i].x + (double)m1buf[i].y * m1buf[i].y);
+                    pc += (double)jbuf[i].x * m1buf[i].x + (double)jbuf[i].y * m1buf[i].y;
+                }
+                pj += pc;
+                if (c == 0) pjx = pc;
             }
             for (auto* arr : { &r.b1x, &r.b1y, &r.b1z }) {
                 CUDA_CHECK(cudaMemcpy(m1buf.data(), arr->data(), g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
                 for (auto& z : m1buf) w1 += 0.5 * c2 * ((double)z.x * z.x + (double)z.y * z.y);
             }
-            w1 *= 2.0 * dV;
-            std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.9e\n", n, n * rp.dt, e.we, e.wb, w1);
+            w1 *= 2.0 * dV; pj *= 2.0 * dV; pjx *= 2.0 * dV;
+            std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+                         n, n * rp.dt, e.we, e.wb, w1, pj, pjx);
             std::fflush(fen);
             if (n % 20000 == 0)
-                std::printf("t=%8.0f  WE=%.3e  WB=%.3e  2W1=%.3e\n",
-                            n * rp.dt, e.we, e.wb, w1);
+                std::printf("t=%8.0f  WE=%.3e  WB=%.3e  2W1=%.3e  PJ1E1=%+.3e\n",
+                            n * rp.dt, e.we, e.wb, w1, pj);
         }
     }
     std::fclose(fpb); std::fclose(fen);
