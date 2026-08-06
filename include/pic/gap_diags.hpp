@@ -160,5 +160,89 @@ private:
     }
 };
 
+// A0 fvline (PLAN_TWO_TRACK v2.1 §A0.2): equatorial-window velocity
+// diagnostics for the Track-A mechanism chain P_L1,hot -> f(v_par) plateau
+// -> P_C0 flip -> chirp stop. Window = |i - i_eq| < hw CELLS around the
+// equator column (NOT physical x < hw — plan hard gate). One kernel serves
+// both products: h1 = fine w-weighted f(v_par) [nv], h2 = coarse
+// (v_par, v_perp) [npar][nperp]; pass nullptr for the one not wanted.
+__global__ void k_fvwin(ParticleViews p, RunParams rp, float dxp, float dyp,
+                        int ieq, int hw, float vmax,
+                        double* h1, int nv, double* h2, int npar, int nperp) {
+    const long t = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (t >= p.n) return;
+    const float x0 = p.x[t];
+    const int i = (int)x0;
+    if (i < ieq - hw + 1 || i > ieq + hw - 1) return;   // |i - ieq| < hw
+    float bx, by, bz;
+    bhat(rp, x0 * dxp, p.y[t] * dyp, bx, by, bz);
+    const float ux = p.ux[t], uy = p.uy[t], uz = p.uz[t];
+    const float gi = rp.rel ? rsqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
+    const float vx = ux * gi, vy = uy * gi, vz = uz * gi;
+    const float vpar  = vx * bx + vy * by + vz * bz;
+    const double w = (double)p.w[t];
+    if (h1) {
+        const int ip = (int)((vpar + vmax) / (2.f * vmax) * (float)nv);
+        if (ip >= 0 && ip < nv) atomicAdd(&h1[ip], w);
+    }
+    if (h2) {
+        const float vperp = sqrtf(fmaxf(vx * vx + vy * vy + vz * vz
+                                        - vpar * vpar, 0.f));
+        const int ip = (int)((vpar + vmax) / (2.f * vmax) * (float)npar);
+        const int jp = (int)(vperp / vmax * (float)nperp);
+        if (ip >= 0 && ip < npar && jp < nperp)
+            atomicAdd(&h2[(long)ip * nperp + jp], w);
+    }
+}
+
+struct EqFvDiag {
+    int   ieq, hw, nv, npar, nperp;
+    float vmax;
+    DeviceArray<double> h1;   // [nv]           fine f(v_par)
+    DeviceArray<double> h2;   // [npar][nperp]  coarse (v_par, v_perp)
+
+    EqFvDiag(int ieq_, int hw_, int nv_, int npar_, int nperp_, float vmax_)
+        : ieq(ieq_), hw(hw_), nv(nv_), npar(npar_), nperp(nperp_), vmax(vmax_),
+          h1((std::size_t)nv_), h2((std::size_t)npar_ * nperp_) {
+        h1.zero(nullptr);
+        h2.zero(nullptr);
+    }
+
+    void line_snapshot(Particles& p, const RunParams& rp, const Grid& g,
+                       cudaStream_t s, const char* fn) {
+        h1.zero(s);
+        launch(p, rp, g, s, h1.data(), nullptr);
+        write_dev(h1, s, fn);
+    }
+    void f2d_snapshot(Particles& p, const RunParams& rp, const Grid& g,
+                      cudaStream_t s, const char* fn) {
+        h2.zero(s);
+        launch(p, rp, g, s, nullptr, h2.data());
+        write_dev(h2, s, fn);
+    }
+
+private:
+    void launch(Particles& p, const RunParams& rp, const Grid& g,
+                cudaStream_t s, double* d1, double* d2) {
+        constexpr int threads = 256;
+        const int blocks = (int)((p.n + threads - 1) / threads);
+        k_fvwin<<<blocks, threads, 0, s>>>(p.views(), rp, (float)g.dx,
+                                           (float)g.dy, ieq, hw, vmax,
+                                           d1, nv, d2, npar, nperp);
+        CUDA_CHECK(cudaPeekAtLastError());
+    }
+    static void write_dev(DeviceArray<double>& a, cudaStream_t s,
+                          const char* fn) {
+        std::vector<double> h(a.size());
+        CUDA_CHECK(cudaStreamSynchronize(s));
+        CUDA_CHECK(cudaMemcpy(h.data(), a.data(), h.size() * sizeof(double),
+                              cudaMemcpyDeviceToHost));
+        std::FILE* fo = std::fopen(fn, "wb");
+        if (!fo) throw std::runtime_error(std::string("gapdiag: cannot open ") + fn);
+        std::fwrite(h.data(), sizeof(double), h.size(), fo);
+        std::fclose(fo);
+    }
+};
+
 } // namespace gapdiag
 } // namespace arc

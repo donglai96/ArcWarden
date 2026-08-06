@@ -18,9 +18,17 @@
 //   probe_e.bin        float32 (Ey,Ez) same probes/cadence (probe Poynting)
 //   energy.csv         step,time,WE,WB,wd_sum,wd_rms,wd_max
 //   meta.txt           geometry + cadence for the plot script
+// --fvdiag (A0 mechanism pack, PLAN_TWO_TRACK v2.1 §A0.2/.4; read-only):
+//   fvline_XXXXXX.bin  float64 f(v_par)[fv_nv], w-weighted, equatorial window
+//                      |i - i_eq| < fv_hw cells, every fv_every steps
+//   fv2d_XXXXXX.bin    float64 [fv_npar][fv_nperp] coarse (v_par,v_perp) there
+//   wl_XXXXXX.bin      float64 [wl_nreg][wl_nwb][2] m=0 J.E work since last
+//                      dump, (x-region, v_par)-binned, [..0]=Landau [..1]=
+//                      cyclotron (Yee E is pure m=0; rsm m=1 is spectral)
 
 #include "pic/checkpoint_io.hpp"
 #include "pic/deck.hpp"
+#include "pic/gap_diags.hpp"
 #include "pic/refresh.hpp"
 #include "pic/run_meta.hpp"
 #include "pic/simulation_maxwell.hpp"
@@ -47,6 +55,8 @@ int main(int argc, char** argv) {
                                   //            no watcher needed) for dense phase-space series
     bool no_eline = false;        // --noeline: skip eline_*.bin (the full-nx E line = the
                                   //            biggest "probe"; probe_e keeps probe Poynting)
+    bool fvdiag = false;          // --fvdiag: A0 mechanism pack (fvline/fv2d/wl);
+                                  //           mandatory on >=1 mechanism run per arm
     for (int i = 2; i < argc; ++i) {
         if      (!std::strncmp(argv[i], "--ppc=", 6))    d.species[0].ppc = atoi(argv[i] + 6);
         else if (!std::strncmp(argv[i], "--amp=", 6))    d.rp.ant_amp = atof(argv[i] + 6);
@@ -56,6 +66,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--ckptseq"))     ckpt_seq = true;
         else if (!std::strcmp(argv[i], "--resume"))      resume = true;
         else if (!std::strcmp(argv[i], "--noeline"))     no_eline = true;
+        else if (!std::strcmp(argv[i], "--fvdiag"))      fvdiag = true;
     }
     RunParams rp = d.rp;
     Grid g(d.nx, d.ny, d.Lx, d.Ly);
@@ -166,6 +177,30 @@ int main(int argc, char** argv) {
 
     const int bline_every = 100;                    // 10/wpe: w-k + x-t maps
     const int probe_every = 10;                     // 1/wpe : STFT time series
+
+    // --fvdiag: read-only gather kernels only, sim state untouched (off =
+    // zero extra launches). Window per plan hard gate: |i - i_eq| < 150
+    // CELLS, i_eq from b0_xc (= nx/2 on centered decks). wl accumulates
+    // every wl_acc steps (dt=0.15: >=21 samples/period up to 0.5 wce, no
+    // aliasing; k_workledger costs 4x a push step — measured 6.5ms vs 1.6ms
+    // at 39M markers, double-atomic bound — so 20-step sampling holds the
+    // mechanism-run overhead at ~13%) and dumps+resets on the energy
+    // cadence; a --resume restart loses only the partial wl interval since
+    // its last dump. This ledger is diagnostic-grade (v_par structure and
+    // sign flips), NOT the time-centered closure ledger — that is the rsm
+    // m1ledger (97f1530).
+    const int fv_hw = 150, fv_every = 2000, f2d_every = 10000;
+    const int wl_acc = 20, wl_every = 2000;
+    const int fv_nv = 600, fv_npar = 240, fv_nperp = 120;
+    const int wl_nreg = 16, wl_nwb = 240;
+    const float fv_vmax = 0.6f;
+    const int i_eq = (int)(rp.b0_xc / g.dx + 0.5);
+    gapdiag::EqFvDiag* fvd = nullptr;
+    gapdiag::GapDiags*  wld = nullptr;   // wl ledger only (fv member unused)
+    if (fvdiag) {
+        fvd = new gapdiag::EqFvDiag(i_eq, fv_hw, fv_nv, fv_npar, fv_nperp, fv_vmax);
+        wld = new gapdiag::GapDiags(wl_nreg, 2, 2, wl_nwb, fv_vmax);
+    }
     // probe x-locations: [diagnostics] probes = offsets from the equator
     // (b0_xc) in physical units; default equator +/-100, +/-200 c/wpe
     std::vector<double> poff = d.probes;
@@ -222,6 +257,13 @@ int main(int argc, char** argv) {
                          d.species[1].density, d.species[1].ppc,
                          d.species[1].uth[0], d.species[1].uth[1], d.species[1].uth[2]);
         std::fprintf(fm, "eline 1\njline 1\nprobe_e 1\n");
+        if (fvdiag)
+            std::fprintf(fm, "fvdiag 1\nfv_ieq %d\nfv_hw %d\nfv_nv %d\n"
+                             "fv_npar %d\nfv_nperp %d\nfv_vmax %.9g\n"
+                             "fv_every %d\nf2d_every %d\n"
+                             "wl_nreg %d\nwl_nwb %d\nwl_acc %d\nwl_every %d\n",
+                         i_eq, fv_hw, fv_nv, fv_npar, fv_nperp, (double)fv_vmax,
+                         fv_every, f2d_every, wl_nreg, wl_nwb, wl_acc, wl_every);
         for (int p = 0; p < nprobe; ++p) std::fprintf(fm, "probe_ix %d\n", probe_ix[p]);
         std::fclose(fm); }
 
@@ -232,6 +274,9 @@ int main(int argc, char** argv) {
     for (long n = n0 + 1; n <= nsteps; ++n) {
         sim.step();
         if (rfr.on) rfr.apply(sim.particles(), g, rp, n, sim.stream());
+        if (wld && n % wl_acc == 0)
+            wld->wl_accum(sim.particles(), sim.fields(), rp,
+                          (float)(rp.dt * wl_acc), sim.stream());
         if (ckpt_every > 0 && n % ckpt_every == 0) {
             sim.stream().synchronize();
             const std::string cp = ckpt_seq
@@ -293,6 +338,24 @@ int main(int argc, char** argv) {
                     std::fwrite(mb.data(), sizeof(float2), g.nx, f);
                 }
                 std::fclose(f);
+            }
+        }
+        if (fvd) {
+            char fn[512];
+            if (n % fv_every == 0) {
+                std::snprintf(fn, sizeof fn, "%s/fvline_%06ld.bin",
+                              outdir.c_str(), n / fv_every);
+                fvd->line_snapshot(sim.particles(), rp, g, sim.stream(), fn);
+            }
+            if (n % f2d_every == 0) {
+                std::snprintf(fn, sizeof fn, "%s/fv2d_%06ld.bin",
+                              outdir.c_str(), n / f2d_every);
+                fvd->f2d_snapshot(sim.particles(), rp, g, sim.stream(), fn);
+            }
+            if (n % wl_every == 0) {
+                std::snprintf(fn, sizeof fn, "%s/wl_%06ld.bin",
+                              outdir.c_str(), n / wl_every);
+                wld->wl_write_reset(sim.stream(), fn);
             }
         }
         if (n % 2000 == 0) {
