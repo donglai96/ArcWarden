@@ -9,6 +9,12 @@ v1 的两处错误已由数据/代码复核坐实:
 - **天线 `amp` 是外加电流幅度,不是 δB/B0**(config.hpp M2/M10 注释;tao17 deck
   已有校准:`amp=1e-4 → δB_trig/B0≈1e-3`,2026-07-18)。
 
+## 0. 源关卡(两轨通用,替代旧"§1 通用"引用)
+
+单连通 rising ridge(非 broadband);Δω ≥ 0.15;**ω_max ≥ 0.55**;
+Bw/B0 ∈ 3e-3–1e-2;0.46–0.56 无天然谷。**Track B 额外**:上肩/噪声 ≥ 10
+(element-top 窗测)。3 种子 control 全过才配 RSM。
+
 ## 轨道结构
 
 - **Track 0(discovery case,保留不废弃)**:G1 —— ctrl 0.213→0.511,RSM stop
@@ -41,6 +47,9 @@ toff  = <element 到 0.4Ωe 之前必须关断>
 
 - **A-cal(先行短跑)**:D120 几何线性校准,以**测得的 δB_trig/B0** 为准选 amp,
   目标 δB/B0 = {5e-4, 1e-3}(≪ element 5e-3–1e-2,只定起点/相位)。
+  **测量位置纪律**:不在 antenna cell 上测(近场污染);天线关断后,在赤道两侧
+  近源探针测向外传播包的峰值;验证线性 δB_trig ∝ ant_amp;
+  packet 离开赤道源区之后才允许开始 nonlinear element 分析。
 - 约束:element 过 0.4Ωe 前天线已关且 packet 已离开赤道源区(否则持续改写
   cyclotron 分布,破坏"自洽终止"归因)。
 
@@ -64,7 +73,10 @@ toff  = <element 到 0.4Ωe 之前必须关断>
   LB=[0.25,0.45])。判据:ctrl ridge 连续跨 0.55;RSM ridge 停在 0.47–0.50 且
   Δ = ω_max,ctrl − ω_stop,RSM ≥ 0.04;屏障以下 element 振幅保留(到达屏障前
   RSM/ctrl 包络 ≤2×);**S_A < 0.5;不引用 P_up**(G1 教训:上带=噪声时
-  R_up 无意义,S_B 会误判)。
+  R_up 无意义,S_B 会误判)。**窗口纪律**:trigger 钉住 onset,但 RSM 仍可能改
+  chirp rate,故 S_A 同时按三种窗报告——(a) onset 对齐固定时间窗;
+  (b) **ridge-phase 对齐窗**(各臂各自从 ω=0.25 爬到 0.45 的区间);
+  (c) 完整 element 窗。三者一致才算干净。
 - **Track B:S_B = R_gap/√(R_lo·R_up)** + 上肩 up/hi-noise ≥ 10(两肩真实存在
   才有资格用双肩指标)。
 - **R_m 语义规则**(记号固定 R_m = 2B_{m=1,rms}/B_{m=0,rms},与背景 B0 无关):
@@ -79,24 +91,32 @@ toff  = <element 到 0.4Ωe 之前必须关断>
 
 ## A0 诊断接线(生产 run 必备)
 
-1. **hot/cold J1·E1 分离(必须)**:现 rsm 路径 step 后 j1 = hot deposit + cold twin
-   之和,总 PJ1xE1x 混入冷流体反应性振荡,不能当热电子 Landau 功。输出三条:
-   P_L1,hot = 2Re∫J1x,hot*·E1x dx、P_L1,cold、P_L1,total(实现:deposit 后、
-   cold twin 加入前快照 j1,或 cold 电流单独累加);全部**逐步累积、按 dump
-   区间平均**(根除 2000-步采样对 ~30/Ωe 周期的混叠)。
-2. **fvline**:赤道窗(|x|<150 cell)w-加权 f(v∥) 每 2000 步;粗节奏 (v∥,v⊥) 2D。
+1. **hot/cold J1·E1 分离 + 时间居中(必须,剩余最重要的技术门槛)**:现 rsm 路径
+   step 后 j1 = hot deposit + cold twin 之和,总 PJ1xE1x 混入冷流体反应性振荡。
+   输出三条:P_L1,hot、P_L1,cold、P_L1,total(deposit 后、cold twin 加入前
+   快照 j1);离散功必须时间居中:**P^{n+1/2} = J^{n+1/2}·(E^n+E^{n+1})/2**
+   (否则反应性功与净 Landau 功因时间错位混合);全部**逐步累积、按 dump
+   区间平均**。**验收 = 能量闭合测试**:ΔW1 + ∫P_J1E1 dt + boundary flux ≈ 0,
+   且 P_hot + P_cold = P_total(逐 dump 区间检查)。
+2. **fvline**:赤道窗 **|i − i_eq| < 150 cells**(i_eq = nx/2;不是代码坐标 x<150),
+   w-加权 f(v∥) 每 2000 步;粗节奏 (v∥,v⊥) 2D;后处理输出 **plateau 斜率及其
+   统计误差**,不只做直方图目视。
 3. **R_m(t)**:m1line 已有,脚本直算。
 4. **m=0 cyclotron work 按 v∥ 分箱:不可选**。至少在每臂 1 个代表性机制 run 开启。
    论文核心链条 P_L1,hot → f(v∥) plateau → P_C0,hot 由驱动转弱/阻尼 → chirp stop
    缺了它就只剩时间相关性,审稿人可解释成一般模式竞争。
+5. **A0 non-regression gate(接线后、生产前)**:诊断关闭 → 旧 simulation path
+   不变(statistical-envelope 复核,同 regress_case2 方法);诊断开启 → 场演化
+   不被改变、hot/cold/total 账本闭合、开销可接受;paired production 全部使用
+   同一 clean build、同一 executable hash(BUILD_PROVENANCE 记录)。
 
 ## Track B:G2 现状与规程
 
 - expG2_ctrl_r2 于 t≈153(51 blines,无 ckpt)被停,数据保留;**明日用户重启**,
   用全新目录:
   `cd build && ./chirp2d ../decks/giant_x4_expG2_ctrl.ini expG2_ctrl_r3 --ckpt=100000 --noeline`
-- 关卡:§1 通用 + ω_max≥0.55 + 上肩 10×;过 → s2/s3 ctrl;3/3 → 是否完成全部
-  双频带配对**最后再决定**(修正版执行顺序第 10 条)。
+- 关卡:§0 源关卡全套(含 Track B 附加的上肩 ≥10×);过 → s2/s3 ctrl;
+  3/3 → 是否完成全部双频带配对**最后再决定**(执行顺序第 10 条)。
 - 风险预告不变:pancake 也喂 oblique 增长,G2-RSM 的 m1 平价可能比 G1 更糟。
 
 ## 修正后的执行顺序
