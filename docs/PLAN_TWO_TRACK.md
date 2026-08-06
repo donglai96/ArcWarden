@@ -131,3 +131,35 @@ toff  = <element 到 0.4Ωe 之前必须关断>
 8. 3 个 paired RSM 预承诺全跑;
 9. A 用 S_A,B 用 S_B;
 10. 最后再决定 G2 是否值得完成全部双频带配对。
+
+---
+
+## 执行状态(2026-08-06)
+
+- **A0 全部完成**:
+  - ①hot/cold J1·E1 时间居中账本 = 97f1530(闭合 resid 中位 9e-4,
+    off-path WB ratio 1.000);
+  - ②fvline + ④m=0 回旋功 = f9ed880:chirp2d `--fvdiag`,赤道窗
+    |i−i_eq|<150 cells 的 f(v∥)(600 bins/2000 步)+ 粗 (v∥,v⊥)
+    (10000 步);m=0 J·E Landau/cyclotron 按 (16 x-区, 240 v∥-bin),
+    每 20 步采样(≥21 采样/周期到 0.5 wce)、2000 步 dump+reset;
+    诊断级(非闭合账本,闭合归 m1ledger);
+  - ⑤非回归:开/关同 seed WE/WB 包络比 1.000000/1.000005(rerun
+    噪声级);k_workledger 实测 4× push(double-atomic 瓶颈)→
+    wl_acc=20 把机制 run 开销压到 ~13–19%,仅机制 run 打开。
+- **A-cal 完成(PASS)**:decks/giant_x4_acal_{a05,a10}.ini,
+  scripts/acal_verdict.py,data build/acal_{a05,a10}。测量纪律:±145.2
+  探针 post-off 波列通过窗 [x/vg+trmp+100, x/vg+toff](均 > toff,
+  断言强制),exp(−iw0t) 解调 + 2 周期 boxcar(±0.025 带通);近场
+  (赤道探针)只作 flagged 参考。结果:**amp 5e-5 → δB_trig/B0 =
+  7.4e-4;amp 1e-4 → 1.46e-3**(探针几何均值);均值线性度偏差 0.8%
+  PASS(逐探针 ±17% = 同 seed 热背景相干干涉系统误差,几何平均一阶
+  消除);带内噪声底 ~4e-5。附带:波包对流放大 2e-4→6.8e-4(t2100/wpe)
+  —— D120 介质在 0.25 We0 有增益。教训入档:解调旋向要用 ±w0 谱线
+  实测定(z=By+iBz 载波在 +w0),通过窗要按发射区间 [trmp,toff]+x/vg
+  推,不能按 toff+x/vg。
+- **A1 pilot decks 就绪(未启动)**:decks/giant_x4_a1_{a05,a10}.ini
+  (= acal + nsteps→133333 = t4000/Oe;toff=1000/wpe 早于一切 ridge
+  活动,"off before 0.4" 由构造满足)。Runner:
+  `./chirp2d ../decks/giant_x4_a1_a05.ini a1_a05 --ckpt=100000 --noeline --fvdiag`
+  (a10 同)。两幅度预承诺都跑;GPU 让给用户先跑 G2 s1(expG2_ctrl_r3)。
