@@ -142,6 +142,8 @@ public:
                 }
             }
         }
+        if (rp_.rsm && rp_.rsm_ledger)     // A0 ledger: kinetic J1 (post-filter,
+            rsm_.ledger_snap_kinetic_j(s_);  // pre-cold-twin) snapshot
         if (rp_.ant_amp != 0.0) {          // M2/M10 antenna current column
             if (parts_.n == 0) flds_.zero_j(s_);   // vacuum runs skip the deposit block
             yee::k_antenna<<<nb, tb, 0, s_>>>(v, rp_, tnow);
@@ -165,8 +167,10 @@ public:
         yee::k_ampere<<<nb, tb, 0, s_>>>(v);
         if (rp_.rsm) {
             detail::k_rsm_faraday<<<rblk, 128, 0, s_>>>(rv, dt2);
+            if (rp_.rsm_ledger) rsm_.ledger_snap_e_old(s_);   // E^n for centering
             detail::k_rsm_ampere<<<rblk, 128, 0, s_>>>(rv, (float)rp_.dt,
                                                        (float)(rp_.c * rp_.c));
+            if (rp_.rsm_ledger) rsm_.ledger_accumulate(s_);   // J·(E^n+E^{n+1})/2
         }
         if (rp_.bnd_x) {   // M2 absorbing layers: damp wave fields at x ends
             yee::k_damp_x<<<nb, tb, 0, s_>>>(v, mask_n_.data(), mask_h_.data(),

@@ -191,6 +191,16 @@ int main(int argc, char** argv) {
     std::FILE* fpe = std::fopen((outdir + "/probe_e.bin").c_str(), resume ? "ab" : "wb");
     std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
     if (!resume) std::fprintf(fen, "step,time,WE,WB,wd_sum,wd_rms,wd_max\n");
+    // A0 ledger (PLAN_TWO_TRACK v2.1): interval-integrated, time-centered
+    // m=1 work split kinetic/fluid + W1 snapshot for the closure test
+    // dW1 + dW_kin + dW_fld ≈ boundary/damp losses. Columns are ENERGIES
+    // over the preceding interval (raw sums × 2·dV·dt), not sampled powers.
+    std::FILE* fld = nullptr;
+    if (rp.rsm && rp.rsm_ledger) {
+        fld = std::fopen((outdir + "/m1ledger.csv").c_str(), resume ? "a" : "w");
+        if (!resume)
+            std::fprintf(fld, "step,time,W1,dW_kin,dW_kin_x,dW_fld,dW_fld_x\n");
+    }
     std::FILE* frf = nullptr;
     if (rfr.on) {
         frf = std::fopen((outdir + "/refresh.csv").c_str(), resume ? "a" : "w");
@@ -291,6 +301,34 @@ int main(int argc, char** argv) {
             std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
                          n, n * rp.dt, e.we, e.wb, w.sum, w.rms, w.max);
             std::fflush(fen);
+            if (fld) {
+                RsmState& r = sim.rsm();
+                double raw[4];
+                r.ledger_read(sim.stream(), raw);       // resets accumulators
+                const double dV = g.dx * g.dy;
+                const double sc = 2.0 * dV * rp.dt;     // ±k1 pair, work → energy
+                // W1 snapshot (2·W1 of the pair, same convention as rsm_band)
+                std::vector<float2> mb(g.nx);
+                double w1 = 0;
+                const double c2 = rp.c * rp.c;
+                for (auto* arr : { &r.e1x, &r.e1y, &r.e1z }) {
+                    CUDA_CHECK(cudaMemcpy(mb.data(), arr->data(),
+                                          g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
+                    for (auto& z : mb)
+                        w1 += 0.5 * ((double)z.x * z.x + (double)z.y * z.y);
+                }
+                for (auto* arr : { &r.b1x, &r.b1y, &r.b1z }) {
+                    CUDA_CHECK(cudaMemcpy(mb.data(), arr->data(),
+                                          g.nx * sizeof(float2), cudaMemcpyDeviceToHost));
+                    for (auto& z : mb)
+                        w1 += 0.5 * c2 * ((double)z.x * z.x + (double)z.y * z.y);
+                }
+                w1 *= 2.0 * dV;
+                std::fprintf(fld, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+                             n, n * rp.dt, w1, sc * raw[0], sc * raw[1],
+                             sc * raw[2], sc * raw[3]);
+                std::fflush(fld);
+            }
             if (frf) {
                 const auto r = rfr.drain(sim.stream());
                 std::fprintf(frf, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
@@ -303,6 +341,7 @@ int main(int argc, char** argv) {
         }
     }
     if (frf) std::fclose(frf);
+    if (fld) std::fclose(fld);
     std::fclose(fpb); std::fclose(fpe); std::fclose(fen);
     std::printf("done: %s\n", outdir.c_str());
     return 0;

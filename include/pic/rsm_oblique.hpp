@@ -569,6 +569,50 @@ static __global__ void k_rsm_binomial(const float2* __restrict__ src,
     dst[i].y = 0.25f * src[im].y + 0.5f * src[i].y + 0.25f * src[ip].y;
 }
 
+// A0 ledger (PLAN_TWO_TRACK v2.1): time-centered J1·E1 work, kinetic/fluid
+// split. Runs after k_rsm_ampere with E^n snapshotted in e1o* and the
+// post-filter kinetic current snapshotted in j1k* (fluid part = j1 − j1k).
+// Node term Re[J·conj((E^n+E^{n+1})/2)]; block tree reduction; one
+// atomicAdd per block into led[4] = {P_kin, P_kin_x, P_fld, P_fld_x}
+// (raw node/step sums; the 2·dV physical-pair scaling is host-side).
+static __global__ void k_rsm_ledger(RsmViews r,
+                                    const float2* __restrict__ j1kx,
+                                    const float2* __restrict__ j1ky,
+                                    const float2* __restrict__ j1kz,
+                                    const float2* __restrict__ e1ox,
+                                    const float2* __restrict__ e1oy,
+                                    const float2* __restrict__ e1oz,
+                                    double* __restrict__ led) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    double pk = 0, pkx = 0, pf = 0, pfx = 0;
+    if (i < r.nx) {
+        const float2 en[3] = { r.e1x[i], r.e1y[i], r.e1z[i] };
+        const float2 eo[3] = { e1ox[i], e1oy[i], e1oz[i] };
+        const float2 jk[3] = { j1kx[i], j1ky[i], j1kz[i] };
+        const float2 jt[3] = { r.j1x[i], r.j1y[i], r.j1z[i] };
+        for (int c = 0; c < 3; ++c) {
+            const double ecx = 0.5 * ((double)eo[c].x + en[c].x);
+            const double ecy = 0.5 * ((double)eo[c].y + en[c].y);
+            const double k = (double)jk[c].x * ecx + (double)jk[c].y * ecy;
+            const double f = ((double)jt[c].x - jk[c].x) * ecx +
+                             ((double)jt[c].y - jk[c].y) * ecy;
+            pk += k; pf += f;
+            if (c == 0) { pkx = k; pfx = f; }
+        }
+    }
+    __shared__ double sh[128][4];
+    const int t = threadIdx.x;
+    sh[t][0] = pk; sh[t][1] = pkx; sh[t][2] = pf; sh[t][3] = pfx;
+    __syncthreads();
+    for (int w = 64; w > 0; w >>= 1) {
+        if (t < w)
+            for (int c = 0; c < 4; ++c) sh[t][c] += sh[t + w][c];
+        __syncthreads();
+    }
+    if (t == 0)
+        for (int c = 0; c < 4; ++c) atomicAdd(&led[c], sh[0][c]);
+}
+
 } // namespace detail
 
 // Host-side owner of the m = 1 state. Allocated ONLY when rp.rsm is set.
@@ -576,6 +620,11 @@ struct RsmState {
     DeviceArray<float2> e1x, e1y, e1z, b1x, b1y, b1z, j1x, j1y, j1z, rho1;
     DeviceArray<float2> vc1x, vc1y, vc1z;    // m=1 cold-fluid velocity
     DeviceArray<float2> j1tmp;               // binomial-filter scratch
+    // A0 ledger scratch (allocated ONLY when rp.rsm_ledger):
+    DeviceArray<float2> j1kx, j1ky, j1kz;    // post-filter kinetic J1 snapshot
+    DeviceArray<float2> e1ox, e1oy, e1oz;    // E1^n snapshot (pre-ampere)
+    DeviceArray<double> led;                 // {P_kin, P_kin_x, P_fld, P_fld_x}
+    bool ledger = false;
     int    nx  = 0;
     double dxp = 0.0, dyp = 0.0, k1 = 0.0;
 
@@ -593,6 +642,44 @@ struct RsmState {
             *a = DeviceArray<float2>((std::size_t)nx);
             a->zero(s);
         }
+        if (rp.rsm_ledger) {
+            ledger = true;
+            for (auto* a : {&j1kx, &j1ky, &j1kz, &e1ox, &e1oy, &e1oz}) {
+                *a = DeviceArray<float2>((std::size_t)nx);
+                a->zero(s);
+            }
+            led = DeviceArray<double>(4);
+            led.zero(s);
+        }
+    }
+
+    // —— A0 ledger hooks (all no-ops unless rp.rsm_ledger set at init) ——
+    void ledger_snap_kinetic_j(cudaStream_t s) {   // after filter, before cold twin
+        const std::size_t nb = (std::size_t)nx * sizeof(float2);
+        CUDA_CHECK(cudaMemcpyAsync(j1kx.data(), j1x.data(), nb, cudaMemcpyDeviceToDevice, s));
+        CUDA_CHECK(cudaMemcpyAsync(j1ky.data(), j1y.data(), nb, cudaMemcpyDeviceToDevice, s));
+        CUDA_CHECK(cudaMemcpyAsync(j1kz.data(), j1z.data(), nb, cudaMemcpyDeviceToDevice, s));
+    }
+    void ledger_snap_e_old(cudaStream_t s) {       // immediately before k_rsm_ampere
+        const std::size_t nb = (std::size_t)nx * sizeof(float2);
+        CUDA_CHECK(cudaMemcpyAsync(e1ox.data(), e1x.data(), nb, cudaMemcpyDeviceToDevice, s));
+        CUDA_CHECK(cudaMemcpyAsync(e1oy.data(), e1y.data(), nb, cudaMemcpyDeviceToDevice, s));
+        CUDA_CHECK(cudaMemcpyAsync(e1oz.data(), e1z.data(), nb, cudaMemcpyDeviceToDevice, s));
+    }
+    void ledger_accumulate(cudaStream_t s) {       // immediately after k_rsm_ampere
+        constexpr int threads = 128;
+        const int blocks = (nx + threads - 1) / threads;
+        detail::k_rsm_ledger<<<blocks, threads, 0, s>>>(
+            views(), j1kx.data(), j1ky.data(), j1kz.data(),
+            e1ox.data(), e1oy.data(), e1oz.data(), led.data());
+    }
+    // D2H read of the raw accumulators (node·step sums) + reset. Host applies
+    // 2·dV (±k1 pair) and dt (per-step work → energy) scaling.
+    void ledger_read(cudaStream_t s, double out[4]) {
+        CUDA_CHECK(cudaMemcpyAsync(out, led.data(), 4 * sizeof(double),
+                                   cudaMemcpyDeviceToHost, s));
+        CUDA_CHECK(cudaStreamSynchronize(s));
+        led.zero(s);
     }
 
     // rp.jfilter passes of the 1D binomial on the m = 1 currents (the m = 0

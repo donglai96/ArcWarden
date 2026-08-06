@@ -246,6 +246,9 @@ struct RunParams {
     int      rsm      = 0;
     double   rsm_k1   = 0.0;   // k_perp (physical); deck derives 2π/Ly if 0
     double   rsm_seed = 0.0;   // m=1 eigenmode seed amplitude relative to wce
+    int      rsm_ledger = 0;   // A0 (PLAN_TWO_TRACK v2.1): per-step accumulated,
+                               // time-centered J1·E1 ledger split kinetic/fluid;
+                               // 0 = no snapshots/kernels (path unchanged)
 
     // —— Boundary-refresh thermal bath (docs/REFRESH_DESIGN.md; refresh.hpp) ——
     // Stateless high-latitude bath: OUTWARD-moving hot markers inside the

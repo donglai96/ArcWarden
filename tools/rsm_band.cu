@@ -75,7 +75,12 @@ int main(int argc, char** argv) {
 
     std::FILE* fpb = std::fopen((outdir + "/probe.bin").c_str(), "wb");
     std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), "w");
-    std::fprintf(fen, "step,time,WE,WB,W1,PJ1E1,PJ1xE1x\n");
+    // Legacy sampled means (PJ1E1/PJ1xE1x, aliased — kept for continuity) +
+    // A0 accumulated interval ENERGIES (time-centered, kinetic/fluid split;
+    // zeros unless [rsm] ledger = true). Closure gate (uniform, no damp):
+    // W1(t2) − W1(t1) + dW_kin + dW_fld ≈ 0 per interval.
+    std::fprintf(fen, "step,time,WE,WB,W1,PJ1E1,PJ1xE1x,"
+                      "dW_kin,dW_kin_x,dW_fld,dW_fld_x\n");
     {   std::FILE* fm = std::fopen((outdir + "/meta.txt").c_str(), "w");
         std::fprintf(fm, "nx %d\ndx %.9g\ndt %.9g\nnsteps %ld\nbline_every %d\n"
                          "probe_every %d\nfhist_every %d\nnb %d\nvmax %.9g\n"
@@ -174,8 +179,16 @@ int main(int argc, char** argv) {
                 for (auto& z : m1buf) w1 += 0.5 * c2 * ((double)z.x * z.x + (double)z.y * z.y);
             }
             w1 *= 2.0 * dV; pj *= 2.0 * dV; pjx *= 2.0 * dV;
-            std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e\n",
-                         n, n * rp.dt, e.we, e.wb, w1, pj, pjx);
+            double lg[4] = {0, 0, 0, 0};
+            if (rp.rsm_ledger) {
+                sim.rsm().ledger_read(sim.stream(), lg);
+                const double sc = 2.0 * dV * rp.dt;
+                for (double& v2 : lg) v2 *= sc;
+            }
+            std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.9e,%.9e,%.9e,"
+                              "%.9e,%.9e,%.9e,%.9e\n",
+                         n, n * rp.dt, e.we, e.wb, w1, pj, pjx,
+                         lg[0], lg[1], lg[2], lg[3]);
             std::fflush(fen);
             if (n % 20000 == 0)
                 std::printf("t=%8.0f  WE=%.3e  WB=%.3e  2W1=%.3e  PJ1E1=%+.3e\n",

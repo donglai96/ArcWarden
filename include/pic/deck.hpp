@@ -241,6 +241,7 @@ inline Deck load_deck(const std::string& path) {
             if      (key == "enable") d.rp.rsm = detail::deck_bool(val) ? 1 : 0;
             else if (key == "k1")     d.rp.rsm_k1 = dv();
             else if (key == "seed")   d.rp.rsm_seed = dv();
+            else if (key == "ledger") d.rp.rsm_ledger = detail::deck_bool(val) ? 1 : 0;
         } else if (section == "refresh") {
             // Boundary-refresh thermal bath (docs/REFRESH_DESIGN.md).
             if      (key == "enable")     d.rp.refresh = detail::deck_bool(val) ? 1 : 0;
