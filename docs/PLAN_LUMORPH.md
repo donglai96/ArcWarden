@@ -64,3 +64,53 @@ seed 20260720 / t4000Ωe。
 
 不跑 A20-RSM;不继续 A25/更高 A;不升天线幅度;不重启 G2;
 **不把 control 自己停在 0.5 解释为 RSM gap。**
+
+---
+
+# 2026-08-07 修订(用户三项决定;lurepro_x10 改判"单种子定性 PASS")
+
+lurepro_x10 判定修正:旧追踪器早期锁低频带错过 t2300–2900 真 riser →
+FAIL 撤销。第三阶段物理问题已回答:ArcWarden full-f 在 Lu 参数 + 强梯度下
+能产生越过 0.5、达 0.65+ 的 element。距"稳定 source"还差三种子。
+
+## 决定 1:双位置判据(不整体搬到离赤道)
+
+- **赤道探针**:出生时间、初始频率、低频背景、洪泛判定;幅度只记录不设下限。
+- **|λ|=5°(|s|=116.4)= 主判定位**:扫频 Δω、终止/最高频率、成熟波幅。
+- **|λ|=7.5°(|s|=175.1)= 确认位**:传播放大与连续性。
+- **传播方向预注册**:每 seed 先用低频波包 outward Poynting flux 定主方向;
+  ctrl 固定后 paired RSM 用同方向同探针;禁止看完 RSM 再挑半球。
+- **归一化修正(必须双报)**:ω/Ωe,eq 与 ω/Ωe(s);Bw/Beq 与 Bw/B0(s)。
+  B0(s)/Beq:2.5°=1.0086 / 5°=1.0347 / 7.5°=1.0794(局地半频 0.5043/
+  0.5174/0.5397)。固定全局 0.46–0.56 带在不同纬度会把局地 fce 移动混入 gap。
+- **判据⑥改**:主方向 5° 探针成熟 element Bw/B0(s) ∈ [3e-3, 1e-2]。
+
+## 决定 2:三种子立即执行(同一 x10/Lu source)
+
+seeds 20260720/21/22,除 seed 与 nsteps 外零改动,全部 t≥6000,同一
+executable hash;seed20 t4000 = pilot,正式记录延到 t6000(restart 允许)。
+**成功条件(3/3)**:①t<2000 无 x4 式 flood;②至少一条空间-时间连续
+outward element;③5° 处 Δω≥0.15 Ωe,eq 且 ω_max≥0.55 Ωe,eq;④三 STFT 窗
+均确认过 0.55;⑤5°→7.5° 到达时间与放大顺序符合 outward;⑥高频结构 =
+同一 convective packet(不许两个不连通 dots 拼谱)。
+预注册硬门槛 3/3 ≥0.55 不得事后提高;"达 0.60/0.65 的种子数"作第二指标。
+
+## 决定 3:天然浅谷 = paired baseline,不是 gap 机制证据
+
+V_ctrl=0.87 浅谷 + 真实上带(up/hi=75)→ gap 带 control 分母非噪声,
+S_A 增量阻断可靠。但 m=0 control 无 E∥ 也能自然产生浅谷 →
+**gap 外观本身不证明 RSM/Landau 机制**。论文主张 = "RSM 在已有浅谷基线上
+产生额外抑制,使原本穿过的 control element 停止"。主证据顺序:
+①paired ctrl 连续穿过;②paired RSM 停在局地半频附近;③Δω_stop≥0.04;
+④S_A<0.5;⑤下带 element 保留;⑥m1 Landau→plateau→m0 drive 降→stop 时序。
+命名:"control baseline valley";不得称 control 已证 Omura gap,不得把
+与 Ke2022 外观相似等同为机制相同。
+
+## 修订执行顺序
+
+1. 修判据/追踪器(双位置 + 方向预注册 + 双归一化);
+2. x10/Lu 三个 t6000 controls;
+3. 3/3 过 → x10 上 RSM 短校准;
+4. 不照搬 x4 的 k⊥=0.24 —— 先测 x10 source 下的 R_m,选实际 R_m≈0.2–0.4
+   的弱通道作主 case;
+5. 三个逐 seed 配对 RSM。
