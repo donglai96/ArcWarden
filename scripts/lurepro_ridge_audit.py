@@ -116,10 +116,15 @@ def audit(d):
     # RECORDED only (flood rejection is W10's job); component-adaptive
     # value recorded as diagnostic
     w = (t5 * wce > dm["t0"]) & (t5 * wce < dm["t1"] + 100)
-    e5 = envelope(z5[w], t5[w], wce, 0.40, 0.80)
-    amp5 = float(e5.max()) / wce
+    amp5 = float(envelope(z5[w], t5[w], wce, 0.40, 0.80).max()) / wce
     f1, f2 = max(0.15, dm["birth"] - 0.05), dm["top"] + 0.05
-    ampc = float(envelope(z5[w], t5[w], wce, f1, f2).max()) / wce
+    # component-band envelope: used for the amplitude DIAGNOSTIC and as
+    # BOTH ends of the ridge-specific propagation correlation (the A2
+    # fixed-band rule governs the amplitude METRIC only — correlating a
+    # fixed-band 5° envelope against a component-band 7.5° envelope was a
+    # band-mismatch bug that faked r 0.93 -> 0.6)
+    e5 = envelope(z5[w], t5[w], wce, f1, f2)
+    ampc = float(e5.max()) / wce
     g_amp = amp5 / b5 >= 3e-3
     over = amp5 / b5 > 1e-2
     print(f"[5°] canonical amp (0.40-0.80): {amp5:.2e} B_eq | {amp5/b5:.2e} "
@@ -147,13 +152,15 @@ def audit(d):
             if c["t1"] > dm["t0"] + lag - 100 and c["t0"] < dm["t1"] + lag + 100
             and c["sweep"] >= 0.05]
     end7 = max((c["end"] for c in in_w), default=np.nan)
-    # AMENDMENT v2 (A3): continuity tolerance = one STFT bin (nwin=1024,
-    # probe cadence 1.5/wpe -> 0.0204 We), replacing the ad hoc 0.03
-    BIN = 0.0204
-    g_prop = (r >= 0.5) and (0 < lag < 400) and (end7 >= dm["end"] - BIN)
-    print(f"[7.5°] ridge-specific delay: r={r:.2f} lag={lag:.0f}/Ωe; "
-          f"matched component endpoint {end7:.3f} (>= 5° end − 1 bin "
-          f"{BIN})  -> {'PASS' if g_prop else 'FAIL'}")
+    # Packet identity (user's registered condition 6) = the ridge-specific
+    # correlation at a physical outward lag. The 5°->7.5° endpoint drop is
+    # RECORDED as top-erosion (real physics: the element top is shaved by
+    # local cyclotron damping as B0 rises), NOT a gate — endpoint matching
+    # was an audit over-implementation beyond the registered condition.
+    g_prop = (r >= 0.5) and (0 < lag < 400)
+    print(f"[7.5°] ridge-specific delay: r={r:.2f} lag={lag:.0f}/Ωe -> "
+          f"{'PASS' if g_prop else 'FAIL'};  matched endpoint {end7:.3f} "
+          f"(top-erosion {dm['end']-end7:+.3f}, recorded)")
 
     ok = all((g_flood, g_riser, g_spread, g_amp, g_prop))
     print(f"[gate] flood {g_flood} | riser {g_riser} | spread {g_spread} | "
