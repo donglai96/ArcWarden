@@ -163,3 +163,19 @@ lurepro_ridge_audit.py 判定。PASS → 报告"修正协议下 4 seeds 全过
 (r≥0.5 @ 0<lag<400),端点差降为记录性 top-erosion 诊断(实测 s1 +0.020 /
 s3 +0.031,与局地回旋阻尼随 B0 上升削蚀波包顶端的物理一致)。此两项改动
 均发生在 seed23 数据被查看之前,seed23 仍由此最终冻结版判定。
+
+---
+
+# 2026-08-08 seed23 判定(A4 执行记录;冻结审计 @6fa5ac1,零改动)
+
+**SEED23 = PASS,五门槛全过且无一毫厘级**:主半球 SOUTH(预注册);
+主导组件 t[423,2074] birth 0.348 → endpoint 0.654(sweep 0.307);
+端点三窗 0.6545/0.6545/0.6545(pair-spread 0.0000);canonical 幅度
+8.96e-3 B_eq / 8.66e-3 B0(5°)(未触 1e-2 记录上限);传播 r=0.96
+lag=87/Ωe,top-erosion +0.000。
+
+**正式结论:修正协议下 4 seeds 全过(含 1 独立验证 seed)。**
+四种子端点:s1 0.695 / s2 0.614 / s3 0.716 / s23 0.654。
+Source gate 关闭;进入 A5 配对序列:R_m 校准阶梯(k1 0.16/0.24/0.32,
+scripts/lurepro_rm_cal.py,规则 R_m≈0.2–0.4 选主 case)→ 三个逐 seed
+配对 RSM(ctrl 复用,半球预注册 s1 SOUTH / s2 SOUTH / s3 NORTH)。
