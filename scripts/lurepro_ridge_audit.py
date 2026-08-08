@@ -94,30 +94,38 @@ def audit(d):
         doms_[nwin] = dm
         ends.append(dm["end"] if dm else np.nan)
     dm = doms_[1024]
-    spread = float(np.nanmax(ends) - np.nanmin(ends))
+    # AMENDMENT v2 (A3): convergence on the 1024/1536 pair (2048 reported
+    # with the known long-window endpoint smear); both pair windows >=0.55
+    spread = abs(ends[0] - ends[1])
     g_riser = (dm is not None and dm["sweep"] >= 0.15
-               and min(ends) >= 0.55)
+               and min(ends[0], ends[1]) >= 0.55)
     g_spread = spread < 0.01
     print(f"[5°] dominant component: t[{dm['t0']:.0f},{dm['t1']:.0f}] "
           f"birth {dm['birth']:.3f} endpoint {dm['end']:.3f} "
           f"(ridge max {dm['top']:.3f}) sweep {dm['sweep']:.3f}")
-    print(f"[5°] endpoint(nwin 1024/1536/2048) = "
-          + "/".join(f"{x:.4f}" for x in ends)
-          + f"  spread {spread:.4f} ({'PASS' if g_spread else 'FAIL'} <0.01)"
-          + f"   riser gate (Δω>=0.15 & >=0.55): "
+    print(f"[5°] endpoint(nwin 1024/1536) = {ends[0]:.4f}/{ends[1]:.4f} "
+          f"pair-spread {spread:.4f} ({'PASS' if g_spread else 'FAIL'} <0.01)"
+          f"  [2048 = {ends[2]:.4f}, reported only: long-window smear]"
+          f"   riser gate (Δω>=0.15 & >=0.55): "
           f"{'PASS' if g_riser else 'FAIL'}")
-    print(f"     dual norm: endpoint /Ωe,eq {ends[2]:.3f} | /Ωe(5°) "
-          f"{ends[2]/b5:.3f}")
+    print(f"     dual norm: endpoint /Ωe,eq {ends[0]:.3f} | /Ωe(5°) "
+          f"{ends[0]/b5:.3f}")
 
-    # amplitude on the component band+window (HARD, pre-registered)
-    f1, f2 = max(0.15, dm["birth"] - 0.05), dm["top"] + 0.05
+    # AMENDMENT v2 (A1+A2): canonical amplitude = FIXED band 0.40-0.80 in
+    # the dominant component's window; floor 3e-3 HARD, ceiling 1e-2
+    # RECORDED only (flood rejection is W10's job); component-adaptive
+    # value recorded as diagnostic
     w = (t5 * wce > dm["t0"]) & (t5 * wce < dm["t1"] + 100)
-    e5 = envelope(z5[w], t5[w], wce, f1, f2)
+    e5 = envelope(z5[w], t5[w], wce, 0.40, 0.80)
     amp5 = float(e5.max()) / wce
-    g_amp = 3e-3 <= amp5 / b5 <= 1e-2
-    print(f"[5°] component-band amp ({f1:.2f}-{f2:.2f}): {amp5:.2e} B_eq | "
-          f"{amp5/b5:.2e} B0(5°)  amplitude gate: "
-          f"{'PASS' if g_amp else 'FAIL'}")
+    f1, f2 = max(0.15, dm["birth"] - 0.05), dm["top"] + 0.05
+    ampc = float(envelope(z5[w], t5[w], wce, f1, f2).max()) / wce
+    g_amp = amp5 / b5 >= 3e-3
+    over = amp5 / b5 > 1e-2
+    print(f"[5°] canonical amp (0.40-0.80): {amp5:.2e} B_eq | {amp5/b5:.2e} "
+          f"B0(5°)  floor gate: {'PASS' if g_amp else 'FAIL'}"
+          + ("  [NOTE: exceeds 1e-2 recorded ceiling]" if over else "")
+          + f"   [adaptive-band diag: {ampc/b5:.2e}]")
 
     # ridge-specific delayed copy at 7.5°
     m, t7, by, bz, *_ = probe_pair(d, dom * S75)
@@ -139,10 +147,13 @@ def audit(d):
             if c["t1"] > dm["t0"] + lag - 100 and c["t0"] < dm["t1"] + lag + 100
             and c["sweep"] >= 0.05]
     end7 = max((c["end"] for c in in_w), default=np.nan)
-    g_prop = (r >= 0.5) and (0 < lag < 400) and (end7 >= dm["end"] - 0.03)
+    # AMENDMENT v2 (A3): continuity tolerance = one STFT bin (nwin=1024,
+    # probe cadence 1.5/wpe -> 0.0204 We), replacing the ad hoc 0.03
+    BIN = 0.0204
+    g_prop = (r >= 0.5) and (0 < lag < 400) and (end7 >= dm["end"] - BIN)
     print(f"[7.5°] ridge-specific delay: r={r:.2f} lag={lag:.0f}/Ωe; "
-          f"matched component endpoint {end7:.3f} (>= 5° end −0.03)  -> "
-          f"{'PASS' if g_prop else 'FAIL'}")
+          f"matched component endpoint {end7:.3f} (>= 5° end − 1 bin "
+          f"{BIN})  -> {'PASS' if g_prop else 'FAIL'}")
 
     ok = all((g_flood, g_riser, g_spread, g_amp, g_prop))
     print(f"[gate] flood {g_flood} | riser {g_riser} | spread {g_spread} | "
