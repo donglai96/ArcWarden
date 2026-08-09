@@ -1,107 +1,138 @@
-# PLAN_2D — 回到全 2D 路线(2026-08-08,RSM 单 k⊥ 判定之后;用户指令)
+# PLAN_2D v2 — Lu 尺度最大 full-2D mirror 旗舰(2026-08-08 用户修订版)
 
-## 0. 背景:为什么回 2D,以及 2D 继承什么
+v1(c626f5f)的阶梯框架被用户修订取代:**第一主线 = 尽可能大的 full-2D
+mirror simulation,t=0 起自洽 kinetic resonant electrons,不预置 plateau,
+让 WNA、E∥、plateau、chirping、gap 在同一个长盒子里自然演化。**
+1D/RSM 工作不再是本计划的参照系(仅 4 个 1D run 保留为可选对照数据)。
 
-RSM phase-4 判定(docs/PAIR_VERDICT_2026-08-08.md,0/3):单固定 k⊥=0.32
-弱通道 + m0/m1 约化在 x10 Lu 源上**不产生可见 0.5 gap**,只产生元素削顶
-(+0.03~0.07)与活动期缩短;S_A 失败对频带口径稳健。Constitution §6.1
-风险 #4(单固定 k⊥ 可能不足)兑现。
+## 1. 物理核心(用户论证,预注册)
 
-但两个既有结果划定了问题的形状:
-- **分水岭(rsm_band_big)**:均匀 B 大盒 + Li 源,m0+m1 把 gap 挖到
-  30–1000×——约化模型**在线性均匀源上够用**;
-- **Li 2019 in-house 复现**(15° tilt Yee 全 2D):two-band + 0.5 gap ✓。
+### 1.1 L=0.6 R_E 是 runway,不是普通尺寸参数
+对流增长的 chorus 由积分增益决定,不是局域 γ:
 
-即:失败不在"m1 通道不存在",在于 **chirping 镜场源 + 单 k⊥** 这个组合。
-2D = 未约化假设的直接检验:自洽 k⊥ 谱、WNA 随传播演化、m1×m1→m2、
-局地条件全都自动在场。
+    N_g(ω) = ∫ γ(ω,s)/v_g(ω,s) ds,   B_w(ω) ∝ exp(N_g)
 
-**继承的资产**(全部现成):
-1. x10 Lu 源 4/4 seeds 跨 0.55(冻结审计)——**四个 1D 归档 run 就是
-   天然的 k⊥-off 对照臂**,逐 seed 配对不用重跑;
-2. G1.2 2D slab mirror(b0_prof=3,By=−2aB0x̃ỹ,∇·B=0 精确,y-resolved
-   完整镜力)已在共享引擎 yee2d.hpp,mirror2d.cu 为验证参照;
-3. G1.3 诊断包:fv|region、J·E Landau-vs-cyclotron ledger、WNA;
-4. cold_model=full(3 分量冷流体)在 config 中已标注"ny>1 必需";
-5. 冻结判定工具族(ridge audit / W10 / 连通域)与协议纪律。
+Upper band 局域 γ 弱 → 需要更长传播距离才可见。短盒:N_g,LB > N_th 而
+N_g,UB < N_th → 只见 lower band。0.6 R_E(→ Lx≈1331 c/ωpe,x10 映射)
+可能翻转为 N_g,UB > N_th。TaRA 是沿传播方向的
+trapping→release→new resonance→amplification **relay**,盒子太短则波包
+在 relay 建立前进吸收层——这解释 Lu 长几何有跨带元素而短 2D 只有 LB。
 
-## 1. 物理问题(预注册)
+### 1.2 电子模型(Annotation 1 修订)
 
-**同一个盒子里:镜场 chirping 源(1D 已证跨 0.55)+ 自洽 k⊥ 谱,是否
-自生成 0.5 fce,eq 的可见 gap?**
+    cold-fluid bulk + kinetic resonant population (t=0) + kinetic anisotropic chorus source
 
-- "可见 gap" 标准沿用用户 08-04 判语(D120 教训):必须是**可见谷**
-  (P_gap < P_up),削顶不算;单位 = **Ωe,eq**(文献口径,ke2022jgr/
-  Li2019/Ke2017 原文已核:报告层 = 赤道 fce,机制层条件是局地的)。
-- 主对照 = 1D 四种子归档 run(同 f0、同 lre、同边界,唯一差 = k⊥ 自由度)。
+Resonant population 必须:参与电荷/电流沉积、对场反馈、在镜场真实
+bounce、能形成 plateau/scar、不被 refresh 重置。**不是 test particles。**
+覆盖速度区间:
+- |v∥| ≈ 0.05–0.07c(upper-band cyclotron shell)
+- |v∥| ≈ 0.087–0.10c(0.5Ωce Landau/相速区)
+- |v∥| ≈ 0.15–0.26c(lower-band cyclotron shell)
 
-## 2. 参数与成本(提案,P0 冒烟实测修正)
+**禁止**只在 0.09c 放窄 bump(人为制造 gap)。方案 = 平滑 product-kappa
++ 共振区 importance sampling,权重拆分:
 
-| 项 | 值 | 依据 |
+    f0 = χ_r(v∥) f0 + [1−χ_r(v∥)] f0
+
+两部分之和严格 = f0,增加的是共振区统计精度,不是新自由能。
+实现:按速度空间分区——cold fluid 承载 |v∥|<v_cut 部分(含 kappa 核,
+不参与共振,只出介电响应);kinetic 种群 = f0 限制在 |v∥|>v_cut
+(平滑边沿 χ_r),权重精确归一。
+
+### 1.3 因果序列(成功的机制指纹,预注册)
+
+    E∥ → Δf(0.08–0.10c) → plateau → 0.5Ωce 功率下降
+
+分布变化必须**先于** gap;gap 必须**随时间逐渐形成**(不是初始线性 γ
+本来就在 0.5 最小);0.5 下降时 lower band 不能被整体压死。
+
+## 2. 工程现状审计(2026-08-08,全部核对过代码)
+
+**已有**:
+- `decks/mirror2d_ke17.ini` = 被 G2.2 gate 验证的 2D mirror 生产配置:
+  2048×512,b0_prof=3,**cold_model=full(2D 冷流体已在生产验证)**,
+  4.2e8 hot markers **实测 ~21 GB**,dt=0.1,x=damping;
+- y-wrap 已实证survivable:ke17 的 wrap 跳变(2aB0·x̃·Ly ≈ 2.4 B0)比
+  旗舰盒(≈1.2 B0)更极端,straddler 层 ~0.6% 粒子、弹性(deck 注释);
+- `dist=prodkappa`(dist=3,kappa_par,X4_PRODKAPPA_PLAN)+ 多 species
+  加载(G1.3)+ per-marker weight `w`(Particles 结构)——χ_r 拆分的
+  全部原料在位;
+- G1.3 诊断包(fv|region、J·E Landau-vs-cyclotron ledger、WNA);
+- Particles 内存模型:主数组+tile-sort 双缓冲+bin ≈ 60 B/marker →
+  4.2e8 ≈ 25 GB 上限;fields 2.1e6 cells 可忽略。
+
+**缺口(P0 工程件,~2–3 天)**:
+1. **v∥-shell importance loader**:per-species 平滑速度窗(accept-reject
+   + 权重归一 + raised-cosine 边沿),quiet-start 兼容;
+2. **mirror2d 驱动升级到生产级诊断**:probe 行(y-mid)、bline 双份
+   (y-mid 行 + y 平均)、**kyspec**(eq/±5°/±7.5° x-站的 B(x,ky,t)
+   复谱)、checkpoint/resume;
+3. **x=hybrid**(吸波+反射粒子,Lu 边界)接入 mirror2d 路径
+   (ke17 用的是 damping;粒子边界行为要审计);
+4. 旗舰 deck(§3)。
+
+## 3. 旗舰 deck 候选(v0;P0 冒烟后定案)
+
+| 项 | 值 | 备注 |
 |---|---|---|
-| 几何 | x10:Lx=1300, nx=5000, dx=0.26, lre=1330.5 | 与 1D 臂严格同 |
-| 横向 | Ly=39.27, ny=160, dy=0.245 | k⊥ 格 = 0.16n → {0.16,0.32,0.48,…} 覆盖 Li 机制带 k⊥/k∥~0.2–0.6 |
-| dt | 0.15(CFL 上限 0.178)| 与 1D 同,t6000 = 200k steps |
-| ppc | 690(1D 等效:690×160≈110k/列)| 噪声与 1D 臂同级;总 552M markers |
-| 显存 | 估 ~30GB(1D 300M 用 16.5GB 外推)| **边缘,P0 冒烟 gate;备选 ppc=500 → ~22GB** |
-| 速率 | 5–7e9 p-steps/s → t6000 ≈ 4.5–6.5 h | 过夜可行;3 seeds = 3 晚 |
-| ρ⊥/dy | 1.73/0.245 ≈ 7 | G1.2 规则 ≥2 ✓ |
-| y-wrap 踢 | 2a·x̃·Ly/B0 ≈ 11% @ |s|=650 | ⚠️ 超 G1.2 薄层假设,P1 实测 gate |
+| 网格 | **4096 × 512**,dx=0.325,dy=0.699 | Lx=1331(=0.6 R_E 映射),Ly=358;dky=0.0176 连续 k_y 谱 |
+| 镜场 | b0_prof=3,a=2.54e-6 | = x10 lre=1330.5 的抛物映射;端部镜比 ~2.1;边缘场线倾角 ~16–25° |
+| dt | 0.15(CFL 上限 0.295) | t6000 = 200k steps |
+| 冷体 | cold_model=full,cold_nc ≈ 0.978 | 含 kappa 核的 (1−χ_r) 部分 |
+| chorus source | bimax,n_h=0.010,u∥=0.13,**A=4.0–4.5**,ppc 120–140 | 用户:2D 阈值更低,先别用 A=6/Lu 全强度防 flood;≈ke17 的 A=4.5 |
+| resonant pool | **prodkappa**,n_r ≈ 0.012,shell |v∥|∈[0.04, 0.30]c 平滑边,ppc 60–80 | 覆盖三个共振区;能量递减各向异性;t=0 起全动理 |
+| 总粒子 | ~4.2e8(总 ppc ≈ 200) | ke17 实测锚点 ~21–25 GB;**冒烟 gate 定案** |
+| 边界 | x=hybrid,y periodic | Lu:吸波+反射粒子;吸收层按物理长度定 |
+| seed | 20260720 | |
+| 时长 | 阶段化(§4);完整阶段 **t≥12000/Ωe** | shell 电子 transit ~5300/Ωe(v∥=0.1c 过 Lx)→"多次 bounce"需 ≥2 个 transit |
 
-## 3. 阶梯(每级 gate + stop rule)
+速率估算:8.4e13 p-steps(t6000)@ 5e9–1e10 p-steps/s → 2.5–5 h;
+t12000 ≈ 5–10 h = 一晚。数值 gate:ρ⊥/dy ≈ 2.0(A=4.5 时)= G1.2 规则
+下限,记录;resonant shell ρ⊥ 更小 → 其 v⊥ 动力学主要靠 x 向解析,列入
+风险登记。
 
-### P0 工程(~1–2 天)
-chirp2d 扩 ny>1 生产路径(引擎已 2D,改的是驱动):
-- b0_prof=3 + cold_full 接入 chirp2d 主循环;
-- 诊断:probes 取 (x_p, y=mid) 行;bline 双份(y-mid 行 + y 平均);
-  新增 **kyspec**:少数 x 站(eq/±5°/±7.5°)的 By(x, ky, t) 复谱
-  (= RSM m1line 的推广,直接对接现有分析);ckpt 兼容;
-- mirror2d 保留为交叉验证参照,不做生产。
-**Gates**:① ny=1 回归 = 统计包络 ≤3×(regress_case2 类,off-path
-不许动);② t100 2D 冒烟:显存/速率实测 → 定 ppc;③ 均匀盒短对拍
-chirp2d-2D vs mirror2d(场能曲线一致)。
+## 4. 运行顺序(checkpoint gates,用户版)
 
-### P1 数值 gates(~0.5 天,短 run)
-- y-wrap 边界层:实测受 >2% 场跳变的 marker 份额与其散射特征;超标
-  → Ly 减半(k⊥ 格 0.32n)或 y-taper;
-- 能量守恒 ≤ 1D 同级;2D quiet-start 噪声地板 vs 1D(WB(t=0) 比)。
+1. **内存与静平衡 gate**(几百步):显存实测、∇·B、加载正确性
+   (shell 权重和 = ∫χ_r f0)、初始噪声地板;
+2. **线性阶段**(→ Ωce·t ~400):2D WNA、增长率、**upper-band linear
+   fuel 存在性**(ke17 目标:onset ~400);
+3. **第一元素阶段**(→ t ~1000–1500):清楚 rising element,不是
+   broadband flood(W10 类度量,2D 重校准后判);flood → 停,降 A/n_h
+   一档重来(唯一允许的参数动作);
+4. **累积阶段**(→ t ~3000);
+5. **完整 gap 阶段**(→ t ~6000–12000+):resonant electrons 完成多次
+   bounce/处理循环。
 
-### P2 2D control(1 晚)
-Lu f0、x10、seed 20260720、t6000。判源 = 冻结 ridge audit(y-mid 探针,
-判据原文不动)。**已知风险即发现**:2D 斜向/Landau 阻尼可能压低源——
-- 若仍跨 0.55:进 P3;
-- 若停在 ~0.5:**这本身可能就是答案**(自洽 k⊥ 的内禀 stop = gap 机制
-  的 2D 表现),转 P3 但主指标换成 1D-vs-2D 差分;
-- 若源整体死(无元素):停,短盒诊断,**不做参数轮盘**。
+每关出报告再续跑;ckpt 密度保证任何关卡可回溯。
 
-### P3 gap 判定(预注册,写死后才看谱)
-逐 seed 与 1D 臂配对,三条证据线:
-1. **可见谷**:eq/5° 谱 P_gap(0.46–0.56) 与 P_up(0.56–0.66)、gap/LB;
-   可见 gap 标准 = P_gap < P_up 且 gap/LB ≤ 0.3;
-2. **差分形态**:P_2D/P_1D 比值谱谷底位置(0.5 带 vs riser 顶)——
-   区分挖谷/削顶的判决性测量;
-3. **机制链**(G1.3):上/下带 WNA 分离、k⊥ 谱时间演化、J·E Landau-vs-
-   cyclotron ledger 空间分布、f(v∥) plateau 0.09–0.11c、E∥/E_tot。
+## 5. 成功判据(全部同时满足,预注册,看谱前冻结)
 
-### P4 种子 ×3 + 因果实验(M10-SQ 清单兑现)
-1D-vs-2D 已内置;备选:kill-the-parent(上带谱阻尼)、component switch。
+1. lower band 有可追踪的**离散** rising elements;
+2. upper band 功率不是噪声或谐波;
+3. 连续 k_y 谱出现真实 finite-WNA power;
+4. E∥ 对共振电子的**累计做功**清楚(ledger);
+5. 0.08–0.10c 分布变化**先于** gap;
+6. gap **随时间逐渐形成**(非初始线性 γ 谷);
+7. 0.5 下降时 lower band 未被整体压死。
 
-### P5 收束
-- 2D 挖谷 + 1D 不挖 → **k⊥ = 因,flagship 主结果**;回头定位 RSM 缺失
-  成分(k⊥ 谱?WNA 演化?m2?)→ bridge/方法论文;
-- 2D 也只削顶 → **削顶即物理**:RSM 与 2D 一致,叙事转 ke2022
-  "gap+dots"(RSM 判定书选项 D 升主线);
-- 2D 源死于斜向阻尼 → 内禀 stop 机制研究(短盒)。
+## 6. L=0.6 R_E 归因(discovery 成功后的论文义务)
 
-## 4. 风险登记
-显存 30GB 边缘 / y-wrap 11% / 2D 源变弱或死 / cold_full 未在 2D 生产
-验证过 / 速率估计 ±2× / 1D 冻结度量(W10 带宽等)在 2D 需重校核但
-**判据文字不改**。
+长度扫描 L = 0.2 / 0.4 / 0.6 R_E,保持:Δx、Δy 不变;横向宽度不变;
+初始 f0 不变;局域增长率不变;**吸收层按物理距离固定**。检验:
 
-## 5. 禁做
-不再跑任何 RSM 臂(除非用户点名);不把削顶叫 gap;P3 标准冻结前不看
-2D 谱;P2 源不过不加密度/ppc 轮盘;ny=1 全家族路径按构造不动。
+    ln B_UB ∝ ∫ γ_UB / v_g,UB ds
 
-## 6. 立即下一步
-P0 工程:chirp2d ny>1 分支 + 三个 gate。完成后向用户报冒烟实测
-(显存/速率/ppc 定案)再进 P2。
+若只有 0.6 R_E 形成 upper band / 完整 gap →"既往 2D 失败 = runway 不足"
+成为强新结果。
+
+## 7. 禁做
+
+不预置 plateau;不放 0.09c 窄 bump;resonant pool 不被 refresh 重置;
+不跑 RSM;stage-3 flood 之外不做参数轮盘;第一版 A ≤ 4.5;
+判据 §5 冻结前不看完整谱定标准。
+
+## 8. 立即下一步
+
+P0 工程 4 件(§2 缺口)→ 内存/速率冒烟实测报告(stage-1 gate)→
+用户确认 deck 定案 → stage-2 起跑。
