@@ -116,7 +116,7 @@ def main(dirs):
         r = ridge_S(d)
         if r is None:
             continue
-        lab = f"{d[-6:]} (x{13305.0/r['lre']:.0f}, end {r['end']:.3f})"
+        lab = f"{d.rstrip(chr(47)).split(chr(95))[-1]} (x{13305.0/r["lre"]:.0f}, end {r["end"]:.3f})"
         ax[0].plot(r["w"], np.abs(r["S"]), ".-", ms=3, label=lab)
         ax[1].plot(r["w"], r["Bw"] / 0.2, ".-", ms=3, label=lab)
         i = np.nanargmax(np.abs(r["S"]))

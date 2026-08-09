@@ -86,7 +86,7 @@ def main(dirs):
     print(f"{'arm':10s} {'x':>5s} {'state':8s} {'W10':>6s} {'birth':>6s} "
           f"{'end':>7s} {'amp':>9s}")
     for d, r in zip(dirs, res):
-        print(f"{d[-6:]:10s} {13305.0/r['lre']:5.1f} {r['state']:8s} "
+        print(f"{d.split(chr(95))[-1]:10s} {13305.0/r['lre']:5.1f} {r['state']:8s} "
               f"{r['w10']:6.3f} {r.get('birth', float('nan')):6.3f} "
               f"{r.get('end', float('nan')):7.4f} "
               f"{r.get('amp', float('nan')):9.2e}")
