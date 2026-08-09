@@ -33,7 +33,16 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from plot_chen2026_fig1 import read_meta
 from lumorph_gate import spec, w10_occupancy, follow, element_from_traj
 
-S5, S75 = 116.4, 175.1
+G5, G75 = 0.0874856, 0.1316297   # dipole arc g(5deg), g(7.5deg)
+S5, S75 = 116.4, 175.1           # lre=1330.504 values (kept for imports)
+
+
+def mlat_probes(m):
+    """probe offsets at fixed MLAT 5/7.5 deg for this run's lre (LRE scan:
+    positions scale with lre; identical to the frozen 116.4/175.1 at
+    lre=1330.504 -- geometry generalization, no judged-run change)."""
+    lre = m.get("b0_lre", 1330.504)
+    return G5 * lre, G75 * lre
 
 
 def probe_pair(d, offset):
@@ -73,8 +82,9 @@ def envelope(z, t, wce, w1, w2):
 def direction(d):
     """pre-registered hemisphere from LOW-band outward Poynting at ±5°."""
     out = {}
+    s5, _ = mlat_probes(read_meta(d))
     for sgn in (+1, -1):
-        m, t, by, bz, ey, ez = probe_pair(d, sgn * S5)
+        m, t, by, bz, ey, ez = probe_pair(d, sgn * s5)
         wce = m["wce"]
         fb = lambda s: bandpass(s, t, wce, 0.28, 0.48)
         by, bz, ey, ez = fb(by), fb(bz), fb(ey), fb(ez)

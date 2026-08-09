@@ -26,7 +26,16 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from lumorph_gate import spec, w10_occupancy
 from lurepro_source_verdict import probe_pair, envelope, direction
 
-S5, S75 = 116.4, 175.1
+G5, G75 = 0.0874856, 0.1316297   # dipole arc g(5deg), g(7.5deg)
+S5, S75 = 116.4, 175.1           # lre=1330.504 values (kept for imports)
+
+
+def mlat_probes(m):
+    """probe offsets at fixed MLAT 5/7.5 deg for this run's lre (LRE scan:
+    positions scale with lre; identical to the frozen 116.4/175.1 at
+    lre=1330.504 -- geometry generalization, no judged-run change)."""
+    lre = m.get("b0_lre", 1330.504)
+    return G5 * lre, G75 * lre
 
 
 def components(P, fs, tt, drop_db=2.0, min_dur=200.0):
@@ -72,8 +81,9 @@ def audit(d):
     m0, t, by, bz, *_ = probe_pair(d, 0.0)
     wce = m0["wce"]
     lre = m0.get("b0_lre", 1330.504)
-    b5 = 1 + 4.5 * (S5 / lre) ** 2
-    b75 = 1 + 4.5 * (S75 / lre) ** 2
+    s5, s75 = mlat_probes(m0)          # MLAT-fixed judge positions
+    b5 = 1 + 4.5 * (s5 / lre) ** 2
+    b75 = 1 + 4.5 * (s75 / lre) ** 2
     print(f"===== {d}")
     dom = direction(d)
 
@@ -84,7 +94,7 @@ def audit(d):
     g_flood = w10 < 0.20
 
     # 5° connected-component ridges, three windows
-    m, t5, by, bz, *_ = probe_pair(d, dom * S5)
+    m, t5, by, bz, *_ = probe_pair(d, dom * s5)
     z5 = by + 1j * bz
     ends, doms_ = [], {}
     for nwin in (1024, 1536, 2048):
@@ -133,7 +143,7 @@ def audit(d):
           + f"   [adaptive-band diag: {ampc/b5:.2e}]")
 
     # ridge-specific delayed copy at 7.5°
-    m, t7, by, bz, *_ = probe_pair(d, dom * S75)
+    m, t7, by, bz, *_ = probe_pair(d, dom * s75)
     z7 = by + 1j * bz
     w7 = (t7 * wce > dm["t0"]) & (t7 * wce < dm["t1"] + 400)
     e7 = envelope(z7[w7], t7[w7], wce, f1, f2)
