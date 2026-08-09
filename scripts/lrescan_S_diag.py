@@ -120,9 +120,17 @@ def main(dirs):
         ax[0].plot(r["w"], np.abs(r["S"]), ".-", ms=3, label=lab)
         ax[1].plot(r["w"], r["Bw"] / 0.2, ".-", ms=3, label=lab)
         i = np.nanargmax(np.abs(r["S"]))
-        print(f"{d}: |S| max {np.nanmax(np.abs(r['S'])):.2f} at "
-              f"w={r['w'][i]:.3f}; |S|(w=0.48-0.52) = "
-              f"{np.nanmedian(np.abs(r['S'])[(r['w']>0.48)&(r['w']<0.52)]):.2f}")
+        aS, wr = np.abs(r["S"]), r["w"]
+        def med(m):
+            return np.nanmedian(aS[m]) if np.any(m & np.isfinite(aS)) else np.nan
+        # endpoint-relative window: last 0.04 of the ridge before this arm's
+        # own endpoint (stop arms end ~0.4 — a fixed 0.48-0.52 window samples
+        # nothing there; each arm is judged near ITS endpoint)
+        Send = med(wr > r["end"] - 0.04)
+        fx = {wf: med(np.abs(wr - wf) < 0.01) for wf in (0.40, 0.45, 0.50)}
+        print(f"{d}: |S| max {np.nanmax(aS):.2f} at w={wr[i]:.3f}; "
+              f"|S|(end-0.04..end={r['end']:.3f}) = {Send:.2f}; "
+              f"|S|@0.40/0.45/0.50 = {fx[0.40]:.2f}/{fx[0.45]:.2f}/{fx[0.50]:.2f}")
     ax[0].axhline(1.0, color="r", lw=2)
     ax[0].axhline(0.4, color="gray", ls=":", lw=1)   # Omura optimum |S|
     ax[0].axvline(0.5, color="gray", lw=1)
