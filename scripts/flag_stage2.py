@@ -54,8 +54,11 @@ def eq_fshell(theta_par=0.12, uperp_th=0.15, kappa=4.0, cone_b=2.125,
     Tpe = uperp_th ** 2
     # equator b = 1: T1 = Tpe (perp unchanged), cone cut sin2(a) >= 1/cone_b
     #   <=> uperp^2 * cone_b >= u^2  (local = equatorial at b=1)
-    up = np.linspace(0, 6 * uperp_th, 400)        # uperp grid
-    upar = np.linspace(-6 * np.sqrt(Tpa_m.max()), 6 * np.sqrt(Tpa_m.max()), 801)
+    # velocity grids: the loader caps |u| at 0.6c (kappa-tail guard), and the
+    # chi window needs dP << dv — a Tpa_max-scaled grid puts dP ~ 0.4c and
+    # zeroes the window (the bug the first run of this script exposed).
+    up = np.linspace(0, 0.6, 600)                 # uperp grid
+    upar = np.linspace(-0.6, 0.6, 1201)
     dU = up[1] - up[0]
     dP = upar[1] - upar[0]
     UP, PA = np.meshgrid(up, upar, indexing="ij")
