@@ -616,6 +616,12 @@ struct Particles {
     DeviceArray<float> wd, wd2;
     bool has_wd = false;
 
+    // Species block extents from the multi-species mirror loader (contiguous
+    // per species, load order). Species-resolved diagnostics (Phase Q) index
+    // these; NOTE: the tile sort SCRAMBLES marker order, so per-species
+    // diagnostics require the FLAT path or a pre-sort snapshot cadence.
+    std::vector<long> sp_base, sp_cnt;
+
     // Weight-precision study (docs/WEIGHT_PRECISION.md): auxiliary accumulators
     // for df_wprec 1 (Kahan compensation) / 2 (FP64 reference, mirrored to wd
     // for the deposit). FLAT path only — the tile sort does not scatter these.
@@ -870,6 +876,8 @@ struct Particles {
             }
         }
         allocate_n(static_cast<std::size_t>(base));
+        sp_base.assign(bases.begin(), bases.end());
+        sp_cnt.assign(cnts.begin(), cnts.end());
 
         std::vector<DeviceArray<int>> doffs;
         doffs.reserve(nsp);

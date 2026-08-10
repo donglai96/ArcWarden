@@ -55,10 +55,13 @@ __device__ inline void bhat(const RunParams& rp, float xph, float yph,
 
 __global__ void k_fvhist(ParticleViews p, RunParams rp, float dxp, float dyp,
                          int nx, double* bins, int nreg, int npar, int nperp,
-                         float vmax) {
-    const long t = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (t >= p.n) return;
+                         float vmax, long base, long cnt,
+                         float y1, float y2) {
+    const long tid = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (tid >= cnt) return;
+    const long t = base + tid;
     const float x0 = p.x[t], y0 = p.y[t];
+    if (y0 < y1 || y0 >= y2) return;      // Phase Q y-window (wrap-layer split)
     float bx, by, bz;
     bhat(rp, x0 * dxp, y0 * dyp, bx, by, bz);
     const float ux = p.ux[t], uy = p.uy[t], uz = p.uz[t];
@@ -76,9 +79,10 @@ __global__ void k_fvhist(ParticleViews p, RunParams rp, float dxp, float dyp,
 
 __global__ void k_workledger(ParticleViews p, YeeViews v, RunParams rp,
                              double* wl, int nreg, int nwb, float vmax,
-                             float wdt) {
-    const long t = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (t >= p.n) return;
+                             float wdt, long base, long cnt) {
+    const long tid = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (tid >= cnt) return;
+    const long t = base + tid;
     const float x0 = p.x[t], y0 = p.y[t];
     const float Ex = yee::gather_stag(v.ex, v, x0, y0, 0.5f, 0.f);
     const float Ey = yee::gather_stag(v.ey, v, x0, y0, 0.f, 0.5f);
@@ -118,25 +122,33 @@ struct GapDiags {
     }
 
     // instantaneous f(vpar, vperp | region) snapshot -> file
+    // base < 0: all markers; else the [base, base+cnt) species block
+    // (Particles::sp_base/sp_cnt from the multi-species mirror loader)
     void fv_snapshot(Particles& p, const RunParams& rp, const Grid& g,
-                     cudaStream_t s, const char* fn) {
+                     cudaStream_t s, const char* fn,
+                     long base = -1, long cnt = -1,
+                     float y1 = -1e30f, float y2 = 1e30f) {
         fv.zero(s);
+        if (base < 0) { base = 0; cnt = (long)p.n; }
         constexpr int threads = 256;
-        const int blocks = (int)((p.n + threads - 1) / threads);
+        const int blocks = (int)((cnt + threads - 1) / threads);
         k_fvhist<<<blocks, threads, 0, s>>>(p.views(), rp, (float)g.dx,
                                             (float)g.dy, g.nx, fv.data(),
-                                            nreg, npar, nperp, vmax);
+                                            nreg, npar, nperp, vmax,
+                                            base, cnt, y1, y2);
         CUDA_CHECK(cudaPeekAtLastError());
         write_dev(fv, s, fn);
     }
 
     // accumulate one ledger sample representing wdt of physical time
     void wl_accum(Particles& p, YeeFields& f, const RunParams& rp, float wdt,
-                  cudaStream_t s) {
+                  cudaStream_t s, long base = -1, long cnt = -1) {
+        if (base < 0) { base = 0; cnt = (long)p.n; }
         constexpr int threads = 256;
-        const int blocks = (int)((p.n + threads - 1) / threads);
+        const int blocks = (int)((cnt + threads - 1) / threads);
         k_workledger<<<blocks, threads, 0, s>>>(p.views(), f.views(), rp,
-                                                wl.data(), nreg, nwb, vmax, wdt);
+                                                wl.data(), nreg, nwb, vmax,
+                                                wdt, base, cnt);
         CUDA_CHECK(cudaPeekAtLastError());
     }
 

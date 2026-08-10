@@ -129,6 +129,16 @@ int main(int argc, char** argv) {
     constexpr int   NREG = 8, NPAR = 160, NPERP = 80, NWB = 160;
     constexpr float VMAX = 0.6f;
     gapdiag::GapDiags gd(NREG, NPAR, NPERP, NWB, VMAX);
+    // Phase Q species-resolved diagnostics: valid ONLY on the flat path —
+    // the tile sort physically scrambles the species-contiguous blocks.
+    const bool sp_diag = rp.tile_sort <= 0 && d.species.size() > 1;
+    if (rp.tile_sort > 0 && d.species.size() > 1)
+        std::fprintf(stderr, "mirror2d: tile_sort ON -> species-resolved "
+                             "fv/wl DISABLED (blocks scrambled)\n");
+    std::vector<gapdiag::GapDiags> gds;
+    if (sp_diag)
+        for (std::size_t si = 0; si < d.species.size(); ++si)
+            gds.emplace_back(NREG, NPAR, NPERP, NWB, VMAX);
 
     const int jmid = g.ny / 2;             // axis row (y-hat center)
     // probes: OFFSETS from b0_xc (chirp2d convention; analysis tools share it)
@@ -198,9 +208,16 @@ int main(int argc, char** argv) {
     long n_wall0 = n0;
     for (long n = n0 + 1; n <= nsteps; ++n) {
         sim.step();
-        if (n % wl_acc == 0)
+        if (n % wl_acc == 0) {
             gd.wl_accum(sim.particles(), sim.fields(), rp,
                         (float)(rp.dt * wl_acc), sim.stream());
+            if (sp_diag)
+                for (std::size_t si = 0; si < gds.size(); ++si)
+                    gds[si].wl_accum(sim.particles(), sim.fields(), rp,
+                                     (float)(rp.dt * wl_acc), sim.stream(),
+                                     sim.particles().sp_base[si],
+                                     sim.particles().sp_cnt[si]);
+        }
         if (ckpt_every > 0 && n % ckpt_every == 0) {
             sim.stream().synchronize();
             const std::string cp = ckpt_seq
@@ -265,10 +282,31 @@ int main(int argc, char** argv) {
         if (n % fv_every == 0) {
             std::snprintf(fn, sizeof fn, "%s/fv_%06ld.bin", outdir.c_str(), n / fv_every);
             gd.fv_snapshot(sim.particles(), rp, g, sim.stream(), fn);
+            if (sp_diag)
+                for (std::size_t si = 0; si < gds.size(); ++si) {
+                    std::snprintf(fn, sizeof fn, "%s/fv_s%zu_%06ld.bin",
+                                  outdir.c_str(), si, n / fv_every);
+                    gds[si].fv_snapshot(sim.particles(), rp, g, sim.stream(),
+                                        fn, sim.particles().sp_base[si],
+                                        sim.particles().sp_cnt[si]);
+                    // y-interior twin (wrap-layer split gate): central 60% in y
+                    std::snprintf(fn, sizeof fn, "%s/fvyi_s%zu_%06ld.bin",
+                                  outdir.c_str(), si, n / fv_every);
+                    gds[si].fv_snapshot(sim.particles(), rp, g, sim.stream(),
+                                        fn, sim.particles().sp_base[si],
+                                        sim.particles().sp_cnt[si],
+                                        0.2f * g.ny, 0.8f * g.ny);
+                }
         }
         if (n % wl_every == 0) {
             std::snprintf(fn, sizeof fn, "%s/wl_%06ld.bin", outdir.c_str(), n / wl_every);
             gd.wl_write_reset(sim.stream(), fn);
+            if (sp_diag)
+                for (std::size_t si = 0; si < gds.size(); ++si) {
+                    std::snprintf(fn, sizeof fn, "%s/wl_s%zu_%06ld.bin",
+                                  outdir.c_str(), si, n / wl_every);
+                    gds[si].wl_write_reset(sim.stream(), fn);
+                }
         }
         if (n % f2d_every == 0) {
             std::snprintf(fn, sizeof fn, "%s/f2d_%06ld.bin", outdir.c_str(), n / f2d_every);

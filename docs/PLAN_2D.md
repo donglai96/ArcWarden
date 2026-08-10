@@ -1,5 +1,51 @@
 # PLAN_2D v2 — Lu 尺度最大 full-2D mirror 旗舰(2026-08-08 用户修订版)
 
+## v3 改判 + Phase Q/S/E/F/G(2026-08-09 用户全面审查,CANONICAL)
+
+**改判**:Stage-2 = 工程 PASS / 物理源 gate FAIL(0.45–0.55 带 γ=3.6e-3 —
+gap 区一开始就强正增长,plateau damping ~1e-3 打不过;finite-ky 0.99 =
+512 模 full-f 噪声本底,不证明 WNA;±609 probe 在 absorber 内)。
+**Stage-3 = broadband flood FAIL**(W10=0.614 ≫ 0.20,早晚期同为 0.614,
+y-mid/y-avg 皆宽带;WB 峰 t~1260 后衰减 = 一次宽带增长-饱和-衰减,非
+离散 element)。flag_s3 → build/flag_flood_v0 留档,不再续跑。
+
+**七项缺陷(用户审查)**:
+1. **横向网格不合格**:chorus ρ⊥/dy=1.97、pool 1.07;test_mirror2d 证明
+   ρ/dy≈1 在 ~2 bounce 内把 T⊥ 人工加热 ~4.6× → pool 变成假波源。
+   修正:ny 512→1024(dy 0.3495),ppc 减半(chorus 100 / pool 55)→
+   总 markers 不变、每 x-column 统计不变、chorus ρ/dy=3.95、pool 2.15。
+2. Stage-2 gate 无阈值无退出码;UB "最大增长" 在 absorber 内 probe。
+3. **source 全带同时点火**:A=3.5(T比4.5)线性驱动到 ω≲0.78,2D 海量
+   (kx,ky) 模同时起飞 → flood。修正方向:保持 T比 4.5(保频率覆盖),
+   **降 nh 而非降 A**:nh ∈ {0.0025, 0.005, 0.0075} 短扫(t≤1000)。
+4. **pool 非被动**:cone_b=2.125 → α_lc≈43°(真实 L~5 是 3.8°,
+   B_atm/B_eq~230)→ trapped-only 大自由能。必须 chorus-only / pool-only /
+   combined 三分离;pool-only 若在 0.5–0.7 增长则 combined 的 UB/gap
+   不可归因 plateau。
+5. **shell 补分不完整**:旗舰只装了 χf0,把缺失密度当标量塞进 cold fluid
+   → 丢了 warm complement 的压力和动理学响应。正确:χ 与 (1−χ) 都是
+   kinetic(shell 高 ppc importance,complement 低 ppc),cold_nc =
+   1−nh−nr = 0.978。
+6. **hybrid 边界改变分布**:持续衰减 absorber 内粒子 u⊥ → 改 source/pool
+   pitch-angle。主实验 **x=damping**(吸场+镜面反射),hybrid 只作对照。
+7. **runway 缩水**:absorber 各占 78 → 有效区 1175(88%)。0.6RE 主张
+   要求 absorber 加在物理区外:Lx=1487.2,nx=4576。
+
+**Phase Q(数值关闭)**:4096×1024,dx 0.325 dy 0.3495 dt 0.15,ppc
+100/55,x=damping,species-resolved T∥/T⊥/f(v)/J·E 输出;无自由能 quiet
+control:全 species ρ/dy≥2、T 漂移 <2–5%、无增长的 finite-ky whistler、
+y-wrap 层与内部分开报告。
+**Phase S(源分离)**:4 短臂 t400–1000:isotropic quiet / chorus-only /
+pool-only / chorus+pool;测 γ(ω,kx,ky)、W10、δB/B0、connected ridge;
+finite-ky 功率必须落在 whistler 色散上且与传播波包相干。
+**Phase E(clear element)**:T比 4.5 固定,扫 nh {0.0025,0.005,0.0075},
+gate:W10<0.20 且 eq/5°/7.5° 三站同一条带正确传播延迟的 rising ridge。
+**Phase F(正式大盒)**:4576×1024,Lx=1487.2,absorber 在 0.6RE 物理区
+外,ckpt 10000–20000。
+**Phase G(gap 因果)**:Δf(0.08–0.10c) 先于 P_E∥>0 先于 0.5 功率降;
+species-resolved pool plateau;barrier 功率从有到降;LB element 仍在;
+UB 非 pool 初始线性驱动;gap 多纬度一致;对照无 gap。
+
 v1(c626f5f)的阶梯框架被用户修订取代:**第一主线 = 尽可能大的 full-2D
 mirror simulation,t=0 起自洽 kinetic resonant electrons,不预置 plateau,
 让 WNA、E∥、plateau、chirping、gap 在同一个长盒子里自然演化。**
