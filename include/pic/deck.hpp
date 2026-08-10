@@ -178,6 +178,11 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "rho")   sp.lc_rho = dv();
             else if (key == "taud")  sp.taud = dv();     // δf drift injection
             else if (key == "wdnoise") sp.wdnoise = dv();  // δf initial wd noise
+            // PLAN_2D χ_r shell: shell = v1 v2 dv (equatorial |v∥| window)
+            else if (key == "shell") { auto v = detail::deck_vec3(val);
+                                       sp.shell_v1 = v[0]; sp.shell_v2 = v[1];
+                                       sp.shell_dv = v[2]; }
+            else if (key == "shell_invert") sp.shell_invert = static_cast<int>(iv());
         } else if (section == "field") {
             if      (key == "model")    { d.darwin = (val == "darwin"); d.yee = (val == "yee"); }
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();

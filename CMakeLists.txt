@@ -228,6 +228,11 @@ target_include_directories(test_rsm_phaseload PRIVATE ${CMAKE_SOURCE_DIR}/includ
 target_link_libraries(test_rsm_phaseload PRIVATE CUDA::cudart)
 add_test(NAME rsm_phaseload COMMAND test_rsm_phaseload)
 
+add_executable(test_shell_split tests/test_shell_split.cu)
+target_include_directories(test_shell_split PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_shell_split PRIVATE CUDA::cudart)
+add_test(NAME shell_split COMMAND test_shell_split)
+
 # RSM gate V2: spectral m=1 cold oblique dispersion/polarization/E_par vs
 # Stix (same solver as test_cold_fluid_oblique = the R5 cross-check).
 add_executable(test_rsm_cold_dispersion tests/test_rsm_cold_dispersion.cu)

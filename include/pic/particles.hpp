@@ -432,13 +432,30 @@ __global__ void species_init_kernel(ParticleViews p, Grid g, SpeciesInit sp) {
 constexpr int kPkNB = 96;    // b rows
 constexpr int kPkNQ = 64;    // quantile cols
 
+// PLAN_2D χ_r shell window (see Species::shell_v1 doc): raised-cosine on the
+// equatorial parallel-speed invariant. h = dv/2; a v1 <= 0 window has no
+// lower cut (pure high-speed roll-off at v2).
+__device__ inline double shell_chi(double v, double v1, double v2, double dv) {
+    const double h = 0.5 * dv;
+    double chi = 1.0;
+    if (v1 > 0.0) {
+        if (v <= v1 - h) chi = 0.0;
+        else if (v < v1 + h) chi = 0.5 * (1.0 - cos(M_PI * (v - v1 + h) / dv));
+    }
+    if (v >= v2 + h) chi = 0.0;
+    else if (v > v2 - h) chi *= 0.5 * (1.0 + cos(M_PI * (v - v2 + h) / dv));
+    return chi;
+}
+
 __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
                                    const int* __restrict__ off,
                                    double uth_par, double uth_perp_eq,
                                    float weight, unsigned long seed,
                                    int dist, double lc_rho, double lc_kappa,
                                    double cone_b, long base, long cnt,
-                                   const float* __restrict__ pk_tab) {
+                                   const float* __restrict__ pk_tab,
+                                   double shell_v1, double shell_v2,
+                                   double shell_dv, int shell_invert) {
     // multi-species: markers [base, base+cnt) belong to this species; off[]
     // holds ABSOLUTE offsets (off[0] = base). RNG streams use the absolute
     // index t, so the single-species path (base = 0) is bit-identical to
@@ -558,12 +575,20 @@ __global__ void mirror_init_kernel(ParticleViews p, Grid g, RunParams rp,
         y = (float)g.ny * (float)rng_uniform(static_cast<int>(t), 5, seed);
         if (y >= (float)g.ny) y = nextafterf((float)g.ny, 0.f);
     }
+    float wgt = weight;
+    if (shell_v2 > 0.0) {
+        // equatorial parallel speed from the (E,μ) invariants (b >= 1):
+        // v∥eq² = u∥² + u⊥²(1 − 1/b)
+        const double veq = sqrt(upar * upar + uperp * uperp * (1.0 - 1.0 / b));
+        const double chi = shell_chi(veq, shell_v1, shell_v2, shell_dv);
+        wgt = static_cast<float>(wgt * (shell_invert ? 1.0 - chi : chi));
+    }
     p.x[t]    = x;
     p.y[t]    = y;
     p.ux[t]   = static_cast<float>(upar);
     p.uy[t]   = static_cast<float>(uperp * cos(2.0 * M_PI * r4));
     p.uz[t]   = static_cast<float>(uperp * sin(2.0 * M_PI * r4));
-    p.w[t]    = weight;
+    p.w[t]    = wgt;
     p.cell[t] = g.idx(c, (int)y);
 }
 
@@ -731,6 +756,14 @@ struct Particles {
                 throw std::runtime_error("initialize_mirror: prodkappa needs kappa_par > 1.5 and cone_b > 1");
             if (q.kappa_v > 0.0)
                 throw std::runtime_error("initialize_mirror: kappa_v not supported by the mirror loader");
+            if (q.shell_v2 > 0.0) {
+                if (q.shell_dv <= 0.0 || q.shell_v2 - q.shell_v1 < q.shell_dv)
+                    throw std::runtime_error("initialize_mirror: shell needs dv > 0 "
+                                             "and v2 - v1 >= dv (non-degenerate window)");
+                if (q.deltaf)
+                    throw std::runtime_error("initialize_mirror: shell + deltaf unsupported "
+                                             "(wd reference f0 lacks the χ_r factor)");
+            }
             const double Tpa = q.uth[0] * q.uth[0], Tpe = q.uth[1] * q.uth[1];
 
             // dist = 3: Gamma-mixture quadrature. G ~ Gamma(a = κ−1/2) on a
@@ -861,7 +894,8 @@ struct Particles {
             detail::mirror_init_kernel<<<blocks, threads, 0, s>>>(
                 views(), g, rp, doffs.back().data(), q.uth[0], q.uth[1],
                 static_cast<float>(q.density * g.dx * g.dy / q.ppc), rp.rng_seed,
-                q.dist, q.lc_rho, q.lc_kappa, q.cone_b, bases[si], cnts[si], tab);
+                q.dist, q.lc_rho, q.lc_kappa, q.cone_b, bases[si], cnts[si], tab,
+                q.shell_v1, q.shell_v2, q.shell_dv, q.shell_invert);
             CUDA_CHECK(cudaPeekAtLastError());
         }
         CUDA_CHECK(cudaStreamSynchronize(s));   // doffs/dtabs are scoped to this call

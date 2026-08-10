@@ -72,6 +72,22 @@ struct Species {
                                         // are not absorbed at boundaries) —
                                         // the δf analog of full-f shot noise,
                                         // level ≈ wdnoise × full-f floor.
+    // PLAN_2D χ_r shell split ([species] shell = v1 v2 dv): the marker weight
+    // is multiplied by a raised-cosine window χ_r on the EQUATORIAL parallel
+    // speed invariant |v∥eq| = sqrt(u∥² + u⊥²(1−1/b)),
+    //   χ_r = 0 for |v| ≤ v1−dv/2, cosine ramp to 1 over [v1−dv/2, v1+dv/2],
+    //   1 inside, mirrored falling ramp at v2, 0 beyond v2+dv/2.
+    // The marker DISTRIBUTION stays the full local f0 (E,μ) load — only the
+    // carried weight is χ_r f0, so kinetic(χ f0) + fluid((1−χ)f0 via cold_nc)
+    // sums to f0 EXACTLY with zero per-cell count bookkeeping. Deposited
+    // kinetic density = density·⟨χ_r⟩; the loader reports the measured shell
+    // fraction so the deck's cold_nc can absorb the complement (stage-1 gate).
+    // shell_invert = 1 loads the complement weight (1−χ_r) — test/lin-response
+    // use. Mirror loader only.
+    double      shell_v1     = 0.0;     // window lower edge center (c units)
+    double      shell_v2     = 0.0;     // window upper edge center; 0 = off
+    double      shell_dv     = 0.02;    // full edge width (raised cosine)
+    int         shell_invert = 0;       // 1: weight = (1−χ_r)
 };
 
 using SpeciesList = std::vector<Species>;
