@@ -38,6 +38,23 @@ y-wrap 层与内部分开报告。
 **Phase S(源分离)**:4 短臂 t400–1000:isotropic quiet / chorus-only /
 pool-only / chorus+pool;测 γ(ω,kx,ky)、W10、δB/B0、connected ridge;
 finite-ky 功率必须落在 whistler 色散上且与传播波包相干。
+
+### Phase Q 关闭记录(2026-08-11 用户裁决)
+
+**qa_pool1 = Phase Q 基础数值正式 PASS(非勉强)**:t1000 全程,chorus
+(−0.43%,−0.19%)、unsplit pool(+0.20%,+0.20%),whistler-filtered ratio
+1.275<1.5,y-wrap/边界/NaN/密度沉积(10481.3=10481.3)全过 → **网格、
+mirror geometry、damping boundary、基础 full-f solver 无问题**。
+分裂诊断链:q_quiet comp(ppc15)−16.9% → qb_comp30 −8.08%(精确减半,
+∝1/ppc_comp = 统计签名)→ B40 停在 t415(partial 保留,不再是关键路径)。
+**裁决:unsplit pool 升为生产方案**(55×f_shell=55×0.6825≈38 有效
+ppc/cell 在共振区 ≈ 原 shell 的 40,且无两组分漂移);**shell split 降级
+为统计收敛对照,非主实验**。尚未验证:真实 prodkappa+loss-cone pool 的
+被动稳定性、chorus generation —— 即 Phase S 的对象。
+**Phase S 臂(修订):unsplit chorus-only / unsplit 真实 prodkappa
+pool-only / chorus + unsplit 真实 pool**。因果逻辑:pool-only 出
+upper-band → pool 自己是波源;pool-only 安静而 combined 出 gap → 才可
+谈 resonant population 对 chorus 的加工。
 **Phase E(clear element)**:T比 4.5 固定,扫 nh {0.0025,0.005,0.0075},
 gate:W10<0.20 且 eq/5°/7.5° 三站同一条带正确传播延迟的 rising ridge。
 **Phase F(正式大盒)**:4576×1024,Lx=1487.2,absorber 在 0.6RE 物理区
