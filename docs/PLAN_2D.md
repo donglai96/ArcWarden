@@ -1,5 +1,44 @@
 # PLAN_2D v2 — Lu 尺度最大 full-2D mirror 旗舰(2026-08-08 用户修订版)
 
+## v4 δf 转向(2026-08-11 用户决定,CANONICAL:"现有条件下只能做 δf")
+
+**理由**:full-f 2D 在 32GB 可行 ppc(100–155)下噪声地板 δB/B0≈1.3e-3,
+与信号(元素 ~5e-3、plateau 几个百分点)同量级 —— Phase S t1000 三 gate
+全卡边缘线就是这个地板的直接后果。δf 同 marker 数噪声低 2–3 个量级,
+是唯一可行的测量平台;Tao/Lu(DAWN)先例证明 δf 能做 chorus 生成。
+**Gap 假设空间(2026-08-11 讨论,记录)**:H1 无记忆(走廊停止 /
+vg=vph / 环境 f₀ 常驻 Landau 阻尼 / 双源两带;观测的无处不在+即刻出现
+偏向它)vs H2 记忆(plateau 雕刻;PLAN_2D §5 判据 5–6 按它写)。
+δf(τ_D=0、边界保权重)两个都能表示;**τ_D>0 对照 = H1/H2 判决实验**
+(gap 存活→H1,消失→H2)。"δf 做不出 gap"未被证明;Lu/Tao 无 gap 用
+几何(1D 平行 E∥=0)+ f₀(A=5 走廊开)即可解释。
+
+**引擎现状(2026-08-11 核查)**:单 δf species + cold fluid(多 species
+δf 被 chirp2d guard 拒绝;deposit 全局 rp.deltaf);f0 = (E,μ)-映射
+biMax(df_dist=0)或 losscone 减法(=1,cone 奇异 cap −10/T₁ 教训);
+conecut/prodkappa/χ-shell 无 ∂lnf₀;mirror2d 驱动未接 δf;fv/wl 诊断
+用 p.w,δf 版需要 w·wd 因子。→ 三族群架构在 δf 下坍缩为
+**cold fluid + 一个 δf 热 species**(共振响应全在 wd 里;"pool"归入
+f₀ 形状选择,源分离 = 不同 f₀ 的分开 run)。
+
+**阶段(δf 版,替代 Q/S/E 执行序;F/G 目标不变):**
+- **D0 工程**:mirror2d 接 δf(enable_deltaf、wdnoise、单热 species+
+  cold fluid guard、x=damping only [反射保 wd;hybrid u⊥ 层破坏权重
+  方程假设]、**taud=0 默认强制**[gap 记忆]);fv/wl 加 wd 模式
+  (δf 直方图 = Σw·wd);wd rms/max 每 dump 监控;2D δf hold 冒烟
+  (test_deltaf_mirror_hold 的 ny>1 版)。
+- **D1 δf quiet gate**:各向同性 f₀,wd 保持 ~wdnoise、δB 地板实测
+  (预期 ≪1.3e-3)、无自加热;q_gate 阈值沿用。
+- **D2 源 run**:各向异性 biMax δf(T⊥/T∥=4.5 锚),4096×1024,
+  **ppc 可降到 30–60**(δf 不靠 ppc 压噪声)→ 更快/更大盒;gate =
+  Phase E 判据(W10<0.20 + 三站传播 ridge)。
+- **D3 终止/0.5 行为**:wl ledger(Landau vs cyclotron 分账)+ corridor
+  端点逐元素测;
+- **D4 两带/gap + H1/H2 判决**:τ_D 对照臂;§5 判据按 H1/H2 双向判读
+  (gap 与首元素同现且无 Δf 先行 = H1 判胜,非 FAIL)。
+full-f 遗产:Phase Q 数值关闭结论继续有效(网格/边界/solver 已清白);
+s_pool t3000 + s_chorus/s_both t1000 保留为 full-f 交叉参照臂。
+
 ## v3 改判 + Phase Q/S/E/F/G(2026-08-09 用户全面审查,CANONICAL)
 
 **改判**:Stage-2 = 工程 PASS / 物理源 gate FAIL(0.45–0.55 带 γ=3.6e-3 —
