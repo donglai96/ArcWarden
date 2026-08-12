@@ -56,9 +56,12 @@ engine, with every physics setup expressed as a runtime input deck.
 \arcw{} passes a three-level validation ladder: textbook verification
 (dispersion, growth rates, conservation), reproduction of the published
 nonlinear trapping simulations of An et al.\ [PRL 122, 045101 (2019)],
-and, as an advanced capability demonstration, self-consistent generation
+and, as advanced capability demonstrations, self-consistent generation
 of coherent whistler-mode waves with rising-tone frequency chirping in an
-inhomogeneous magnetic field, following Tao et al.\ [GRL 44, 3441 (2017)].
+inhomogeneous magnetic field --- both triggered, following Tao et al.\
+[GRL 44, 3441 (2017)], and spontaneous from loss-cone free energy in a
+dipole geometry, reproducing the whistler regime taxonomy of Chen et al.\
+[Phys.\ Plasmas 33, 072105 (2026)].
 \end{abstract}
 
 \tableofcontents
@@ -127,7 +130,9 @@ paper:
   trapping simulations of An et al.~\cite{an2019} from their table of
   parameters; and self-consistent generation of coherent whistler waves
   with rising-tone frequency chirping in an inhomogeneous magnetic
-  field, following the setup of Tao et al.~\cite{tao2017}.
+  field --- triggered, following the setup of Tao et al.~\cite{tao2017},
+  and spontaneous, reproducing the whistler regime taxonomy of Chen et
+  al.~\cite{chen2026} in a compressed dipole field.
 \end{enumerate}
 
 \arcw{} does not aim to replace massively parallel general-purpose PIC
@@ -658,8 +663,8 @@ capability & implementation & demonstrated application\\
 electrostatic & spectral Poisson & two-stream, bump-on-tail (\S\ref{sec:verify})\\
 Darwin EM & spectral, moment-closed \eqref{eq:et} & whistler pump / An et al.\ (\S\ref{sec:demo-an})\\
 full EM & Yee + Esirkepov & anisotropy whistlers + EAW (\S\ref{sec:headtohead})\\
-inhomogeneous $B_0$ & prescribed $B_0(h)$: parabolic, dipole & mirror-trapped electrons (\S\ref{sec:demo-chirp})\\
-anisotropic / loss-cone $f_0$ & configurable loader; $(E,\mu)$ mirror map & chorus excitation (\S\ref{sec:demo-chirp})\\
+inhomogeneous $B_0$ & prescribed $B_0(h)$: parabolic, dipole & mirror/dipole chorus (\S\ref{sec:demo-chirp}, \S\ref{sec:demo-chen})\\
+anisotropic / loss-cone $f_0$ & configurable loader; $(E,\mu)$ mirror map & chorus excitation (\S\ref{sec:demo-chirp}, \S\ref{sec:demo-chen})\\
 $\delta f$ species & weight evolution about analytic $f_0$ & low-noise growth, seeded runs\\
 hybrid kinetic--fluid & linearized cold fluid + hot PIC & 1D chorus model (\S\ref{sec:model-hybrid})\\
 absorbing field boundary & Umeda masked layers \cite{umeda2001} & open field lines (\S\ref{sec:demo-chirp})\\
@@ -766,6 +771,52 @@ that accompanies the frequency sweep. \tocheck{final figure
 selection/cropping; consider adding the $B_0(h)$ profile +
 loss-cone $f_0$ as a setup panel}}
 \label{fig:chirp}
+\end{figure}
+
+\subsection{Spontaneous chorus in a dipole field (Chen et al.\ 2026)}
+\label{sec:demo-chen}
+A second, independent chirping benchmark removes the antenna entirely.
+Chen et al.~\cite{chen2026}, using the gcPIC-$\delta f$ code --- a third
+code lineage, distinct from both UPIC and DAWN --- showed that at fixed
+$\omega_{pe}/\Omega_e$ three whistler regimes (incoherent band, discrete
+rising-tone chorus elements, hiss-like emission) are selected by the hot
+loss-cone population's density and anisotropy alone, with the waves
+growing spontaneously from noise in a compressed dipole field. \arcw{}
+reproduces the full regime taxonomy of their Fig.~1 from published
+parameters (decks \texttt{chen2026\_case\{1,2,3\}.ini}: dipole
+$B_0(\lambda)$, loss-cone mirror equilibrium, absorbing boundaries ---
+every geometry module of Table~\ref{tab:modules} at once), and the
+saturation amplitudes reproduce quantitatively where the paper reports
+them off-equator.
+
+Figure~\ref{fig:chen2026} shows the Case~II demonstration run at
+GPU-limit resolution (425M markers, equatorial ppc $=1.1\times10^5$,
+3.5~h on the same RTX~5090): the shot-noise floor drops to
+$\delta B/B_0\sim5\times10^{-5}$, low enough for a textbook quiet linear
+phase (measured $\gamma=2.6\times10^{-3}\,\Omega_e$), after which
+discrete rising-tone elements sweep $0.2\to0.6\,\Omega_e$ with subpacket
+structure, saturating at $\delta B/B_0=0.026$ off-equator
+($\lambda=-10^\circ$) against the published $0.027$ at
+$\lambda=10$--$15^\circ$. No antenna, no seed field: the elements are
+generated entirely self-consistently from the loss-cone free energy in
+the inhomogeneous field. One caveat, stated plainly: onset times are
+earlier than published and the elements recur, both of which track the
+initial noise level (a full-$f$ load cannot reach the quoted
+$10^{-5}$ seed level of a $\delta f$ code); the regime taxonomy and
+saturation amplitudes are insensitive to this. As with
+Section~\ref{sec:demo-chirp}, mechanism questions are out of scope here.
+For the time-to-science frame: the 323-run parameter scan of their
+Fig.~4 costs an overnight at \arcw{} throughput.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{figs/chen2026_giant_final.png}
+\caption{Spontaneous chorus, Case~II of Chen et al.~\cite{chen2026} at
+425M markers: probe waveform (a), wave envelope with the measured linear
+growth rate (b), dynamic spectrum showing repetitive discrete rising
+tones $0.2\to0.6\,\Omega_e$ with subpackets (c), and $\delta B(h,t)$
+along the field line (d). No antenna or seed field is applied.}
+\label{fig:chen2026}
 \end{figure}
 
 %=====================================================================
