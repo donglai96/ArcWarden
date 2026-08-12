@@ -75,6 +75,42 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "mirror2d: 2D CFL violated\n");
         return 1;
     }
+    // PLAN_2D v4 (D0): delta-f mode — exactly ONE kinetic species (rep =
+    // deltaf) + cold fluid; f0 must have an implemented dlnf0 (bimax /
+    // losscone); taud FORBIDDEN (gap-memory ruling: no weight relaxation);
+    // x = damping only (specular reflection keeps wd; hybrid's u_perp layer
+    // modifies u outside the wave-force weight equation).
+    bool anydf = false;
+    for (const auto& q : d.species) anydf |= q.deltaf;
+    if (anydf) {
+        const Species& q = d.species[0];
+        if (d.species.size() != 1) {
+            std::fprintf(stderr, "mirror2d: delta-f needs exactly one kinetic "
+                                 "species (+ cold fluid)\n");
+            return 1;
+        }
+        if (q.dist >= 2) {
+            std::fprintf(stderr, "mirror2d: no delta-f dlnf0 for conecut/"
+                                 "prodkappa (bimax|losscone only)\n");
+            return 1;
+        }
+        if (q.taud != 0.0) {
+            std::fprintf(stderr, "mirror2d: taud forbidden in delta-f runs "
+                                 "(PLAN_2D v4 gap-memory ruling)\n");
+            return 1;
+        }
+        if (rp.bnd_x != 1) {
+            std::fprintf(stderr, "mirror2d: delta-f requires x = damping\n");
+            return 1;
+        }
+        rp.deltaf   = 1;
+        rp.df_tpar  = q.uth[0] * q.uth[0];
+        rp.df_tperp = q.uth[1] * q.uth[1];
+        rp.df_taud  = 0.0;
+        rp.df_dist  = q.dist;
+        rp.df_rho   = q.lc_rho;
+        rp.df_kappa = q.lc_kappa;
+    }
     // design rules from test_mirror2d: every species must resolve its
     // gyroradius on dy (rule 1); warn if a species carries high beta (rule 2)
     for (const auto& q : d.species) {
@@ -99,7 +135,46 @@ int main(int argc, char** argv) {
 
     MaxwellSimulation sim(g, rp);
     sim.particles().initialize_mirror(d.species, g, rp, sim.stream());
+    if (rp.deltaf) sim.particles().enable_deltaf(sim.stream());
     sim.stream().synchronize();
+    if (rp.deltaf && d.species[0].wdnoise > 0.0) {
+        // persistent delta-f sampling noise: wd(0) random, rms = wdnoise
+        std::vector<float> w0(sim.particles().n);
+        std::srand((unsigned)rp.rng_seed + 7);
+        const float A = (float)(d.species[0].wdnoise * std::sqrt(3.0));
+        for (auto& v : w0) v = A * (2.f * std::rand() / (float)RAND_MAX - 1.f);
+        CUDA_CHECK(cudaMemcpy(sim.particles().wd.data(), w0.data(),
+                              w0.size() * 4, cudaMemcpyHostToDevice));
+    }
+    if (d.bnoise > 0.0) {
+        // band-limited whistler-band seed on transverse B, kx in [0.2, 1.5],
+        // UNIFORM in y (dBy/dy = 0 keeps div B = 0 in 2D). A delta-f run
+        // with wdnoise = 0 is exactly quiet — this is its ignition seed.
+        std::vector<float> nb(g.real_size(), 0.f), nz(g.real_size(), 0.f);
+        std::srand((unsigned)rp.rng_seed);
+        const double Lxp = g.nx * g.dx;
+        const int m1 = std::max(1, (int)std::ceil(0.2 * Lxp / (2.0 * M_PI)));
+        const int m2 = std::min(g.nx / 2 - 1, (int)(1.5 * Lxp / (2.0 * M_PI)));
+        const double a = d.bnoise * rp.wce / std::sqrt((double)(m2 - m1 + 1));
+        std::vector<float> rowy(g.nx, 0.f), rowz(g.nx, 0.f);
+        for (int m = m1; m <= m2; ++m) {
+            const double ph1 = 2.0 * M_PI * std::rand() / (double)RAND_MAX;
+            const double ph2 = 2.0 * M_PI * std::rand() / (double)RAND_MAX;
+            for (int i = 0; i < g.nx; ++i) {
+                const double kx = 2.0 * M_PI * m * i / (double)g.nx;
+                rowy[i] += (float)(a * std::cos(kx + ph1));
+                rowz[i] += (float)(a * std::cos(kx + ph2));
+            }
+        }
+        for (int j = 0; j < g.ny; ++j) {
+            std::copy(rowy.begin(), rowy.end(), nb.begin() + (std::size_t)j * g.nx);
+            std::copy(rowz.begin(), rowz.end(), nz.begin() + (std::size_t)j * g.nx);
+        }
+        CUDA_CHECK(cudaMemcpy(sim.fields().by_.data(), nb.data(), nb.size() * 4,
+                              cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(sim.fields().bz_.data(), nz.data(), nz.size() * 4,
+                              cudaMemcpyHostToDevice));
+    }
 
     // chi_r shell report: measured kinetic fraction per species (sum w /
     // (density*dx*dy/ppc * nloaded)) — the deck's cold_nc must absorb the
@@ -173,19 +248,19 @@ int main(int argc, char** argv) {
     std::FILE* fpb = std::fopen((outdir + "/probe.bin").c_str(), resume ? "ab" : "wb");
     std::FILE* fpe = std::fopen((outdir + "/probe_e.bin").c_str(), resume ? "ab" : "wb");
     std::FILE* fen = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
-    if (!resume) std::fprintf(fen, "step,time,WE,WB\n");
+    if (!resume) std::fprintf(fen, "step,time,WE,WB,wd_sum,wd_rms,wd_max\n");
     {   std::FILE* fm = std::fopen((outdir + "/meta.txt").c_str(), "w");
         std::fprintf(fm, "nx %d\nny %d\ndx %.9g\ndy %.9g\ndt %.9g\nnsteps %ld\n"
                          "bline_every %d\nbline_ncomp 5\nycol 1\nprobe_every %d\n"
                          "fv_every %d\nwl_every %d\nf2d_every %d\nwl_acc %d\n"
                          "nreg %d\nnpar %d\nnperp %d\nnwb %d\nvmax %.9g\n"
                          "nprobe %d\nnsp %d\nwce %.9g\nb0_a %.9g\nb0_xc %.9g\n"
-                         "cold_nc %.9g\nb0_yc %.9g\nbnd_x %d\nnmarkers %zu\n",
+                         "cold_nc %.9g\nb0_yc %.9g\nbnd_x %d\ndeltaf %d\nnmarkers %zu\n",
                      g.nx, g.ny, g.dx, g.dy, rp.dt, rp.nsteps,
                      bline_every, probe_every, fv_every, wl_every, f2d_every,
                      wl_acc, NREG, NPAR, NPERP, NWB, (double)VMAX,
                      nprobe, (int)d.species.size(), rp.B0[0], rp.b0_a,
-                     rp.b0_xc, rp.cold_nc, rp.b0_yc, rp.bnd_x, sim.particles().n);
+                     rp.b0_xc, rp.cold_nc, rp.b0_yc, rp.bnd_x, rp.deltaf, sim.particles().n);
         for (const auto& q : d.species) {
             std::fprintf(fm, "species %s density %.9g ppc %d uth %.9g %.9g %.9g "
                              "dist %d shell %.9g %.9g %.9g %d\n",
@@ -322,7 +397,9 @@ int main(int argc, char** argv) {
         }
         if (n % 2000 == 0) {
             const auto e = sim.field_energy();
-            std::fprintf(fen, "%ld,%.6g,%.9e,%.9e\n", n, n * rp.dt, e.we, e.wb);
+            const auto wdw = sim.wd_stats();
+            std::fprintf(fen, "%ld,%.6g,%.9e,%.9e,%.6g,%.6g,%.6g\n",
+                         n, n * rp.dt, e.we, e.wb, wdw.sum, wdw.rms, wdw.max);
             std::fflush(fen);
             if (n % 20000 == 0) {
                 const double secs = std::chrono::duration<double>(

@@ -932,6 +932,23 @@ struct Particles {
     // TiledBinnedDeposit kernel consumes. Reads the current cell[] (set by
     // initialize/migrate), so it must run after positions are settled and before
     // deposit. Re-allocates only when the tile geometry or particle count changes.
+
+// Tile histograms use ntiles*4 B of dynamic shared memory; past the default
+// 48 KB (ntiles > 12288, e.g. 4096x1024 cells at 16x16 tiles = 16384) the
+// launch fails with cudaErrorInvalidValue unless the per-kernel limit is
+// raised. Opt in once per kernel, up to the device cap.
+inline void tile_shmem_optin(const void* kernel, std::size_t shbytes) {
+    if (shbytes <= 48 * 1024) return;
+    static int cap = [] { int v = 0;
+        cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
+        return v; }();
+    if (shbytes > static_cast<std::size_t>(cap))
+        throw std::runtime_error("tile sort: ntiles shared histogram exceeds "
+                                 "device shared-memory cap — use larger tiles");
+    CUDA_CHECK(cudaFuncSetAttribute(kernel,
+        cudaFuncAttributeMaxDynamicSharedMemorySize, (int)shbytes));
+}
+
     void build_tile_bins(const Grid& g, int tx, int ty, cudaStream_t s) {
         if (n == 0) return;
         const int ntx    = (g.nx + tx - 1) / tx;
@@ -956,6 +973,7 @@ struct Particles {
         const int blocks = (maxb < 4 * sm) ? maxb : 4 * sm;
         const std::size_t shbytes = static_cast<std::size_t>(ntiles) * sizeof(int);
 
+        tile_shmem_optin((const void*)detail::bin_histogram_kernel<>, shbytes);
         detail::bin_histogram_kernel<><<<blocks, threads, shbytes, s>>>(
             views(), bin_count.view(), g.nx, tx, ty, ntx, ntiles);
         CUDA_CHECK(cudaPeekAtLastError());
@@ -967,6 +985,7 @@ struct Particles {
             ntiles, static_cast<int>(n));
         CUDA_CHECK(cudaPeekAtLastError());
 
+        tile_shmem_optin((const void*)detail::bin_scatter_kernel<>, shbytes);
         detail::bin_scatter_kernel<><<<blocks, threads, shbytes, s>>>(
             views(), bin_cursor.view(), bin_idx.view(), g.nx, tx, ty, ntx, ntiles);
         CUDA_CHECK(cudaPeekAtLastError());
@@ -1007,6 +1026,7 @@ struct Particles {
         const int blocks = (maxb < 4 * sm) ? maxb : 4 * sm;
         const std::size_t shbytes = static_cast<std::size_t>(ntiles) * sizeof(int);
 
+        tile_shmem_optin((const void*)detail::bin_histogram_kernel<>, shbytes);
         detail::bin_histogram_kernel<><<<blocks, threads, shbytes, s>>>(
             views(), bin_count.view(), g.nx, tx, ty, ntx, ntiles);
         CUDA_CHECK(cudaPeekAtLastError());
@@ -1014,6 +1034,7 @@ struct Particles {
         detail::bin_scan_kernel<><<<1, scan_threads, scan_threads * sizeof(int), s>>>(
             bin_count.view(), bin_off.view(), bin_cursor.view(), ntiles, static_cast<int>(n));
         CUDA_CHECK(cudaPeekAtLastError());
+        tile_shmem_optin((const void*)detail::tile_sort_scatter_kernel<>, shbytes);
         detail::tile_sort_scatter_kernel<><<<blocks, threads, shbytes, s>>>(
             views(), bin_cursor.view(),
             x2.data(), y2.data(), ux2.data(), uy2.data(), uz2.data(), w2.data(),

@@ -56,7 +56,7 @@ __device__ inline void bhat(const RunParams& rp, float xph, float yph,
 __global__ void k_fvhist(ParticleViews p, RunParams rp, float dxp, float dyp,
                          int nx, double* bins, int nreg, int npar, int nperp,
                          float vmax, long base, long cnt,
-                         float y1, float y2) {
+                         float y1, float y2, int use_wd) {
     const long tid = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (tid >= cnt) return;
     const long t = base + tid;
@@ -74,12 +74,14 @@ __global__ void k_fvhist(ParticleViews p, RunParams rp, float dxp, float dyp,
     const int ip = (int)((vpar + vmax) / (2.f * vmax) * (float)npar);
     const int jp = (int)(vperp / vmax * (float)nperp);
     if (ip < 0 || ip >= npar || jp >= nperp) return;
-    atomicAdd(&bins[((long)r * npar + ip) * nperp + jp], (double)p.w[t]);
+    const double wgt = use_wd ? (double)p.w[t] * (double)p.wd[t]
+                              : (double)p.w[t];
+    atomicAdd(&bins[((long)r * npar + ip) * nperp + jp], wgt);
 }
 
 __global__ void k_workledger(ParticleViews p, YeeViews v, RunParams rp,
                              double* wl, int nreg, int nwb, float vmax,
-                             float wdt, long base, long cnt) {
+                             float wdt, long base, long cnt, int use_wd) {
     const long tid = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (tid >= cnt) return;
     const long t = base + tid;
@@ -96,7 +98,8 @@ __global__ void k_workledger(ParticleViews p, YeeViews v, RunParams rp,
     const float epar = Ex * bx + Ey * by + Ez * bz;
     // charge per marker: m = 1 in code units so q = rp.qm; w carries the
     // macro density scale. wdt = dt * acc_every (the represented interval).
-    const double qw   = (double)(float)rp.qm * (double)p.w[t] * (double)wdt;
+    double qw = (double)(float)rp.qm * (double)p.w[t] * (double)wdt;
+    if (use_wd) qw *= (double)p.wd[t];
     const double wpar = qw * (double)epar * (double)vpar;
     const double wtot = qw * ((double)Ex * vx + (double)Ey * vy + (double)Ez * vz);
     const int r  = min(nreg - 1, (int)(x0 * (float)nreg / (float)v.nx));
@@ -135,7 +138,8 @@ struct GapDiags {
         k_fvhist<<<blocks, threads, 0, s>>>(p.views(), rp, (float)g.dx,
                                             (float)g.dy, g.nx, fv.data(),
                                             nreg, npar, nperp, vmax,
-                                            base, cnt, y1, y2);
+                                            base, cnt, y1, y2,
+                                            rp.deltaf ? 1 : 0);
         CUDA_CHECK(cudaPeekAtLastError());
         write_dev(fv, s, fn);
     }
@@ -148,7 +152,8 @@ struct GapDiags {
         const int blocks = (int)((cnt + threads - 1) / threads);
         k_workledger<<<blocks, threads, 0, s>>>(p.views(), f.views(), rp,
                                                 wl.data(), nreg, nwb, vmax,
-                                                wdt, base, cnt);
+                                                wdt, base, cnt,
+                                                rp.deltaf ? 1 : 0);
         CUDA_CHECK(cudaPeekAtLastError());
     }
 
