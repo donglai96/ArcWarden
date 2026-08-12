@@ -70,6 +70,8 @@ public:
                 yee::k_push_esirkepov_tiled<16, 16, 2><<<b.ntiles * bpt, threads, 0, s_>>>(
                     parts_.views(), b, v, rp_, tnow, bpt);
                 // migrate is fused into the tiled kernel (wrap + cell recompute)
+                // unless the ablation knob turns fusion off
+                if (!rp_.tile_migrate_fused) parts_.migrate(g_, s_);
             } else {
                 const int blocks = ((int)parts_.n + threads - 1) / threads;
                 yee::k_push_esirkepov<<<blocks, threads, 0, s_>>>(parts_.views(), v, rp_, tnow);

@@ -162,6 +162,13 @@ struct RunParams {
     // kernel). Particles drifting > 2 cells between sorts fall back to global
     // atomics, so any cadence is correct; N·v_max·dt/dx ≲ 2 keeps it fast.
     int      tile_sort = 0;
+    // tile_migrate_fused = 1 (default): the tiled kernel wraps positions and
+    // recomputes cell indices at write-back (no separate migration pass).
+    // 0 = ablation knob: store raw positions and run the standalone migrate
+    // kernel afterwards — reproduces the pre-fusion configuration of the
+    // performance ablation. Ignored on the flat (tile_sort = 0) path, which
+    // always migrates separately.
+    int      tile_migrate_fused = 1;
 
     // —— M2 absorbing boundary in x (Yee branch; y stays periodic) ——
     // bnd_x = 1: Umeda-style multiplicative damping masks exp(-numax·d²·dt)

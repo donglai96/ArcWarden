@@ -446,14 +446,20 @@ static __global__ void k_push_esirkepov_tiled(ParticleViews p, BinViews b,
 
         // fused migrate (same formula as particle_migrate_kernel): the tiled
         // path skips the separate wrap+cell pass — a whole extra SoA sweep.
-        float xw = fmodf(x1, (float)v.nx); if (xw < 0.f) xw += (float)v.nx;
-        float yw = fmodf(y1, (float)v.ny); if (yw < 0.f) yw += (float)v.ny;
-        if (xw >= (float)v.nx) xw = 0.f;   // += wrap of a tiny negative rounds
-        if (yw >= (float)v.ny) yw = 0.f;   // to the edge exactly (see migrate)
-        p.x[t] = xw; p.y[t] = yw;
-        int ci = (int)floorf(xw); if (ci >= v.nx) ci = v.nx - 1;
-        int cj = (int)floorf(yw); if (cj >= v.ny) cj = v.ny - 1;
-        p.cell[t] = cj * v.nx + ci;
+        // tile_migrate_fused = 0 is the ablation knob: store raw positions
+        // and let the host run the standalone migrate kernel afterwards.
+        if (rp.tile_migrate_fused) {
+            float xw = fmodf(x1, (float)v.nx); if (xw < 0.f) xw += (float)v.nx;
+            float yw = fmodf(y1, (float)v.ny); if (yw < 0.f) yw += (float)v.ny;
+            if (xw >= (float)v.nx) xw = 0.f;   // += wrap of a tiny negative rounds
+            if (yw >= (float)v.ny) yw = 0.f;   // to the edge exactly (see migrate)
+            p.x[t] = xw; p.y[t] = yw;
+            int ci = (int)floorf(xw); if (ci >= v.nx) ci = v.nx - 1;
+            int cj = (int)floorf(yw); if (cj >= v.ny) cj = v.ny - 1;
+            p.cell[t] = cj * v.nx + ci;
+        } else {
+            p.x[t] = x1; p.y[t] = y1;          // migrate() wraps + recells
+        }
     }
     __syncthreads();
 

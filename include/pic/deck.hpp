@@ -179,6 +179,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "ndc")      d.rp.ndc = static_cast<int>(iv());
             else if (key == "jfilter")  d.rp.jfilter = static_cast<int>(iv());
             else if (key == "tile_sort") d.rp.tile_sort = static_cast<int>(iv());
+            else if (key == "tile_migrate_fused") d.rp.tile_migrate_fused = static_cast<int>(iv());
         } else if (section == "antenna") {
             // M2/M10 (Yee branch): localized rotating transverse current column
             if      (key == "amp")   d.rp.ant_amp = dv();
