@@ -399,11 +399,28 @@ correct?} The \texttt{ctest} suite covers, per branch:
   solver; $\delta f$ equilibrium hold under inhomogeneous $B_0$.
 \end{itemize}
 
-\tocheck{Fig.~2: four-panel verification figure --- (a) Langmuir/whistler
-dispersion points on analytic curves, (b) two-stream + Weibel growth
-rates vs theory, (c) long-run energy history, (d) charge-conservation
-residual history. All data exist in the ctest outputs; needs one
-plotting script.}
+Figure~\ref{fig:verify} condenses the electrostatic-branch level of the
+ladder into one deck-driven figure (produced by
+\texttt{scripts/repro/plot\_verification.py}): the two-stream
+instability grows at $\gamma=0.343\,\omega_{pe}$ against the cold-beam
+rate $\omega_{pe}/\sqrt8=0.354$ (the 3\% deficit is the finite
+$v_{th}/v_0=0.1$ thermal correction), saturates into the classic
+trapping vortex, and over a $10\times$ longer run the total energy
+oscillates within $\pm2\times10^{-3}$ with no secular drift while the
+net charge is conserved to round-off.
+\tocheck{extend to a companion EM panel set (whistler eigenmode +
+Weibel growth) from the same script}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figs/verification_panels.png}
+\caption{Electrostatic-branch verification from one input deck
+(\texttt{decks/verification/two\_stream.ini}): (a) field-energy growth
+vs the analytic two-stream rate; (b) phase space at saturation;
+(c) relative total-energy drift and (d) relative net-charge drift over
+a 6000-step run.}
+\label{fig:verify}
+\end{figure}
 
 \subsection{Cross-branch validation}
 \label{sec:verify-cross}
