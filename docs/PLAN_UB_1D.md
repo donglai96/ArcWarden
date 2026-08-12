@@ -1,123 +1,106 @@
-# PLAN_UB_1D — 1D 上带激发机制实验(2026-08-11 草案,待用户审查)
+# PLAN_UB_1D v2 — 上带激发:文献批判 + 三步简化计划(2026-08-11,用户审查后重写)
 
-**目标改向(用户 2026-08-11)**:回到验证成熟的 1D 平台(chirp2d),
-科学目标 = **什么激发 upper band**。不复现 Chen 2026 GRL;gap 与 UB
-两问题中,本计划攻 UB。
+v1(3b4c9e9)被用户裁定过于复杂;本版按裁决收敛:以 giant_x4_atmo40
+(full-f,t20000,已在盘)为中心,先想清 "为什么我们做不出 UB / 为什么
+现实的几百 eV 各向异性不够",文献过堂,然后三步。
 
 ---
 
-## 1. 问题表述:UB 的存在本身是个谜
+## 1. 文献批判性对账(2026-08-11 检索)
 
-UB(0.55–0.7 Ωe)回旋共振电子:
+### 1.1 候选机制与证据状态
 
-| ωpe/Ωe | v_R @0.6Ωe | 共振能量 |
-|---|---|---|
-| 5(本计划) | ~0.065–0.08c | **~0.7–1.7 keV** |
-| 10(观测事件常见) | ~0.033c | **~270 eV** |
-
-KP 线性驱动要求 A > ω/(Ωe−ω):@0.55 需 1.22、@0.6 需 **1.5**、@0.7 需
-2.33。观测的几百 eV–keV 电子 A ~ 0.2–0.5 → **亚阈值 3–5 倍且 γ 硬负**
-(对流 runway 积分只放大正 γ,救不了负 γ)。→ UB 不能从环境分布线性
-长出;它的来源必须另找。
-
-## 2. 1D 平行几何的判别价值
-
-1D 天然**排除**斜传播 E∥/Landau 通道,却**完整保留**四条候选机制——
-这不是缺陷,是控制变量:
-
-| # | 机制 | 1D 可测依据 | 预注册指纹 |
+| 机制 | 代表文献 | 状态 | 弱点 |
 |---|---|---|---|
-| M1 | 穿越元素(dots) | Lu A=5 已在本机复现(0.68) | UB = 升调结构连续跨 0.5,无独立带 |
-| M2 | 谐波 2ω_LB | 非线性电流效应,平行也有;RSM 大盒见过 2W1 达 WB 同量级 | UB 功率锁 2×ridge(ω,t) 轨迹,与 LB 相位相干(bicoherence) |
-| M3 | 两级:LB 波改造 f → 二次点火 | carved-beam 回旋闭环是本程序 1D 发现(07-27);G1 "shoulder 被元素喂养" | UB **滞后**元素列车;Δf/各向异性在 v∈[0.04,0.09]c 先积累(δf 的 wd 直读),UB 后出现 |
-| M4 | 离赤道生成的频率映射 | 1D 有完整纬度维;b(λ)=1.4 处的当地 0.4 = 赤道系 0.56 | 分带 Poynting 散度出生点在 \|λ\|>0,且**当地** ω/Ωe(λ)<0.5 |
+| A. plateau 切分 / 两成分 | Li 2019 NatComm(docs 有);Li 2022 GRL(gap 在源区形成,与平行加速关联);Chen 2022 JGR / Chen 2023 GRL(plateau-like 形状→gap) | 观测关联强:两带事件伴随 0.05–2 keV 与 >10 keV 双各向异性成分 + ~2 keV 平行 plateau | **关联≠因果充分**。① plateau 切分需要 E∥(斜传播)才能自生;② 20 事件双带统计里 **γ_UB 峰值 < 1e-5 Ωe** —— 从噪声长到观测幅度需 ~1e6/Ωe,本地线性激发实际不工作;③ 用户论点:统计上几百 eV 的 A 常在阈值下 3–5 倍 |
+| B. 下带级联(2ω 谐波) | Gao 2016 GRL / 理论 AIP Adv 2018 / **Chen 2017 JGR 1D PIC**(平行 1D 里复现!) | **唯一在 1D 平行 PIC 里演示过的 UB 生成机制**;LB + 有质动力密度模 (ω,2k) → UB@2ω_LB | 硬预言 UB≈2×LB:只有一小部分 multiband 事件满足;一般双带的 UB 不在 2×LB → 只解释子类 |
+| C. 远程/多源传播 | Tao 2023 GRL(LB 本地源 + UB 远程源,密度脊 ducting,无需高纬反射) | 与 Poynting 观测(赤道源、向两半球传播)相容;解释 UB 弱于 LB | 把"UB 哪来"推给远程源——远程处仍需生成机制;径向结构我们的 1D 沿场箱不可测 |
+| D. 两族群注入 | Fu 2014;Zhou 2019 GRL(loss cone + 各向异性 → 斜 LB/UB) | 注入期低能各向异性可短暂超阈 | 统计弱(用户论点);Li 2019 事件实测有,但常态没有 |
 
-若四条全阴性而 LB 停滞列车强壮 → "1D 平行无法激发独立 UB" = 把真实
-UB 压到 dots 或斜传播通道上,同样是硬结论,并给 2D 精确的靶。
+### 1.2 观测硬约束(任何机制都要过)
 
-## 3. 设计骨架
+- Gao 2019 GRL:2/3 chorus 事件有 gap;gap 频率峰 **0.49 fce**、宽 ~0.07 fce;
+- Meredith 2009:**UB 局限于近赤道 |λ|≲15°** → 高纬生成类机制不利
+  (与 Li 2022 "gap 在源区形成"、Tao 2023 "无需高纬反射"一致);
+- 双带各自含离散升调元素(Li 2019 Fig 1c)→ 纯线性带状增长不够,UB
+  也要能非线性组织成元素。
 
-### 3.1 主臂 U0:UB-fuel-free 停滞源
+### 1.3 对我们旧结果的解释(为什么从来没出过 UB)
 
-- **f0 = bimax,T⊥/T∥ = 2.0 → ω_m = A/(A+1) = 0.50 精确**:KP 燃料顶
-  压在 0.5,0.5 以上任何功率必然非线性(归因干净的前提;对照:D2/
-  ArmU 等燃料臂的 UB 延伸无法归因,已实证)。
-- **corridor 定位**:×4(lre=3326.26,dx=0.26,nx≈19400,dt=0.15,
-  wall MLAT 40° 几何沿 giant_x4_atmo40)。依据:温和 A 配弱梯度 =
-  已验证点火区(v2-conecut A_eff≈0.8 在 ×4 出干净列车);
-  γ_max(A=1, nh≈0.015–0.018) ≈ 4–5e-3,介于 v2(≈2e-3,点火)与
-  v1-A5(1.3e-2,flood)之间。**预期:强元素列车停在 ~0.5**
-  (corridor 定律:端点 = ω_m)。
-- **方法 = δf 主臂**(chirp2d bimax δf,Tao17 血统成熟):
-  - UB 信号预计 1e-5–1e-4,δf 地板(2D 实测 600× 改善;1D 类似量级)
-    使其可测;
-  - **wd 就是 M3 的仪器**:f 改造量逐时刻直读;
-  - τ_D = 0(记忆裁决沿用);
-  - 约束记录:conecut 无 ∂lnf₀ → 停滞源必须 bimax(corridor 结论
-    端点由 ω_m 定,与 f0 形状族解耦,已由 v2 多族验证);
-  - **full-f 孪生臂**一条,排除 δf 特有伪影(权重噪声、种子水平差异)。
-- 边界 x=damping(δf 权重相容);种子 bnoise 带限(与 D 系一致)。
+1. **bimax 的 A 与能量无关**:我们全部 1D 源是单 bimax/conecut → UB 共振
+   电子(ωpe/Ωe=5 下 0.7–1.7 keV,即 v_R≈0.05–0.08c)携带与全体相同的
+   A=0.5–0.8 → ω_m=0.33–0.44 < 0.55 → **UB γ<0 按构造**;从未有过独立
+   低能各向异性成分;
+2. **引擎种群是 UB 净吸收体**:A < ω/(Ωe−ω) 的种群在 UB 频段贡献负 γ
+   → 低能成分要打赢"裸 KP 阈值 + keV 引擎回旋阻尼 + 冷成分阻尼"。
+   **G2 失败(08-06)就是实测版**:pancake 的 UB 带被引擎吃掉 γ_net<0;
+3. **1D 无 E∥**:机制 A 的 plateau 自生通道不存在 → 两成分结构只能手放;
+4. **γ_UB 即便为正也小**(观测 ~1e-5–5e-4):从噪声长起需 1e4–1e6/Ωe
+   或长 runway;full-f 噪声/时长都不够(δf 已解决可见性,备用)。
 
-### 3.2 成本(1D,全部便宜)
+**"现实几百 eV A 不够"的定量含义**:裸 KP 阈值只是低能成分自身贡献的
+零点;净点火阈值(含阻尼项)显著更高 → UB 事件应对应注入时刻的瞬时
+超阈(Li 事件属此)或非线性通道(B)。这个净阈值曲线我们today可算。
 
-| 项 | 值 |
-|---|---|
-| markers | ppc 8000 × 19400 cells ≈ 155M ≈ 5GB(δf +wd) |
-| t10000 | ~1h;t20000 ~2h(1D tiled ~1.5e10 p-steps/s) |
-| pilot t2000 | ~15 分钟 |
+---
 
-## 4. 执行序
+## 2. 三步计划(简化版)
 
-### Step 0 — 存档数据再挖掘(零成本,判据先于新数据冻结)
+### Step 1 — 净阈值曲线(色散求解器,无 GPU,先行)
 
-在三个已知数据族上标定 UB 检测器 + 冻结工具:
+扩 `whistler_kinetic_dispersion.py` 到双热种群:引擎(giant_x4 参数
+bimax 等效 u∥=0.198, u⊥=0.244, nh=0.0178)+ 冷 + 低能种群
+(u∥₂≈0.045 ≈ 500 eV;扫 n₂ × A₂)→ 输出 **γ_UB(0.55–0.75)>0 的
+净阈值曲线 (n₂, A₂)**,并标注:裸 KP 阈值线、Li 2019 Fig 2a 量级的
+观测点、G2 失败点(应落在阈下,作为回溯验证)。
+**产出即结果**:定量回答"观测的几百 eV A 为什么不够/什么时候够"。
 
-| 存档 run | 角色 | 问题 |
-|---|---|---|
-| lurepro_x10(4 seeds,t6000) | **M1 正对照** | dots 型 UB 的指纹形态基准 |
-| giant_x4_atmo40(t20000,conecut 停滞列车) | 最接近 U0 的历史数据 | 0.5 以上有无被忽略的功率?2ω 相关? |
-| d120_ctrl(A=1.5,riser 到 0.49) | 中间情形 | 燃料边 0.6 下的 0.5–0.6 行为 |
+### Step 2 — giant_x4_atmo40 挖掘(零成本,判据先冻结)
 
-产出(冻结):P_UB(t) 检测限、2ω 相干(bicoherence)工具、分带
-Poynting 出生图工具、当地归一 ω/Ωe(λ) 映射工具。
+最强停滞元素列车(amp ~7e-3,t20000,ckpt 在盘)上:
+1. **P(ω>0.5) 上限**(全程、分站);
+2. **相位相干 2ω 搜索**(沿元素 ridge 的 bicoherence)——机制 B 在
+   1D 可行(Chen 2017),我们的列车振幅与其 PIC 相当:**该出必须出**;
+   不出 → 给级联效率定上限;预期谐波幅度 ~(δB/B0)×δB ≈ 2.5e-4,
+   在 full-f 1D 地板边缘 → 用 ridge 锁相平均压噪声;
+3. ckpt 提 f(v∥,v⊥) UB 壳层(0.05–0.08c)前后对比:LB 回旋处理(作用
+   区 0.15–0.26c)是否触及低能段(预期否;把"1D 回旋版两级"正式关闭)。
 
-### Step 1 — U0 pilot(t2000)
+### Step 3 — 一个新 run:净阈值上方的两族群(G2 重做)
 
-Gate(预注册):元素列车存在 —— W10<0.20、元素 amp ≥3e-3、端点
-∈[0.45,0.55]。失败动作(只许一次):flood → nh 降档;死寂 → nh 升档
-或移 ×2。
+giant_x4 base + 第二低能各向异性种群,**(n₂, A₂) 由 Step 1 曲线选在
+净阈值刚上方**("注入时刻"情景)。问题:LB 元素列车与 UB 带共存?
+0.5 分隔自然出现(1D 无 E∥ 的两源两带)?UB 内是否组织出离散元素
+(观测约束 §1.2)?
+成本:1D full-f ×4,ppc 28000,t10000 ≈ 1–2h。失败动作(预注册,一次):
+γ_net 边缘 → n₂ 上调一档;flood → n₂ 降档。
 
-### Step 2 — U0 生产(t20000,--fvdiag)
+## 3. 预注册判读
 
-按 §2 指纹表归因。附加监控:wd rms/max(δf 健康)、全窗 vs 元素窗
-双时窗(时间稀释陷阱教训)、多站一致性(单 probe notch 教训)。
+- Step 2 若见锁相 2ω → 机制 B 在我们数据成立,UB-无燃料路线有解;
+- Step 2 全阴性 + Step 3 阳性 → 1D 里 UB 必须外源低能各向异性(注入
+  情景),gap = 双源带间隔(H1 无记忆味);
+- Step 3 阴性(γ_net>0 仍无 UB)→ 非线性/对流抑制,量化并转 2D 问题;
+- 不在 flood/死寂基底上解读;不注入阈下假燃料后又声称"自然出 UB"。
 
-### Step 3 — 对照臂(按需,用户批准后)
+## 4. 明确不做
 
-full-f 孪生;fuel-loaded 对照(d120 家族已在盘);ωpe/Ωe=10 维度
-(UB 共振能量降到几百 eV,更贴观测)留作后手。
+不复现 Chen 2026 GRL;δf 臂降为备用(full-f giant_x4 线为主,按用户
+裁决);机制 C 的径向结构 1D 不可测,如实出局声明。
 
-## 5. 预注册判读表
+## 5. 文献清单(本轮检索)
 
-| 观察 | 结论 |
-|---|---|
-| UB 锁 2×ridge、与 LB 相干 | M2 谐波 |
-| UB 迟到 + Δf(0.04–0.09c) 先行 | M3 两级 |
-| UB 出生点离赤道、当地 <0.5 | M4 频率映射 |
-| UB 仅以跨 0.5 升调形式出现 | M1(需对照 lurepro 形态) |
-| 强停滞列车 + 无任何 UB | 1D 平行不可激发独立 UB → 真实 UB = dots 或斜传播;2D 靶确定 |
-| LB 列车不成形 | 回 Step 1 失败动作;不得在无列车基底上谈 UB |
-
-多机制并存时按出现时序与功率占比分主次;禁止用单一指纹片段下全称
-结论(ArmU burst-phase 教训)。
-
-## 6. 交用户的三个设计决定
-
-1. **δf 主 + full-f 孪生**(推荐)vs full-f 主?
-2. 几何 **×4**(推荐:已验证温和-A 点火区)vs ×2(更弱梯度更长盒)?
-3. ωpe/Ωe 首轮守 **5**(与全部 corridor 知识可比),10 留作扫描维度?
-
-## 7. 明确不做
-
-不复现 Chen 2026 GRL;不注入亚阈值以上的低能各向异性假燃料(G2 教训);
-不在 flood 或死寂基底上解读 UB;判据冻结前不看 U0 谱定标准。
+- Li et al. 2019 NatComm, Origin of two-band chorus(docs 在库)
+- Li et al. 2022 GRL, Unraveling the Formation Region and Frequency of Chorus Spectral Gaps
+- Li et al. 2024 JGR, Controlling Factors of Chorus Spectral Gaps
+- Chen et al. 2022 JGR, Gap formation … plateau-like shape
+- Chen (H.) et al. 2023 GRL, Unraveling the Role of Electron Plateau Distributions(obs)
+- Gao et al. 2016 GRL, Generation of multiband chorus by lower band cascade
+- Chen (L.) et al. 2017 JGR, Lower Band Cascade of Whistler Waves — 1D PIC
+- Gao et al. 2018 AIP Adv, Theoretical analysis on lower band cascade
+- Gao et al. 2019 GRL, Statistical Results of the Power Gap(2/3 事件,0.49/0.07 fce)
+- Tao et al. 2023 GRL, Formation of Banded Chorus Waves by Propagation From Multiple Sources
+- Zhou et al. 2019 GRL, Highly oblique LB/UB by loss cone + anisotropy
+- Meredith et al. 2009 JGR, Survey of upper band chorus(UB 近赤道)
+- Fu et al. 2014(两族群)
+- Tao, Zonca & Chen 2025 PoP, What drives chorus frequency chirping(docs 在库,chirp 机制之争)
