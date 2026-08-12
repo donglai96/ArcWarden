@@ -29,6 +29,28 @@ production runs — all deck-driven, launch when needed. Every runner writes
 - CLI overrides: `--ppc --amp --nsteps --tend --tsnap --tline` (runner-dependent)
 - microbenchmarks: `./deposit_bench nx ny ppc` (CLI, no deck)
 
+## Full single-session sweep (2026-08-12 night, one binary, tend=3000)
+
+`scripts/repro/perf_sweep.sh build build/perf_full --full` — full-length
+(206,897-step) runs, matched diagnostics, every point a one-line deck edit:
+
+| point | tile_sort | fused | wall (s) | p-steps/s |
+|---|---|---|---|---|
+| flat | 0 | — | 8560.4 | 3.78e9 |
+| tiled, separate migrate | 20 | 0 | 1899.0 | 1.70e10 |
+| tiled, fused migrate | 20 | 1 | 1898.7 | 1.70e10 |
+| cadence 10 | 10 | 1 | 1994.7 | 1.62e10 |
+| cadence 40 | 40 | 1 | 1858.9 | 1.74e10 |
+
+Findings: tiled/flat = **4.5×** (paper previously 3.4× from mixed-session
+short runs); **migration fusion is neutral at full scale** (0.3 s in 1899 —
+the historical +6.6% does not reproduce; reported as a null in the paper).
+Field energies bit-identical across paths at early times; ~4% spread at
+t≈3000 (chaotic saturated phase, same amplitude). ArcWarden side of the
+head-to-head remeasures at 1898.7 s (would be 2.8× vs OSIRIS's July
+5392.8 s); paper keeps the conservative July matched pair (2.59×) until
+OSIRIS is rerun on the current driver.
+
 ## Gaps + plan
 
 1. **Middle ablation row** ("+tiled deposit" without fused migration) is not

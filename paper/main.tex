@@ -254,8 +254,9 @@ and fast:
 \item \textbf{The sort amortizes to noise.} The full sort costs
   \SI{12.4}{ms}; at $N_{\rm sort}=20$ that is \SI{0.6}{ms} per
   $\sim$\SI{10}{ms} step, and the end-to-end rate is flat for
-  $N_{\rm sort}=10$--$40$ ($1.45$--$1.54\times10^{10}$
-  particle-steps/s) --- there is no cliff to tune against.
+  $N_{\rm sort}=10$--$40$ ($1.62$--$1.74\times10^{10}$
+  particle-steps/s, full-length runs) --- there is no cliff to tune
+  against.
 \end{itemize}
 
 This replaces the entire per-step find-movers/exchange/compact pipeline
@@ -491,6 +492,14 @@ OSIRIS 4.4.4 CUDA (quadratic, binomial-3) & \SI{5392.8}{s} & $6.0\times10^{9}$ &
 \end{tabular}
 \end{table}
 
+The table pairs measurements taken in the same session on the same
+driver. The current build remeasures the \arcw{} run at \SI{1898.7}{s}
+($1.70\times10^{10}$, Table~\ref{tab:ablation}), which would raise the
+ratio to $2.8\times$; we quote the conservative matched-session figure
+and will refresh both sides together before submission.
+\tocheck{rerun OSIRIS-CUDA on the current driver for an updated
+matched pair}
+
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=\textwidth]{figs/eaw_case7_compare_arcwarden_osiris.png}
@@ -511,20 +520,42 @@ comparison is dominated by architecture, not arithmetic.
 \subsection{Ablation: where the speedup comes from}
 \label{sec:ablation}
 
+Table~\ref{tab:ablation} is a clean single-session measurement: one
+binary, one night, full-length runs (206{,}897 steps each) with matched
+diagnostics, every configuration a one-line change to the same input
+deck (the \texttt{tile\_sort} and \texttt{tile\_migrate\_fused} runtime
+knobs); \texttt{scripts/repro/perf\_sweep.sh} regenerates the table.
+
 \begin{table}[htbp]
 \centering
-\caption{Ablation chain, benchmark configuration, diagnostics off.}
+\caption{Ablation chain: full-length benchmark runs, one binary, one
+session, matched diagnostics. Each row is a one-line deck change.}
 \label{tab:ablation}
-\begin{tabular}{lcc}
+\begin{tabular}{lccc}
 \toprule
-configuration & particle-steps/s & gain\\
+configuration & wall time & particle-steps/s & gain\\
 \midrule
-flat: fused kernel, global-atomic Esirkepov & $4.5\times10^{9}$ & ---\\
-+ $16{\times}16$ tile sort (every 20) + shared apron deposit & $1.51\times10^{10}$ & $3.4\times$\\
-+ migration fused into scatter write-back & $1.61\times10^{10}$ & $+6.6\%$\\
+flat: fused kernel, global-atomic Esirkepov & \SI{8560.4}{s} & $3.78\times10^{9}$ & ---\\
++ $16{\times}16$ tile sort (every 20) + shared apron deposit,\\
+\quad separate migration kernel & \SI{1899.0}{s} & $1.70\times10^{10}$ & $4.5\times$\\
++ migration fused into scatter write-back & \SI{1898.7}{s} & $1.70\times10^{10}$ & within noise\\
 \bottomrule
 \end{tabular}
 \end{table}
+
+The chain isolates the design elements honestly: the shared-apron
+deposit with the amortized sort carries the entire $4.5\times$ gain,
+while fusing the migration pass into the scatter write-back --- a
+$+6.6\%$ effect in an earlier development-time measurement --- is
+neutral at full scale in the current build (the separate migrate kernel
+is a cheap streaming pass, and the fused path pays the equivalent wrap
+arithmetic inside the hot kernel). We report the null rather than the
+historical number; the \texttt{tile\_migrate\_fused} knob exists
+precisely so this row stays measurable. Field-energy histories of all
+ablation runs are bit-identical through the linear-growth phase and
+agree at the few-percent level in the saturated turbulent phase (the
+expected chaotic divergence of atomic-summation orderings at identical
+saturation amplitude).
 
 Two supporting microbenchmarks: the tiled charge deposit alone is
 $6.4\times$ faster than global atomics (14.9 vs 2.3~Gdep/s); the plain
@@ -532,8 +563,8 @@ L2-served push runs at 35.4~Gpush/s while the shared-memory
 field-staging variant of the same push measures $0.82\times$ --- the
 negative result behind the fields-live-in-L2 rule
 (Section~\ref{sec:arch-particles}). Sort cadence is a flat dial
-($N_{\rm sort}=10/20/40 \to 1.45/1.51/1.54\times10^{10}$).
-\tocheck{clean single-session ablation rerun, same binary, same night}
+($N_{\rm sort}=10/20/40 \to 1.62/1.70/1.74\times10^{10}$ in the same
+session).
 
 \subsection{The classic design is overhead-bound on this hardware}
 \label{sec:overhead}
