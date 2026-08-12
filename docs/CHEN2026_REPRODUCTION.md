@@ -56,7 +56,7 @@ lre = 116.4 / s(5°) = 1330.504 c/ωpe. Domain 5000 × 0.26 = ±650 → λ_max =
 parameters map 1:1 (V_Ae0/Ω_e0 = c/ωpe; Ω_e0 = 0.2 ωpe; dt 0.03/Ωe =
 0.15/ωpe; T∥ = 20 keV → U∥ = 0.19784c).
 
-## Result (docs/figs/chen2026_fig1.png; decks/chen2026_case{1,2,3}.ini)
+## Result (docs/figs/chen2026_fig1.png; decks/chen2026/chen2026_case{1,2,3}.ini)
 
 Final runs: full-f, ppc = 3200, jfilter = 3 (build/chen2026_case{1,2,3}_q;
 first-pass ppc = 800 no-filter runs kept in build/chen2026_case{1,2,3}).
@@ -160,7 +160,7 @@ peak t ≈ 750, then monotonic decay — single flood, no repetition, the
 opposite relaxation character to Case II. Peaks by latitude: eq 0.009 →
 ±5° 0.021/0.023 → ±10° 0.040/0.052 (paper 0.038 at T3 = 1237 ✓ off-equator
 saturation; our onset ~500/Ωe early, same noise-floor cause). Case I giant
-deck written (decks/chen2026_case1_giant.ini) but NOT run (user cancelled).
+deck written (decks/chen2026/chen2026_case1_giant.ini) but NOT run (user cancelled).
 
 Element repetition vs bounce (Case II, measured): equatorial element
 spacing 850–900/Ωe early, stretching to ~1500 late. Resonant electrons

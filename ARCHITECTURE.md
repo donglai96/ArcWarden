@@ -6,8 +6,8 @@ device/host translation units in `src/`.
 
 This document maps the code: the directory layout, the core abstractions, and
 how data flows through one PIC step. For the build/step history see
-`es_pic_step1_coding_plan.md`; for the design rationale see
-`gpu_darwin_pic_plan.md`.
+`docs/dev/es_pic_step1_coding_plan.md`; for the design rationale see
+`docs/dev/gpu_darwin_pic_plan.md`.
 
 ---
 
@@ -20,7 +20,7 @@ tests/            CTest unit/physics tests (one executable each)
 tools/            standalone experiments & visualizers (movies, deck runner)
 decks/            text input decks (*.ini) — physics setups as data
 scripts/          Python plotters (matplotlib) for the dumped CSV frames
-learning_step*.md per-step teaching notes
+docs/dev/         development history & per-step teaching notes
 ```
 
 ## 2. Normalization contract (the glue)
@@ -161,7 +161,7 @@ hardcode `float`).
 | `tools/run_deck.cu` | `./run_deck <deck> [outdir]` — run any deck, dump phase frames + `energy.csv` |
 | `tools/two_stream_movie.cu` | two-stream phase-space movie + NVML GPU report |
 | `tools/bump_on_tail_movie.cu` | bump-on-tail movie + NVML report (legacy single-species path) |
-| `decks/bump_on_tail.ini`, `decks/two_stream.ini` | example setups (ppc ∝ density ⇒ equal weight) |
+| `decks/verification/bump_on_tail.ini`, `decks/verification/two_stream.ini` | example setups (ppc ∝ density ⇒ equal weight) |
 | `scripts/plot_phase_movie.py` | two-stream phase-space images / begin-vs-end / mp4 |
 | `scripts/plot_bump_on_tail.py` | bump-on-tail phase space + f(v) bump→plateau panel / mp4 |
 

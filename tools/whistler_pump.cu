@@ -5,9 +5,9 @@
 // t_off. The whistler *parallel* E Landau-traps electrons at v_r = ω0/k_∥; the ratio
 // v_r/v_th (set by the electron temperature / Δx·ω_pe/c) selects the nonlinear regime:
 //
-//   v_r/v_th = 3.2  (tail)    -> beam-mode LANGMUIR waves          (decks/an2019_sim1.ini)
-//   v_r/v_th = 2.1  (mid)     -> electron-acoustic + UNIPOLAR       (decks/an2019_sim2.ini)
-//   v_r/v_th = 1.0  (thermal) -> phase-space holes + BIPOLAR fields (decks/an2019_sim3.ini)
+//   v_r/v_th = 3.2  (tail)    -> beam-mode LANGMUIR waves          (decks/an2019/an2019_sim1.ini)
+//   v_r/v_th = 2.1  (mid)     -> electron-acoustic + UNIPOLAR       (decks/an2019/an2019_sim2.ini)
+//   v_r/v_th = 1.0  (thermal) -> phase-space holes + BIPOLAR fields (decks/an2019/an2019_sim3.ini)
 //
 //   ./whistler_pump <deck.ini> [ppc] [amp] [nsteps]
 //     ppc/amp/nsteps > 0 override the deck (for smoke-tests / half-GPU sweeps).

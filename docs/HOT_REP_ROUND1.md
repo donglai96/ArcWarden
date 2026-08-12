@@ -1,7 +1,7 @@
 # M4 hot-representation comparison, round 1 (v4-gate-1d record)
 
 Setting: Tao GRL17 rising-tone setup through the 2D Yee code path
-(`decks/chirping_2dpath.ini`, runner `tools/chirp2d.cu`): parabolic B0(x)
+(`decks/chirping/chirping_2dpath.ini`, runner `tools/chirp2d.cu`): parabolic B0(x)
 (a = 3.448e-6 (wpe/c)², edge mirror ratio 3.32), linearized cold fluid
 (nc = 0.994), hot bi-Max nh = 0.006 (uth 0.2/0.53c), Umeda hybrid layers
 (nd = 300, numax = 0.1), antenna at the equator (amp 1e-4 → δB/B0 ≈ 1.2e-3,

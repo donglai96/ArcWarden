@@ -20,8 +20,8 @@ triggering antenna. Units: Ω_e0 = c = 1.
 ## Run recipe
 
 ```
-./chirp1d decks/chirping_1d_tao_trig.ini out          # element + spectrogram run
-./chirp1d decks/chirping_1d_tao_phase4.ini out        # T=2000, dense phase dumps
+./chirp1d decks/chirping/chirping_1d_tao_trig.ini out          # element + spectrogram run
+./chirp1d decks/chirping/chirping_1d_tao_phase4.ini out        # T=2000, dense phase dumps
 python3 scripts/plot_chirp1d.py out/chirping_1d_tao_trig
 python3 scripts/plot_chirp1d_tao_phase.py out/chirping_1d_tao_phase4 --hband 15,60
 python3 scripts/plot_chirp1d_hole_tracking.py out/chirping_1d_tao_phase4

@@ -1,7 +1,7 @@
 // ArcWarden — An et al. (2019) whistler-pump runs on the FULL-MAXWELL (Yee)
 // branch: the M1 cross-validation against the spectral Darwin reproduction.
 //
-// Reads the SAME decks (decks/an2019_sim*.ini). Differences vs the Darwin
+// Reads the SAME decks (decks/an2019/an2019_sim*.ini). Differences vs the Darwin
 // runner handled here:
 //   - CFL: full Maxwell keeps light waves; with ny = 1 the y-curls vanish so
 //     the bound is the 1D c·dt < dx. dt = cfl·dx/c (deck dt is Darwin's 0.2).

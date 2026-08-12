@@ -39,7 +39,7 @@ nonlinear structure that grows:
 
 All three drive the whistler to `δB ≲ 0.1 B0` at 30° and match the paper's phase-space
 portraits, ω–k dispersion, and k–t spectra — each driven by an input deck
-(`./build/whistler_pump decks/an2019_sim{1,2,3}.ini`).
+(`./build/whistler_pump decks/an2019/an2019_sim{1,2,3}.ini`).
 
 ## Features
 
@@ -77,9 +77,9 @@ diagnostics set** — `[diagnostics] enable = spectrum kt phase_video snapshot e
 phase_frames`. Adding an experiment is a new `.ini`, never a new `main()`:
 
 ```bash
-./build/arcsim decks/an2019_sim2.ini                       # An et al. Sim 1/2/3 (Darwin whistler)
-./build/arcsim decks/two_stream.ini out_dir                # electrostatic (phase frames + energy)
-./build/arcsim decks/an2019_sim3.ini out --ppc=262144 --amp=5 --nsteps=20000   # overrides
+./build/arcsim decks/an2019/an2019_sim2.ini                       # An et al. Sim 1/2/3 (Darwin whistler)
+./build/arcsim decks/verification/two_stream.ini out_dir                # electrostatic (phase frames + energy)
+./build/arcsim decks/an2019/an2019_sim3.ini out --ppc=262144 --amp=5 --nsteps=20000   # overrides
 ```
 
 Diagnostic modules (`include/pic/diag/`): `spectrum` (mode power + δB/B0), `kt` (δE_L(x,t)),
@@ -109,7 +109,7 @@ deposit/push microbenchmark.
   `1/(ε₀c²k² + n₀)` with k-space transverse projection.
 - **Normalization:** ω_pe = 1, m_e = 1, |e| = 1, ε₀ = 1.
 
-See `ARCHITECTURE.md` for the code/class map and `gpu_darwin_pic_plan.md` for design rationale.
+See `ARCHITECTURE.md` for the code/class map and `docs/dev/gpu_darwin_pic_plan.md` for design rationale.
 
 ## Project structure
 
@@ -118,9 +118,11 @@ include/pic/   header-only library (templated on the compile-time config)
 src/           entry point (smoke-test / device banner)
 tests/         CTest unit + physics validation (one executable each)
 tools/         standalone experiments, benchmarks, deck runner
-decks/         text input decks (*.ini)
+decks/         text input decks (*.ini), grouped by paper role — see decks/README.md
 scripts/       Python plotters (matplotlib)
-sessions/      saved development-session records
+docs/          reproduction reports, profiling baseline, figures
+docs/dev/      development history & per-step teaching notes
+paper/         methods-paper LaTeX source
 ```
 
 ## Validation

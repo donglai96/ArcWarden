@@ -12,7 +12,7 @@ This is the first **true-2D** exercise of `MaxwellSimulation` (the An 2019
 cross-check ran ny = 1): 2D Yee curls, 2D Esirkepov deposit, oblique-mode
 competition, and 207k-step long-time energy behavior in one run.
 
-## Setup (`decks/eaw_case7.ini`, runner `tools/eaw2d_yee.cu`)
+## Setup (`decks/benchmarks/eaw_case7.ini`, runner `tools/eaw2d_yee.cu`)
 
 - 625×625 cells, Lx = Ly = 13.5 c/ωpe (dx = 0.0216 = 1.29 λ_D∥), periodic
 - c = 1, B0 = 0.25 ωpe x̂ (in-plane), dt = 0.0145 = 0.95 dx/(√2 c)
@@ -23,7 +23,7 @@ competition, and 207k-step long-time energy behavior in one run.
   Without it, CIC shot noise at dx > λ_D heats T∥ and eats the anisotropy.
 - t_end = 3000 ωpe⁻¹ (206 897 steps); 2 h 19 m on RTX 5090 @ 3.9×10⁹ p-steps/s
 
-Run: `./eaw2d_yee decks/eaw_case7.ini out` →
+Run: `./eaw2d_yee decks/benchmarks/eaw_case7.ini out` →
 `scripts/plot_eaw_case7.py out` (Figure-1 analog + history).
 
 ## Results vs paper
