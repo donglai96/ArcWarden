@@ -83,3 +83,18 @@ OSIRIS is rerun on the current driver.
    needs sudo perf counters.
 4. **Sweep script**: `scripts/repro/` driver that regenerates every §5 number
    from decks alone (sort-cadence scan, ppc scan, grid scan).
+
+## Definitive sweep in progress (2026-08-12, second review round)
+
+The mixed-provenance issue (nofuse rerun on a rebuilt binary two commits after
+the other four points; tracked CSV still holding the invalid nofuse row) is
+being resolved by a full 5-point rerun with ONE binary at HEAD 54ab8bd
+(md5 334bbb9f...), `scripts/repro/perf_sweep.sh build build/perf_v2 --full`.
+The script now records git commit / binary md5 / driver in the CSV header and
+emits `energy_consistency.csv` (relative total-field-energy difference vs the
+fused reference at t = 100/300/600/900/1500/2999). On completion the tracked
+CSV, logs, deck snapshots, and energy summary will be committed together and
+the paper table finalized. Energy-agreement claims are now stated as
+"physically consistent" with the defined metric and measured tolerances
+(~1e-5 early linear, ~1e-3 by t≈600, few×1e-3 near saturation onset) — not
+"bit-identical", not "six significant figures".

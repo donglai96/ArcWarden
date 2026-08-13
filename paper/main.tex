@@ -570,11 +570,16 @@ comparison is dominated by architecture, not arithmetic.
 \subsection{Ablation: where the speedup comes from}
 \label{sec:ablation}
 
-Table~\ref{tab:ablation} is a clean single-session measurement: one
-binary, one night, full-length runs (206{,}897 steps each) with matched
-diagnostics, every configuration a one-line change to the same input
-deck (the \texttt{tile\_sort} and \texttt{tile\_migrate\_fused} runtime
-knobs); \texttt{scripts/repro/perf\_sweep.sh} regenerates the table.
+Table~\ref{tab:ablation} reports full-length runs (206{,}897 steps
+each) with matched diagnostics, every configuration a one-line change
+to the same input deck (the \texttt{tile\_sort} and
+\texttt{tile\_migrate\_fused} runtime knobs);
+\texttt{scripts/repro/perf\_sweep.sh} regenerates the table and
+records the git commit, binary checksum, and driver version alongside
+the numbers. \tocheck{table numbers being re-measured as one
+single-binary single-session sweep at the current commit (the row-2
+measurement currently comes from a rebuild two commits after the
+others); replace on completion}
 
 \begin{table}[htbp]
 \centering
@@ -604,11 +609,17 @@ particles. (An early development-time estimate of $+6.6\%$ for this
 element, taken on a different code state, is superseded by this
 controlled measurement; a short-run measurement understates the effect
 because the penalty grows once the plasma is hot and particles cross
-cells every step.) Field-energy histories of all ablation runs agree
-to six significant figures through the linear-growth phase and at the
-few-percent level in the saturated turbulent phase (the expected
-chaotic divergence of atomic-summation orderings at identical
-saturation amplitude).
+cells every step.) The ablation runs are \emph{physically consistent} in the
+following defined sense: taking the relative difference of the total
+field energy $|W-W_{\rm ref}|/W_{\rm ref}$ between each run and the
+fused reference, the paths agree to $\lesssim10^{-5}$ in the early
+linear phase ($t\lesssim300\,\omega_{pe}^{-1}$), drifting to
+$\sim10^{-3}$ by $t\approx600$ and a few $\times10^{-3}$ near
+saturation onset ($t\approx900$) --- float atomic-summation
+reordering amplified at the instability growth rate, the expected
+behavior of a chaotic system --- while saturated amplitudes and
+spectra agree at the few-percent level. Bit-level identity between
+paths holds only for the first few steps and is not claimed.
 
 Two supporting microbenchmarks: the tiled charge deposit alone is
 $6.4\times$ faster than global atomics (14.9 vs 2.3~Gdep/s); the plain
