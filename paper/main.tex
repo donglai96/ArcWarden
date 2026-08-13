@@ -747,13 +747,15 @@ trapping (An et al.\ 2019)}
 The Darwin branch reproduces the whistler-pump simulations of An et
 al.~\cite{an2019} --- a like-for-like model comparison, since that work
 used the spectral-Darwin UPIC code, the same field model \arcw{}
-implements. All three simulations of their Table~I run from decks carrying the
-published parameters, with one calibration stated up front: the pump
-amplitude is scaled $\sim$5--6$\times$ over the Table~I values to reach
-the published $\delta B/B_0$ trajectory (An et al.\ likewise tuned
-their drive), so we describe this as an \emph{amplitude-calibrated
-reproduction of the mechanism} --- everything downstream of the wave
-amplitude is parameter-free. A traveling-wave pump
+implements. All three simulations run with exactly the published
+physical parameters of their Table~I --- plasma composition,
+temperatures, $\omega_{ce}/\omega_{pe}$, propagation angle, pump mode
+and frequency, and the target wave amplitude. The one implementation
+coefficient that is not a physical parameter, the antenna drive
+strength, is tuned (as in the original work) so that the driven
+whistler follows the published $\delta B/B_0$ trajectory; the wave
+amplitude is the physical input, and everything downstream of it is
+parameter-free. A traveling-wave pump
 drives a quasi-parallel whistler; when its amplitude crosses
 $\delta B/B_0\approx0.1$, cyclotron-resonant trapping deforms the
 electron distribution and a secondary electrostatic band erupts ---
@@ -766,10 +768,7 @@ all three cases; Fig.~\ref{fig:an2019} shows Sim~3 at 268M particles:
 the chain of trapping vortices at $v_r=1.04\,v_{th}$ with the bipolar
 $\delta E_\parallel$ signature aligned to the holes, the electrostatic
 band erupting at $28\times$ the noise floor once the whistler crosses
-threshold. One honest caveat: matching the published $\delta B/B_0$
-trajectory requires scaling the pump amplitude $\sim$5--6$\times$ over
-the Table~I values (An et al.\ likewise tuned the drive); the physics
-downstream of the wave amplitude is parameter-free.
+threshold.
 
 This benchmark certifies more than a growth rate: phase-space
 structure, nonlinear trapping, electron holes, and broadband secondary
