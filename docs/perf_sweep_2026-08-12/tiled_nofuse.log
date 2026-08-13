@@ -1,0 +1,15 @@
+eaw2d_yee — 2D anisotropy-driven oblique whistler (full Maxwell)
+  grid 625x625  dx=0.0216  c=1  B0=(0.25,0,0)  jfilter=3
+  dt=0.0145  nsteps=206897 (tend=3000)  line/snap/part strides 69/3448/17241
+  particles: 156250000 (uth = 0.01678 0.03752 0.03752)
+t=   300.0  WE=6.612e-06  WB=1.074e-06  [226 s]
+t=   600.0  WE=8.915e-06  WB=9.723e-06  [452 s]
+t=   900.0  WE=3.759e-05  WB=7.618e-05  [678 s]
+t=  1200.0  WE=6.012e-05  WB=1.033e-04  [904 s]
+t=  1500.0  WE=4.688e-05  WB=7.769e-05  [1130 s]
+t=  1799.9  WE=3.448e-05  WB=5.701e-05  [1356 s]
+t=  2099.9  WE=3.385e-05  WB=4.450e-05  [1582 s]
+t=  2399.9  WE=3.073e-05  WB=3.566e-05  [1808 s]
+t=  2699.9  WE=2.323e-05  WB=2.925e-05  [2034 s]
+t=  2999.9  WE=2.435e-05  WB=2.374e-05  [2261 s]
+done: 2260.8 s (1.43e+10 particle-steps/s)

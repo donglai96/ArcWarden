@@ -98,3 +98,25 @@ the paper table finalized. Energy-agreement claims are now stated as
 "physically consistent" with the defined metric and measured tolerances
 (~1e-5 early linear, ~1e-3 by t≈600, few×1e-3 near saturation onset) — not
 "bit-identical", not "six significant figures".
+
+## DEFINITIVE sweep (2026-08-12 20:45 -> 08-13, one binary 334bbb9f @ 54ab8bd, driver 610.43.02)
+
+Archived in full (CSV + logs + deck snapshots + run_meta + energy histories +
+energy_consistency.csv): `docs/perf_sweep_2026-08-12/`. Supersedes ALL earlier
+sweep numbers in this file.
+
+| point | wall (s) | p-steps/s |
+|---|---|---|
+| flat | 8564.9 | 3.77e9 |
+| tiled, separate migrate | 2260.8 | 1.43e10 |
+| tiled, fused | 1900.8 | 1.70e10 |
+| cadence 10 | 1996.6 | 1.62e10 |
+| cadence 40 | 1862.0 | 1.74e10 |
+
+Chain: flat -> +tiled deposit 3.8x -> +fused migration +19% (4.5x total).
+Cross-session stability: flat reproduces to 0.05% (8564.9 vs 8560.4); the
+nofuse point measured 2947 s on a different build/session vs 2261 s here — a
+23% spread that justifies the one-binary-one-session protocol and the
+planned repetition requirement. Energy consistency (defined metric, see
+energy_consistency.csv): <=3e-5 for t<=300, chaotic divergence to 1e-3..1e-2
+in/after saturation.

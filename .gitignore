@@ -34,3 +34,4 @@ sessions/
 !docs/*.csv
 !comparison/**
 !profiling/*.txt
+!docs/perf_sweep_2026-08-12/**

@@ -543,7 +543,7 @@ OSIRIS 4.4.4 CUDA (quadratic, binomial-3) & \SI{5392.8}{s} & $6.0\times10^{9}$ &
 \end{table}
 
 The table pairs measurements taken in the same session on the same
-driver. The current build remeasures the \arcw{} run at \SI{1898.7}{s}
+driver. The current build remeasures the \arcw{} run at \SI{1900.8}{s}
 ($1.70\times10^{10}$, Table~\ref{tab:ablation}), which would raise the
 ratio to $2.8\times$; we quote the conservative matched-session figure
 and will refresh both sides together before submission.
@@ -570,16 +570,17 @@ comparison is dominated by architecture, not arithmetic.
 \subsection{Ablation: where the speedup comes from}
 \label{sec:ablation}
 
-Table~\ref{tab:ablation} reports full-length runs (206{,}897 steps
-each) with matched diagnostics, every configuration a one-line change
-to the same input deck (the \texttt{tile\_sort} and
-\texttt{tile\_migrate\_fused} runtime knobs);
-\texttt{scripts/repro/perf\_sweep.sh} regenerates the table and
-records the git commit, binary checksum, and driver version alongside
-the numbers. \tocheck{table numbers being re-measured as one
-single-binary single-session sweep at the current commit (the row-2
-measurement currently comes from a rebuild two commits after the
-others); replace on completion}
+Table~\ref{tab:ablation} is a single-binary, single-session
+measurement: all five configurations ran back-to-back from one
+executable (checksum recorded), one git commit, one driver, in one
+overnight session --- full-length runs (206{,}897 steps each) with
+matched diagnostics, every configuration a one-line change to the same
+input deck (the \texttt{tile\_sort} and \texttt{tile\_migrate\_fused}
+runtime knobs). \texttt{scripts/repro/perf\_sweep.sh} regenerates the
+table and records the provenance (git commit, binary checksum, driver
+version) in the archived CSV; the run logs, deck snapshots, run
+metadata, and energy histories for every point are committed with the
+repository (\texttt{docs/perf\_sweep\_2026-08-12/}).
 
 \begin{table}[htbp]
 \centering
@@ -591,35 +592,39 @@ session, matched diagnostics. Each row is a one-line deck change
 \toprule
 configuration & wall time & particle-steps/s & gain\\
 \midrule
-flat: fused kernel, global-atomic Esirkepov & \SI{8560.4}{s} & $3.78\times10^{9}$ & ---\\
+flat: fused kernel, global-atomic Esirkepov & \SI{8564.9}{s} & $3.77\times10^{9}$ & ---\\
 + $16{\times}16$ tile sort (every 20) + shared apron deposit,\\
-\quad separate migration kernel & \SI{2947.4}{s} & $1.10\times10^{10}$ & $2.9\times$\\
-+ migration fused into scatter write-back & \SI{1898.7}{s} & $1.70\times10^{10}$ & $+55\%$ ($4.5\times$ total)\\
+\quad separate migration kernel & \SI{2260.8}{s} & $1.43\times10^{10}$ & $3.8\times$\\
++ migration fused into scatter write-back & \SI{1900.8}{s} & $1.70\times10^{10}$ & $+19\%$ ($4.5\times$ total)\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 The chain attributes the gain to both design elements: the shared-apron
-deposit with the amortized sort contributes $2.9\times$, and fusing
+deposit with the amortized sort contributes $3.8\times$, and fusing
 the migration pass (periodic wrap + cell recompute) into the scatter
-write-back contributes a further $+55\%$ --- eliminating a separate
+write-back contributes a further $+19\%$ --- eliminating a separate
 streaming pass over the full particle set, and with it a second read
-and write of every particle's position, is far from free at 156M
-particles. (An early development-time estimate of $+6.6\%$ for this
-element, taken on a different code state, is superseded by this
-controlled measurement; a short-run measurement understates the effect
-because the penalty grows once the plasma is hot and particles cross
-cells every step.) The ablation runs are \emph{physically consistent} in the
-following defined sense: taking the relative difference of the total
-field energy $|W-W_{\rm ref}|/W_{\rm ref}$ between each run and the
-fused reference, the paths agree to $\lesssim10^{-5}$ in the early
-linear phase ($t\lesssim300\,\omega_{pe}^{-1}$), drifting to
-$\sim10^{-3}$ by $t\approx600$ and a few $\times10^{-3}$ near
-saturation onset ($t\approx900$) --- float atomic-summation
-reordering amplified at the instability growth rate, the expected
-behavior of a chaotic system --- while saturated amplitudes and
-spectra agree at the few-percent level. Bit-level identity between
-paths holds only for the first few steps and is not claimed.
+and write of every particle's position. (An early development-time
+estimate of $+6.6\%$ for this element, taken on a different code
+state, is superseded by this controlled measurement. We note for
+honesty that an isolated re-measurement of the no-fusion row on a
+different build in a different session gave \SI{2947}{s} rather than
+\SI{2261}{s} --- a 23\% spread that is exactly why this table is
+restricted to one binary and one session, and why the fairness
+protocol of Section~\ref{sec:discussion} requires repetitions.) The ablation runs are \emph{physically consistent} in the
+following defined sense (measured values in
+\texttt{energy\_consistency.csv}, archived with the sweep): taking
+the relative difference of the total field energy
+$|W-W_{\rm ref}|/W_{\rm ref}$ between each run and the fused
+reference, all paths agree to $\lesssim3\times10^{-5}$ through the
+early linear phase ($t\le300\,\omega_{pe}^{-1}$), then diverge
+chaotically through the exponential-growth phase --- float
+atomic-summation reordering amplified at the instability growth rate
+--- reaching the $10^{-3}$--$10^{-2}$ level in and after saturation,
+while saturated amplitudes and spectra agree at the same few-percent
+level. Bit-level identity between paths holds only for the first few
+steps and is not claimed.
 
 Two supporting microbenchmarks: the tiled charge deposit alone is
 $6.4\times$ faster than global atomics (14.9 vs 2.3~Gdep/s); the plain
