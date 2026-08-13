@@ -43,8 +43,15 @@ production runs — all deck-driven, launch when needed. Every runner writes
 | cadence 40 | 40 | 1 | 1858.9 | 1.74e10 |
 
 Findings: tiled/flat = **4.5×** (paper previously 3.4× from mixed-session
-short runs); **migration fusion is neutral at full scale** (0.3 s in 1899 —
-the historical +6.6% does not reproduce; reported as a null in the paper).
+short runs). **CORRECTION 2026-08-12 (external review):** the sweep script
+appended `tile_migrate_fused = 0` to the END of the deck, landing it in
+`[species electrons]` where the section-scoped parser silently ignored it —
+the "nofuse" row above actually ran WITH fusion, so the "fusion is null"
+finding was an artifact. Fixed: script now inserts the knob inside `[field]`
+and self-checks; the deck parser hard-errors on unknown keys in known
+sections; the nofuse point is being rerun full-length. (The short smoke with
+correct insertion measured 1.41e10 vs 1.69e10 — fusion is likely a real
++15-20% effect.)
 Field energies bit-identical across paths at early times; ~4% spread at
 t≈3000 (chaotic saturated phase, same amplitude). ArcWarden side of the
 head-to-head remeasures at 1898.7 s (would be 2.8× vs OSIRIS's July

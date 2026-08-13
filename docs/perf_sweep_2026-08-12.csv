@@ -1,0 +1,6 @@
+point,tile_sort,tile_migrate_fused,tend,wall_s,psteps_per_s
+flat,0,1,3000,8560.4,3.78e+09
+tiled_nofuse,20,0,3000,1899.0,1.7e+10
+tiled_fused,20,1,3000,1898.7,1.7e+10
+cadence10,10,1,3000,1994.7,1.62e+10
+cadence40,40,1,3000,1858.9,1.74e+10

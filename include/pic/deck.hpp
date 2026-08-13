@@ -20,6 +20,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -102,7 +103,7 @@ inline Deck load_deck(const std::string& path) {
     Deck d;
     d.rp.eps0 = 1.0; d.rp.n0 = 1.0; d.rp.qm = -1.0; d.rp.wpe = 1.0;
 
-    std::string line, section;
+    std::string line, section, warned_section;
     int line_no = 0;
     while (std::getline(f, line)) {
         ++line_no;
@@ -136,16 +137,26 @@ inline Deck load_deck(const std::string& path) {
 
         auto dv = [&] { return std::stod(val); };
         auto iv = [&] { return std::stol(val); };
+        // Unknown keys in a KNOWN section are hard errors: a silently ignored
+        // knob (e.g. tile_migrate_fused appended into [species]) invalidates
+        // an experiment without any symptom.
+        auto unknown_key = [&]() -> void {
+            throw std::runtime_error("deck: unknown key '" + key + "' in [" +
+                section + "] at line " + std::to_string(line_no) +
+                " (typo, or key placed in the wrong section?)");
+        };
 
         if (section == "grid") {
             if      (key == "nx") d.nx = static_cast<int>(iv());
             else if (key == "ny") d.ny = static_cast<int>(iv());
             else if (key == "Lx") d.Lx = dv();
             else if (key == "Ly") d.Ly = dv();
+            else unknown_key();
         } else if (section == "time") {
             if      (key == "dt")         d.rp.dt = dv();
             else if (key == "nsteps")     d.rp.nsteps = iv();
             else if (key == "dump_every") d.dump_every = iv();
+            else unknown_key();
         } else if (section == "plasma") {
             if      (key == "qm")    d.rp.qm = dv();
             else if (key == "eps0")  d.rp.eps0 = dv();
@@ -156,6 +167,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "rel")     d.rp.rel = detail::deck_bool(val) ? 1 : 0;
             else if (key == "bnoise")  d.bnoise = dv();
             else if (key == "outdir") d.outdir = val;
+            else unknown_key();
         } else if (section.rfind("species", 0) == 0) {
             if (d.species.empty()) throw std::runtime_error("deck: species key outside a species block");
             Species& sp = d.species.back();
@@ -172,6 +184,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "rho")   sp.lc_rho = dv();
             else if (key == "taud")  sp.taud = dv();     // δf drift injection
             else if (key == "wdnoise") sp.wdnoise = dv();  // δf initial wd noise
+            else unknown_key();
         } else if (section == "field") {
             if      (key == "model")    { d.darwin = (val == "darwin"); d.yee = (val == "yee"); }
             else if (key == "dx_wpe_c") d.dx_wpe_c = dv();
@@ -180,6 +193,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "jfilter")  d.rp.jfilter = static_cast<int>(iv());
             else if (key == "tile_sort") d.rp.tile_sort = static_cast<int>(iv());
             else if (key == "tile_migrate_fused") d.rp.tile_migrate_fused = static_cast<int>(iv());
+            else unknown_key();
         } else if (section == "antenna") {
             // M2/M10 (Yee branch): localized rotating transverse current column
             if      (key == "amp")   d.rp.ant_amp = dv();
@@ -188,12 +202,14 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "w0")    d.rp.ant_w0 = dv();
             else if (key == "trmp")  d.rp.ant_trmp = dv();
             else if (key == "toff")  d.rp.ant_toff = dv();
+            else unknown_key();
         } else if (section == "boundary") {
             // M2 (Yee branch): [boundary] x = damping|periodic, nd, numax
             if      (key == "x")     d.rp.bnd_x = (val == "hybrid") ? 2
                                                 : (val == "damping") ? 1 : 0;
             else if (key == "nd")    d.rp.bnd_nd = static_cast<int>(iv());
             else if (key == "numax") d.rp.bnd_numax = dv();
+            else unknown_key();
         } else if (section == "background") {
             if      (key == "wce")       { d.wce = dv(); d.rp.wce = d.wce; }
             else if (key == "theta_deg") d.theta_deg = dv();
@@ -209,6 +225,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "a")       d.rp.b0_a = dv();
             else if (key == "lre")     d.rp.b0_lre = dv();
             else if (key == "xc")      { d.rp.b0_xc = dv(); d.b0_xc_set = true; }
+            else unknown_key();
         } else if (section == "pump") {
             if      (key == "enable") d.pump_enable = detail::deck_bool(val);
             else if (key == "mode")   d.pump_M = static_cast<int>(iv());
@@ -219,6 +236,7 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "amp")    d.pump_amp = dv();
             else if (key == "trmp")   d.pump_trmp = dv();
             else if (key == "toff")   d.pump_toff = dv();
+            else unknown_key();
         } else if (section == "diagnostics") {
             if      (key == "enable") { std::istringstream is(val); std::string m;
                                         while (is >> m) d.diag_enable.push_back(m); }
@@ -230,8 +248,16 @@ inline Deck load_deck(const std::string& path) {
             else if (key == "prefix")    d.prefix = val;
             else if (key == "probes")  { std::istringstream is(val); double p;
                                          while (is >> p) d.probes.push_back(p); }
+            else unknown_key();
+        } else {
+            // unknown SECTIONS warn once (decks are shared across runners with
+            // private sections, e.g. [chirp] for the 1D hybrid loader)
+            if (section != warned_section) {
+                std::fprintf(stderr, "deck: warning: ignoring unknown section [%s]\n",
+                             section.c_str());
+                warned_section = section;
+            }
         }
-        // unknown sections/keys are ignored (forward-compatible)
     }
 
     if (d.nx <= 0 || d.ny <= 0 || d.Lx <= 0.0 || d.Ly <= 0.0)

@@ -36,9 +36,13 @@ echo "point,tile_sort,tile_migrate_fused,tend,wall_s,psteps_per_s" > "$CSV"
 run_point() {  # name tile_sort fused
   local name=$1 ts=$2 fused=$3
   local deck=$OUT/deck_$name.ini
-  sed -e "s/^tile_sort *=.*/tile_sort = $ts/" "$DECK" > "$deck"
-  [ "$fused" = 0 ] && echo "tile_migrate_fused = 0" >> "$deck"
-  [ "$ts" = 0 ] && sed -i '/^tile_sort/d' "$deck"
+  # tile_migrate_fused must land INSIDE the [field] section (the parser is
+  # section-scoped) — insert it on the tile_sort line, never append to EOF.
+  sed -e "s/^tile_sort *=.*/tile_sort = $ts\ntile_migrate_fused = $fused/" \
+      "$DECK" > "$deck"
+  [ "$ts" = 0 ] && sed -i '/^tile_sort\|^tile_migrate_fused/d' "$deck"
+  grep -A20 '^\[field\]' "$deck" | grep -q "tile_migrate_fused = $fused" || [ "$ts" = 0 ] || {
+    echo "error: knob failed to land in [field] section of $deck" >&2; exit 1; }
   echo "== $name (tile_sort=$ts fused=$fused tend=$TEND)"
   local log=$OUT/$name.log
   "$BIN" "$deck" "$OUT/run_$name" --tend="$TEND" | tee "$log" | tail -1

@@ -26,3 +26,11 @@ sessions/
 !.vscode/tasks.json
 *.swp
 .DS_Store
+
+# Tracked exceptions: paper figures, archived measurement data, comparison
+# inputs — a clean clone must rebuild the paper (figs are paper sources).
+!paper/figs/*.png
+!docs/figs/*.png
+!docs/*.csv
+!comparison/**
+!profiling/*.txt

@@ -44,15 +44,20 @@ step is a single fused kernel (field gather, Boris push, current scatter,
 and migration), currents accumulate in shared-memory tile aprons, and the
 particle sort that enables tiling is amortized over tens of steps and
 \emph{stale-tolerant} --- correctness never depends on sort recency. On
-identical physics (an anisotropy-driven whistler and electron-acoustic-wave
-problem with 156~million particles and $2.1\times10^{5}$ steps), \arcw{}
-is $2.6\times$ faster than the CUDA branch of the OSIRIS framework on the
-same device, sustaining $1.55\times10^{10}$ particle-steps per second.
+the same physical problem with matched physical parameters and diagnostics
+(an anisotropy-driven whistler and electron-acoustic-wave problem with
+156~million particles and $2.1\times10^{5}$ steps), \arcw{} is $2.6\times$
+faster than the CUDA branch of the OSIRIS framework on the same device,
+sustaining $1.55\times10^{10}$ particle-steps per second (the codes differ
+in interpolation order --- quadratic vs linear-plus-filter --- a difference
+we bound at the 7\% level by direct measurement).
 A modular architecture lets electrostatic, spectral-Darwin, and
 full-Maxwell field solvers --- together with inhomogeneous background
 fields, loss-cone and anisotropic distributions, $\delta f$ and cold-fluid
-species, and absorbing boundaries --- share one tested GPU particle
-engine, with every physics setup expressed as a runtime input deck.
+species, and absorbing boundaries --- share one tested 2D GPU particle
+engine (a specialized 1D electron-hybrid engine shares the framework's
+building blocks), with every physics setup expressed as a runtime input
+deck.
 \arcw{} passes a three-level validation ladder: textbook verification
 (dispersion, growth rates, conservation), reproduction of the published
 nonlinear trapping simulations of An et al.\ [PRL 122, 045101 (2019)],
@@ -112,8 +117,9 @@ runtime modules rather than code forks.}
 paper:
 
 \begin{enumerate}
-\item \textbf{Performance} (Section~\ref{sec:perf}). On identical
-  physics with matched diagnostics, \arcw{} completes a 156-million-particle,
+\item \textbf{Performance} (Section~\ref{sec:perf}). On the same
+  physical problem with matched parameters and diagnostics, \arcw{}
+  completes a 156-million-particle,
   207{,}000-step kinetic run $2.6\times$ faster than OSIRIS-CUDA on the
   same GPU; an ablation chain attributes the gain to each design element,
   and direct measurements show the classic chunk-pipeline design is
@@ -290,8 +296,9 @@ mode power and $\delta B/B_0$ spectra, $k$--$t$ and $\omega$--$k$
 reductions, phase-space frames and movies, field snapshots, and
 energy/charge histories (accumulated in double precision). Heavy
 reductions run on-device; only reduced arrays cross to the host.
-Checkpointing serializes the full particle and field state with the
-run metadata needed for exact restart.
+A versioned checkpoint \emph{format} (header, verbatim deck text, git
+hash, and an array manifest) is defined and format-tested; full-state
+streaming restart is a planned milestone and is stated as such.
 
 \subsection{Correctness gates}
 \label{sec:arch-gates}
@@ -316,8 +323,9 @@ Particles obey the relativistic Lorentz equation, integrated with the
 Boris rotation \cite{boris1970} in leapfrog arrangement; velocities are
 rolled back half a step at initialization. Interpolation is linear
 (CIC) on gather and scatter in all results shown; the deposit framework
-is templated over the assignment function, so quadratic (TSC) shapes
-drop in with a one-cell-wider apron.
+is templated over the assignment function so that quadratic (TSC) shapes
+can be added with a one-cell-wider apron, but TSC is not yet implemented
+--- all results in this paper are CIC.
 
 \subsection{Electrostatic and Darwin spectral solvers}
 \label{sec:model-darwin}
@@ -336,7 +344,10 @@ elliptic system
 with \eqref{eq:et} closed by the acceleration ($\dot J$) and
 momentum-flux ($\langle\mathbf{uu}\rangle$) moments in the standard
 Darwin formulation \cite{nielson1976}, solved in one shot in $k$-space
-via the resummed transverse Green's function. No light wave exists in
+via the resummed transverse Green's function. The electrostatic and
+Darwin particle path is currently non-relativistic ($\gamma\equiv1$;
+appropriate for the $v/c\lesssim0.1$ regimes shown here); the Yee and
+hybrid branches use the relativistic push. No light wave exists in
 the model, so the time step is set by $\omega_{pe}\Delta t\lesssim0.2$
 and particle transit rather than the light CFL condition --- a
 $6.9\times$ larger step than the Yee branch on the whistler problems of
@@ -361,7 +372,10 @@ update carries only self-consistent fields.
 \subsection{One-dimensional electron-hybrid model}
 \label{sec:model-hybrid}
 For field-aligned whistler studies the framework provides a 1D
-electron-hybrid branch in the Katoh--Omura model class
+electron-hybrid branch --- a specialized engine sharing the framework's
+building blocks (deposit stencils, $\delta f$ machinery, boundary masks)
+rather than the 2D particle engine itself --- in the Katoh--Omura model
+class
 \cite{katoh2007,omura2021}: transverse fields on a staggered 1D grid,
 a linearized cold electron fluid carrying the whistler dispersion,
 relativistic kinetic hot electrons (full-$f$ or nonlinear $\delta f$),
@@ -404,6 +418,36 @@ correct?} The \texttt{ctest} suite covers, per branch:
   grid; anisotropy-driven growth rate against the kinetic dispersion
   solver; $\delta f$ equilibrium hold under inhomogeneous $B_0$.
 \end{itemize}
+
+Table~\ref{tab:verify} collects the quantitative gates with their
+measured values and references; each row is a \texttt{ctest} that
+must pass on every commit.
+\tocheck{add grid-resolution and time-step convergence rows and a
+seed-sensitivity study --- planned before submission}
+
+\begin{table}[htbp]
+\centering
+\caption{Quantitative verification gates (RTX 5090, values as asserted
+by the test suite; deck/grid parameters in the named tests).}
+\label{tab:verify}
+\small
+\begin{tabular}{llllr}
+\toprule
+quantity & branch & measured & reference & rel.\ err\\
+\midrule
+Langmuir frequency & ES spectral & $0.9996\,\omega_{pe}$ & $1.0$ & $0.04\%$\\
+two-stream growth rate & ES spectral & $0.343\,\omega_{pe}$ & $\omega_{pe}/\sqrt8$ (cold) & $3\%$ (thermal)\\
+whistler eigenmode & Darwin & $0.44980\,\omega_{pe}$ & $0.45000$ (Darwin disp.) & $0.05\%$\\
+whistler eigenmode & Yee & $0.44885\,\omega_{pe}$ & $0.44897$ (full Maxwell) & $0.03\%$\\
+inter-branch $\Delta\omega$ & Darwin vs Yee & $0.21\%$ & $0.23\%$ (displacement current) & ---\\
+loss-cone linear growth & hybrid $\delta f$ & $3.86\times10^{-3}\,\Omega_e$ & $3.9\times10^{-3}$ (disp.\ solver) & $2\%$\\
+dipole bounce period & particle & --- & independent RK4 & $0.16\%$\\
+continuity residual & Yee tiled + stale sort & $4.6\times10^{-6}$ & $0$ & ---\\
+Gauss-law drift & Yee (Esirkepov) & $2\times10^{-7}$ & $0$ & ---\\
+J-identity (tiled vs flat) & Yee & $2\times10^{-7}$ & $0$ & ---\\
+\bottomrule
+\end{tabular}
+\end{table}
 
 Figure~\ref{fig:verify} condenses the electrostatic-branch level of the
 ladder into one deck-driven figure (produced by
@@ -484,7 +528,8 @@ the linear phase.
 
 \begin{table}[htbp]
 \centering
-\caption{End-to-end wall time, identical physics and diagnostics.
+\caption{End-to-end wall time, same physical problem, matched physical
+parameters and diagnostics (interpolation orders differ; see text).
 156.25M particles, 206{,}897 steps, same RTX 5090.}
 \label{tab:headtohead}
 \begin{tabular}{lccc}
@@ -643,10 +688,12 @@ that choice a one-line deck edit rather than a different code.
 \label{sec:modules}
 
 The second claim of the paper is that the performance of
-Section~\ref{sec:perf} does not come at the price of rigidity. All
+Section~\ref{sec:perf} does not come at the price of rigidity. The 2D
 capabilities in Table~\ref{tab:modules} share the same particle engine,
-deposit framework, and correctness gates; each was added as a module
-against the tested core, and each is selected at runtime by a deck.
+deposit framework, and correctness gates (the 1D hybrid rows share the
+framework's building blocks; Section~\ref{sec:model-hybrid}); each was
+added as a module against the tested core, and each is selected at
+runtime by a deck.
 A single physics setup can be moved between field models by editing one
 line (\texttt{[field] model = es | darwin | yee}), which is also how
 the cross-branch validations of Section~\ref{sec:verify-cross} are run.
@@ -700,8 +747,13 @@ trapping (An et al.\ 2019)}
 The Darwin branch reproduces the whistler-pump simulations of An et
 al.~\cite{an2019} --- a like-for-like model comparison, since that work
 used the spectral-Darwin UPIC code, the same field model \arcw{}
-implements. All three simulations of their Table~I run from decks
-carrying the published parameters verbatim: a traveling-wave pump
+implements. All three simulations of their Table~I run from decks carrying the
+published parameters, with one calibration stated up front: the pump
+amplitude is scaled $\sim$5--6$\times$ over the Table~I values to reach
+the published $\delta B/B_0$ trajectory (An et al.\ likewise tuned
+their drive), so we describe this as an \emph{amplitude-calibrated
+reproduction of the mechanism} --- everything downstream of the wave
+amplitude is parameter-free. A traveling-wave pump
 drives a quasi-parallel whistler; when its amplitude crosses
 $\delta B/B_0\approx0.1$, cyclotron-resonant trapping deforms the
 electron distribution and a secondary electrostatic band erupts ---
@@ -741,14 +793,43 @@ exercises most of Table~\ref{tab:modules} at once: an inhomogeneous
 (mirror) background field $B_0(h)$, an anisotropic hot electron
 population held in a mirror equilibrium, absorbing field boundaries and
 reflecting particle boundaries, and a triggering antenna --- the setup
-of Tao et al.~\cite{tao2017} for rising-tone chorus. From these
-published parameters the 1D electron-hybrid branch self-consistently
-generates coherent whistler-mode wave elements whose frequency
-\emph{chirps} upward, together with the resonant phase-space hole whose
-motion accompanies the sweep (Fig.~\ref{fig:chirp}); the element
-timing, chirp rate, and subpacket structure match the published run,
-and a $\delta f$ null test (no anisotropy drive $\to$ no element)
-confirms the emission is physical, not numerical.
+of Tao et al.~\cite{tao2017} for rising-tone chorus. The 1D
+electron-hybrid branch self-consistently generates coherent
+whistler-mode wave elements whose frequency \emph{chirps} upward,
+together with the resonant phase-space hole whose motion accompanies
+the sweep (Fig.~\ref{fig:chirp}); a $\delta f$ null test (no
+anisotropy drive $\to$ no element) confirms the emission is physical,
+not numerical. We call this a \emph{triggered capability
+demonstration}, not a strict reproduction, and
+Table~\ref{tab:tao-dev} states the agreement and the deviations
+side by side. Two setup notes: we adopt a hot-electron density
+$n_h/n_c=0.6\%$ --- the value stated by Wu et al.~\cite{wu2020} from
+the same group --- because with the $6\%$ printed in
+Ref.~\cite{tao2017} the linear growth is so fast that the band
+saturates long before the published element window (we read the
+$6\%$ as a misprint); and our triggering antenna is not
+amplitude-tuned to theirs, which we believe drives the amplitude
+excess in the table.
+
+\begin{table}[htbp]
+\centering
+\caption{Triggered chirping demonstration vs Tao et al.~\cite{tao2017}.}
+\label{tab:tao-dev}
+\small
+\begin{tabular}{lll}
+\toprule
+quantity & Tao et al.\ 2017 & \arcw\\
+\midrule
+element frequency band & $0.27\to0.67\,\Omega_e$ & $0.25\to0.7\,\Omega_e$\\
+chirp rate $\partial\omega/\partial t$ & $5.3\times10^{-4}\,\Omega_e^2$ & $4.2\times10^{-4}\,\Omega_e^2$ ($-21\%$)\\
+element window & $t\approx1133$--$1886\,\Omega_e^{-1}$ & $t\approx600$--$2000\,\Omega_e^{-1}$ (earlier onset)\\
+peak amplitude & --- & $\delta B/B_0\approx0.05$, $\sim$3--5$\times$ theirs (un-tuned trigger)\\
+subpackets & period 92--130$\,\Omega_e^{-1}$ & quasi-periodic envelope modulation\\
+phase-space hole & at $v_R$, tracks $\omega(t)$ & tracks $u_R(\omega(t))$ within island width\\
+hot density $n_h/n_c$ & $6\%$ (printed) / $0.6\%$ \cite{wu2020} & $0.6\%$\\
+\bottomrule
+\end{tabular}
+\end{table}
 
 We present this as a \emph{capability demonstration}, not a study of
 the chirping mechanism: frequency chirping is exquisitely sensitive to
@@ -846,11 +927,17 @@ to any architecture, including the exascale codes.
 
 \paragraph{Comparison fairness.}
 OSIRIS ran its production configuration (quadratic shapes); \arcw{} ran
-linear+filter. The overhead-bound measurements
+linear+filter --- the same physical problem and parameters, not
+identical numerics. The overhead-bound measurements
 (Section~\ref{sec:overhead}) bound the effect of this difference at
-$\sim$7\% of the OSIRIS rate; a quadratic tiled deposit in the
-\texttt{Sink} framework is the cleanest way to close the gap entirely.
-\tocheck{decide before submission}
+$\sim$7\% of the OSIRIS rate, but the definitive comparison is a
+protocol, which we commit to before submission: identical particle
+shape and current filter (a quadratic tiled deposit in the
+\texttt{Sink} framework), both codes rebuilt against the same CUDA
+driver, GPU clocks pinned, and at least three repetitions per
+configuration with the spread reported. The OSIRIS input file used for
+the present comparison is included in the repository
+(\texttt{comparison/osiris/}).
 
 \paragraph{Limitations and roadmap.}
 All results are single-GPU, single-precision hot path, 2D3V (1D for the
@@ -882,8 +969,8 @@ agent-written GPU code can be trusted in scientific computing.
 GPUs actually provide --- cache-resident fields, fused step kernels,
 shared-memory scatter aprons, and amortized stale-tolerant sorting ---
 is simultaneously fast, extensible, and scientifically capable:
-$2.6\times$ the throughput of an established GPU-PIC framework on
-identical physics, with the gain accounted element by element; a
+$2.6\times$ the throughput of an established GPU-PIC framework on the
+same benchmark problem, with the gain accounted element by element; a
 runtime-modular physics layer in which field models, background
 geometries, distributions, and boundaries share one tested particle
 engine; and a validation ladder that runs from textbook dispersion

@@ -1,0 +1,113 @@
+! EAW_ECH_whistler case 7 on OSIRIS CUDA — comparison run vs ArcWarden.
+! Physics identical to eaw_ech_search_case7 (quadratic + binomial-3 smooth);
+! node_conf adapted to the GPU algorithm (single GPU, tiled). Diagnostics
+! matched to the ArcWarden runner: 6-field 2D dumps every 50/wpe, lineouts
+! along x1 every 1/wpe (ndump = 69 steps = 1/wpe).
+
+simulation
+{
+  algorithm = "cuda",
+}
+
+node_conf
+{
+  node_number(1:2) = 1, 1,
+  n_threads = 1,
+  if_periodic(1:2) = .true., .true.,
+  tile_number(1:2) = 25, 25,
+  tile_topology = "snake",
+  chunk_size = 512,
+  chunk_pool_size = 400000,
+  nchunks_pad = 3,
+}
+
+grid
+{
+  nx_p(1:2) = 625, 625,
+  coordinates = "cartesian",
+}
+
+time_step
+{
+  dt = 0.0145d0,
+  ndump = 69,
+}
+
+restart
+{
+}
+
+space
+{
+  xmin(1:2) = 0.000d0, 0.000d0,
+  xmax(1:2) = 13.50d0, 13.50d0,
+  if_move(1:2) = .false., .false.,
+}
+
+time
+{
+  tmin = 0.0d0, tmax = 3000.0d0,
+}
+
+el_mag_fld
+{
+  ext_fld = "static",
+  ext_b0(1:3) = 0.25d0, 0.0d0, 0.0d0,
+  ext_e0(1:3) = 0.00d0, 0.0d0, 0.0d0,
+}
+
+emf_bound
+{
+}
+
+diag_emf
+{
+  ndump_fac = 50,
+  ndump_fac_lineout = 1,
+  reports = "e1", "e2", "e3", "b1", "b2", "b3",
+            "e1, line, x1, 270",
+            "e2, line, x1, 270",
+            "b2, line, x1, 270",
+            "b3, line, x1, 270",
+}
+
+particles
+{
+  interpolation = "quadratic",
+  num_species = 1,
+}
+
+species
+{
+  name = "electron1",
+  rqm = -1.0,
+  num_par_x(1:2) = 20, 20,
+  n_sort = 0,
+  push_type = 'standard',
+}
+
+udist
+{
+  uth(1:3) = 0.01678, 0.03752, 0.03752,
+  ufl(1:3) = 0.0d0, 0.0d0, 0.0d0,
+}
+
+profile
+{
+  density = 1.0,
+  profile_type = "uniform",
+}
+
+spe_bound
+{
+}
+
+current
+{
+}
+
+smooth
+{
+  type(1:2) = "binomial", "binomial",
+  order(1:2) = 3, 3,
+}
