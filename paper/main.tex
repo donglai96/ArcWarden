@@ -579,7 +579,8 @@ knobs); \texttt{scripts/repro/perf\_sweep.sh} regenerates the table.
 \begin{table}[htbp]
 \centering
 \caption{Ablation chain: full-length benchmark runs, one binary, one
-session, matched diagnostics. Each row is a one-line deck change.}
+session, matched diagnostics. Each row is a one-line deck change
+(\texttt{tile\_sort}, \texttt{tile\_migrate\_fused}).}
 \label{tab:ablation}
 \begin{tabular}{lccc}
 \toprule
@@ -587,24 +588,26 @@ configuration & wall time & particle-steps/s & gain\\
 \midrule
 flat: fused kernel, global-atomic Esirkepov & \SI{8560.4}{s} & $3.78\times10^{9}$ & ---\\
 + $16{\times}16$ tile sort (every 20) + shared apron deposit,\\
-\quad separate migration kernel & \SI{1899.0}{s} & $1.70\times10^{10}$ & $4.5\times$\\
-+ migration fused into scatter write-back & \SI{1898.7}{s} & $1.70\times10^{10}$ & within noise\\
+\quad separate migration kernel & \SI{2947.4}{s} & $1.10\times10^{10}$ & $2.9\times$\\
++ migration fused into scatter write-back & \SI{1898.7}{s} & $1.70\times10^{10}$ & $+55\%$ ($4.5\times$ total)\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The chain isolates the design elements honestly: the shared-apron
-deposit with the amortized sort carries the entire $4.5\times$ gain,
-while fusing the migration pass into the scatter write-back --- a
-$+6.6\%$ effect in an earlier development-time measurement --- is
-neutral at full scale in the current build (the separate migrate kernel
-is a cheap streaming pass, and the fused path pays the equivalent wrap
-arithmetic inside the hot kernel). We report the null rather than the
-historical number; the \texttt{tile\_migrate\_fused} knob exists
-precisely so this row stays measurable. Field-energy histories of all
-ablation runs are bit-identical through the linear-growth phase and
-agree at the few-percent level in the saturated turbulent phase (the
-expected chaotic divergence of atomic-summation orderings at identical
+The chain attributes the gain to both design elements: the shared-apron
+deposit with the amortized sort contributes $2.9\times$, and fusing
+the migration pass (periodic wrap + cell recompute) into the scatter
+write-back contributes a further $+55\%$ --- eliminating a separate
+streaming pass over the full particle set, and with it a second read
+and write of every particle's position, is far from free at 156M
+particles. (An early development-time estimate of $+6.6\%$ for this
+element, taken on a different code state, is superseded by this
+controlled measurement; a short-run measurement understates the effect
+because the penalty grows once the plasma is hot and particles cross
+cells every step.) Field-energy histories of all ablation runs agree
+to six significant figures through the linear-growth phase and at the
+few-percent level in the saturated turbulent phase (the expected
+chaotic divergence of atomic-summation orderings at identical
 saturation amplitude).
 
 Two supporting microbenchmarks: the tiled charge deposit alone is

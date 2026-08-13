@@ -37,7 +37,8 @@ production runs — all deck-driven, launch when needed. Every runner writes
 | point | tile_sort | fused | wall (s) | p-steps/s |
 |---|---|---|---|---|
 | flat | 0 | — | 8560.4 | 3.78e9 |
-| tiled, separate migrate | 20 | 0 | 1899.0 | 1.70e10 |
+| tiled, separate migrate (INVALID — knob ignored, see below) | 20 | 0* | 1899.0 | 1.70e10 |
+| tiled, separate migrate (CORRECTED rerun) | 20 | 0 | 2947.4 | 1.10e10 |
 | tiled, fused migrate | 20 | 1 | 1898.7 | 1.70e10 |
 | cadence 10 | 10 | 1 | 1994.7 | 1.62e10 |
 | cadence 40 | 40 | 1 | 1858.9 | 1.74e10 |
@@ -49,9 +50,11 @@ appended `tile_migrate_fused = 0` to the END of the deck, landing it in
 the "nofuse" row above actually ran WITH fusion, so the "fusion is null"
 finding was an artifact. Fixed: script now inserts the knob inside `[field]`
 and self-checks; the deck parser hard-errors on unknown keys in known
-sections; the nofuse point is being rerun full-length. (The short smoke with
-correct insertion measured 1.41e10 vs 1.69e10 — fusion is likely a real
-+15-20% effect.)
+sections; the corrected full-length rerun gives **2947.4 s / 1.10e10** —
+migration fusion is a real **+55%** effect (2.9x -> 4.5x in the chain), larger
+than the short-smoke +20% because the penalty grows once the plasma is hot.
+Energy histories fused vs nofuse agree to 6 significant figures through the
+linear phase — physics identical, performance only.
 Field energies bit-identical across paths at early times; ~4% spread at
 t≈3000 (chaotic saturated phase, same amplitude). ArcWarden side of the
 head-to-head remeasures at 1898.7 s (would be 2.8× vs OSIRIS's July
