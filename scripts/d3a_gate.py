@@ -73,8 +73,11 @@ def band_power_win(z, tOe, ts, wce, w1, w2, t1, t2):
 
 
 def gamma_windows(env, tOe):
+    """two fit windows scaled to run length; == ((1000,5000),(5000,9500))
+    for the original t10000 run (d3b generalization, frozen pre-data)."""
+    te = tOe[-1]
     out = []
-    for t1, t2 in ((1000.0, 5000.0), (5000.0, 9500.0)):
+    for t1, t2 in ((1000.0, 0.5 * te), (0.5 * te, te - 500.0)):
         s = (tOe > t1) & (tOe < t2)
         out.append(np.polyfit(tOe[s], np.log(env[s] + 1e-30), 1)[0]
                    if s.sum() > 10 else np.nan)
@@ -137,7 +140,8 @@ def main(d3, d2):
     envUB = band_env(z, ts, 0.55, 0.70, wce)
     gUB = gamma_windows(envUB, tOe)
     pub_early = band_power_win(z, tOe, ts, wce, 0.55, 0.70, 500, 1500)
-    pub_late = band_power_win(z, tOe, ts, wce, 0.55, 0.70, 8500, 9800)
+    te = tOe[-1]
+    pub_late = band_power_win(z, tOe, ts, wce, 0.55, 0.70, te - 1500, te - 200)
     ub_ratio = pub_late / pub_early
     emerged = (ub_ratio > 10) and (np.nanmax(gUB) > 1e-4)
     print(f"G2 UB emergence: P_UB late/early = {ub_ratio:.2f}, gamma_UB = "
@@ -156,15 +160,16 @@ def main(d3, d2):
     # D2 control, same measures
     z2, t2v, ts2 = probe_z(d2, m2, int(m2["nprobe"]) // 2)
     t2Oe = t2v * m2["wce"]
-    pub2 = band_power_win(z2, t2Oe, ts2, m2["wce"], 0.55, 0.70, 8500, 9800)
-    plb2 = band_power_win(z2, t2Oe, ts2, m2["wce"], 0.20, 0.45, 8500, 9800)
-    plb3 = band_power_win(z, tOe, ts, wce, 0.20, 0.45, 8500, 9800)
-    print(f"D2 control [8500,9800]: UB/LB = {pub2 / plb2:.3e}; "
+    te2 = t2Oe[-1]
+    pub2 = band_power_win(z2, t2Oe, ts2, m2["wce"], 0.55, 0.70, te2 - 1500, te2 - 200)
+    plb2 = band_power_win(z2, t2Oe, ts2, m2["wce"], 0.20, 0.45, te2 - 1500, te2 - 200)
+    plb3 = band_power_win(z, tOe, ts, wce, 0.20, 0.45, te - 1500, te - 200)
+    print(f"D2 control [te-1500,te-200]: UB/LB = {pub2 / plb2:.3e}; "
           f"D3a UB/LB = {pub_late / plb3:.3e}"
           f"  (fuel-loaded vs fuel-free contrast)")
 
     # ---- attribution readouts ------------------------------------------
-    f1, b2b, nw = bicoherence_diag(z[tOe > 5000], ts, wce)
+    f1, b2b, nw = bicoherence_diag(z[tOe > 0.5 * te], ts, wce)
     band = (f1 > 0.20) & (f1 < 0.40)
     j = int(np.argmax(b2b * band))
     print(f"A1 harmonic: max b2(f,f) in LB = {b2b[j]:.4f} at f = {f1[j]:.3f} "
