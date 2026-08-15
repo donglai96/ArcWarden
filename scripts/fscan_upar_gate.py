@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """F0-SCAN frozen verdict tool (task #41, 2026-08-15). FROZEN BEFORE any
-scan-arm data exists. u_par ladder at fixed A=1.5 on the d120 base
-(x4 atmo40, nh 0.0120); anchor = existing d120_ctrl (u_par 0.198).
+scan-arm data exists. v2 after user redirect ("not d120, clear chirping
+base"): u_par ladder at fixed A=0.52 on giant_x4_atmo40 (nh 0.0178, the
+discrete rising-tone element train); anchor = existing giant_x4_atmo40
+run (u_par 0.198). d120_ctrl kept in the tables as tool calibrant only
+(its eq omega_stop 0.491 reproduces the density-ladder history).
 
 Stations: verdict station = EQUATOR (continuity with the density-ladder
 anchor convention: eq omega_stop reproduces the historical 0.49 exactly;
@@ -55,18 +58,21 @@ from lumorph_gate import spec, w10_occupancy, follow, element_from_traj
 # arm -> (u_par, tracker seed f, pre-registered birth window lo/hi (hi=None
 # means open-ended), B_opt table {w: B_opt} from omura pre-reg run)
 ARMS = {
-    "d120_ctrl": (0.198, 0.25, (0.22, 0.28)),
-    "d120_up16": (0.160, 0.26, (0.24, 0.30)),
-    "d120_up14": (0.140, 0.28, (0.26, 0.32)),
-    "d120_up12": (0.120, 0.31, (0.30, None)),
-    "d120_up10": (0.100, 0.34, (0.33, None)),
+    "d120_ctrl": (0.198, 0.25, (0.22, 0.28)),       # calibrant only
+    "giant_x4_atmo40": (0.198, 0.25, (0.22, 0.28)),
+    "a40_up16": (0.160, 0.26, (0.24, 0.30)),
+    "a40_up14": (0.140, 0.28, (0.26, 0.32)),
+    "a40_up12": (0.120, 0.31, (0.30, None)),
+    "a40_up10": (0.100, 0.34, (0.33, None)),
 }
 BOPT = {  # B_opt/B0 at (w/Oe) per arm — frozen from the pre-reg Omura run
     "d120_ctrl": {0.35: 7.2e-3, 0.45: 5.5e-3, 0.55: 3.6e-3, 0.65: 2.1e-3},
-    "d120_up16": {0.35: 7.4e-3, 0.45: 6.3e-3, 0.55: 4.4e-3, 0.65: 2.7e-3},
-    "d120_up14": {0.35: 7.1e-3, 0.45: 6.7e-3, 0.55: 4.9e-3, 0.65: 3.0e-3},
-    "d120_up12": {0.35: 6.3e-3, 0.45: 6.9e-3, 0.55: 5.5e-3, 0.65: 3.5e-3},
-    "d120_up10": {0.35: 4.8e-3, 0.45: 6.7e-3, 0.55: 6.0e-3, 0.65: 4.1e-3},
+    "giant_x4_atmo40":
+                 {0.35: 8.5e-3, 0.45: 6.5e-3, 0.55: 4.4e-3, 0.65: 2.5e-3},
+    "a40_up16": {0.35: 8.7e-3, 0.45: 7.4e-3, 0.55: 5.2e-3, 0.65: 3.2e-3},
+    "a40_up14": {0.35: 8.3e-3, 0.45: 7.8e-3, 0.55: 5.8e-3, 0.65: 3.6e-3},
+    "a40_up12": {0.35: 7.3e-3, 0.45: 8.0e-3, 0.55: 6.4e-3, 0.65: 4.1e-3},
+    "a40_up10": {0.35: 5.5e-3, 0.45: 7.7e-3, 0.55: 7.0e-3, 0.65: 4.8e-3},
 }
 W10BAR = 0.235
 FLOOD_BW = 1.2e-2
