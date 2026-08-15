@@ -34,10 +34,28 @@ Per-arm pre-registered readings (eq station):
      Omura table (phase-lock budget check: stall expected where Bw >~ B_opt).
   R5 cross-arm: omega_birth and omega_top monotone non-decreasing as u_par
      falls (corridor prediction); count violations.
-Pre-registered failure reading: all omega_top <= 0.50 -> high-pass at fixed
-A=1.5 insufficient at x4 -> next axis = A at best u_par (USER decision).
+REFRAME (user, 2026-08-15, before any arm data): the goal is NOT crossing
+0.55 — it is UNDERSTANDING how the initial distribution controls the waves
+in this 1D code. The ladder holds A (linear band, fuel ceiling w_m=0.342)
+fixed and moves ONLY the nonlinear corridor -> every cross-arm difference
+is corridor/nonlinear control, not linear-band control. Four pre-registered
+CONTROL LAWS, each falsifiable per arm:
+  L1 IGNITION/BIRTH <- corridor threshold vs noise floor (R2 windows).
+  L2 SATURATION <- B_opt(omega), f0-DEPENDENT (R4: Bw_sat/B_opt ~ 1;
+     Chen-repro benchmark sat ~ B_opt).
+  L3 SWEEP RATE <- amplitude ONLY, f0-FREE (R6: per-element ridge slope /
+     Omura Eq.88(local Bw, per-arm branch) — in-house benchmark 0.72-0.73x,
+     lre-free; prediction: ratio stays ~0.7 across ALL arms even as f0
+     changes = sweep is amplitude-controlled, not f0-controlled).
+  L4 TRAIN PERIOD <- bounce clock (R7: ACF recurrence of the |B| envelope
+     at station -1201 (south mid-lat; eq envelope is slow-modulation-
+     swamped on the anchor, -1201 gives the clean first peak 5660 @0.27);
+     parabolic-well T_b ∝ lre/Uperp0 -> predicted period RATIO vs anchor =
+     Uperp0(anchor)/Uperp0(arm) = 1.24/1.41/1.65/1.98 for up16/14/12/10,
+     i.e. predicted lags ~7000/8000/9350/11200 IF the bounce clock rules;
+     a u_par-independent lag falsifies L4 and points at a wave clock).
 up10 DEAD = valid corridor datum, not scan failure. No optional stopping:
-all four arms run to t6000 before any verdict (early flood-stop allowed
+all four arms run to t_end before any verdict (early flood-stop allowed
 ONLY by R1 FLOOD on a completed t2000 segment, mirroring lumorph stop rule).
 
 Usage: python3 fscan_upar_gate.py            # all arms present in cwd
@@ -54,6 +72,11 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from plot_chen2026_fig1 import load_probe
 from lumorph_gate import spec, w10_occupancy, follow, element_from_traj
+import io
+import contextlib
+with contextlib.redirect_stdout(io.StringIO()):   # omura import chatter
+    from analyze_chen2026_periods import envelope, acf_period, \
+        ridge_segments
 
 # arm -> (u_par, tracker seed f, pre-registered birth window lo/hi (hi=None
 # means open-ended), B_opt table {w: B_opt} from omura pre-reg run)
@@ -77,6 +100,35 @@ BOPT = {  # B_opt/B0 at (w/Oe) per arm — frozen from the pre-reg Omura run
 W10BAR = 0.235
 FLOOD_BW = 1.2e-2
 DEAD_BW = 1e-3
+
+# per-arm Omura branch (atmo40 base: nc 0.9822, nh 0.0178, pure-biMax
+# Uperp0, T_perp/T_par = 1.52 fixed) for Eq.88 sweep + bounce clock
+NC, RATIO, OE = 0.9822, 1.232883, 0.2
+LRE = 3326.26
+
+
+def uperp0_of(arm):
+    return float(np.sqrt(np.pi / 2) * RATIO * ARMS[arm][0])
+
+
+def sweep_eq88(arm, wt, bw):
+    """Omura Eq.88 sweep-rate prediction (Ωe² units) at ridge freq wt,
+    local amplitude bw (B0 units), with THIS arm's Uperp0."""
+    up0 = uperp0_of(arm)
+    wpe = np.sqrt(NC)
+    disp = lambda w: w * np.sqrt(1 + wpe ** 2 / (w * (OE - w)))
+    w = wt * OE
+    dw = 1e-6
+    Vg = (2 * dw * OE) / (disp(w + dw * OE) - disp(w - dw * OE))
+    xi = np.sqrt(w * (OE - w)) / wpe
+    chi = 1 / np.sqrt(1 + xi * xi)
+    Vp = chi * xi
+    A = wt * wt + Vp * Vp
+    VR = (wt * wt - np.sqrt(wt ** 4 + A * (1 - wt * wt - up0 ** 2))) / A * Vp
+    gam = 1 / np.sqrt(1 - VR * VR - up0 ** 2)
+    s0 = chi * up0 / xi
+    s1 = gam * (1 - VR / Vg) ** 2
+    return 0.4 * s0 * wt * bw / s1
 
 
 def bopt_at(arm, w):
@@ -176,6 +228,34 @@ def analyze(d):
         print(f"R4 Bw_pk {r['bw']:.2e} vs B_opt({r['wstop']:.2f}) = "
               f"{bo:.2e}  ratio {r['bw'] / bo:.2f} "
               f"(stall expected when >~1)")
+
+    # L3: sweep rate vs Eq.88 (per-arm branch), eq station
+    segs = ridge_segments(d)
+    if segs:
+        rats = [s["slope"] / sweep_eq88(d, s["w0"], s["bw"]) for s in segs]
+        r["sweep_ratio"] = float(np.median(rats))
+        print(f"R6 sweep: {len(segs)} risers, median slope "
+              f"{np.median([s['slope'] for s in segs]):.2e} Oe^2, "
+              f"meas/Eq88 = {r['sweep_ratio']:.2f} "
+              f"(range {min(rats):.2f}-{max(rats):.2f}; benchmark 0.72-0.73"
+              f" = amplitude-controlled, f0-free)")
+    else:
+        r["sweep_ratio"] = np.nan
+        print("R6 sweep: no qualifying risers")
+
+    # L4: train recurrence vs bounce clock, station -1201, win [500, end]
+    toe_e, e_env, _ = envelope(d, poff=-1201.2)
+    acf = acf_period(toe_e, e_env, 500, toe_e[-1])
+    r["acf"] = acf
+    pred = uperp0_of("giant_x4_atmo40") / uperp0_of(d)
+    if acf:
+        print(f"R7 recurrence ACF lags: "
+              + ", ".join(f"{l:.0f} ({v:.2f})" for l, v in acf)
+              + f"  [bounce-clock predicted period ratio vs anchor "
+              f"{pred:.2f}]")
+    else:
+        print(f"R7 recurrence: no ACF peak (single element or dead) "
+              f"[predicted ratio vs anchor {pred:.2f}]")
     return r
 
 
