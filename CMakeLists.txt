@@ -266,3 +266,16 @@ set_tests_properties(langmuir two_stream weibel darwin_magnetostatic
                      deltaf_equilibrium deltaf_growth deltaf_consistency deltaf_landau
                      PROPERTIES LABELS "physics")
 set_tests_properties(conservation_longrun PROPERTIES LABELS "regression")
+
+# ---- 2d-reborn (PLAN_2D_REBORN): the reborn 2D instrument -------------------
+# P0 scaffold: linedipole background V0 gate + deck pre-flight runner.
+# Everything additive; the legacy stack above is untouched by construction.
+add_executable(warden2d tools/warden2d.cu)
+target_include_directories(warden2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(warden2d PRIVATE CUDA::cudart)
+
+add_executable(test_dipole2d_orbit tests/test_dipole2d_orbit.cu)
+target_include_directories(test_dipole2d_orbit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_dipole2d_orbit PRIVATE CUDA::cudart)
+add_test(NAME dipole2d_orbit COMMAND test_dipole2d_orbit)
+set_tests_properties(dipole2d_orbit PROPERTIES LABELS "unit")
