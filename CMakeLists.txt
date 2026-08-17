@@ -279,3 +279,15 @@ target_include_directories(test_dipole2d_orbit PRIVATE ${CMAKE_SOURCE_DIR}/inclu
 target_link_libraries(test_dipole2d_orbit PRIVATE CUDA::cudart)
 add_test(NAME dipole2d_orbit COMMAND test_dipole2d_orbit)
 set_tests_properties(dipole2d_orbit PROPERTIES LABELS "unit")
+
+add_executable(test_cold2d_dispersion tests/test_cold2d_dispersion.cu)
+target_include_directories(test_cold2d_dispersion PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_cold2d_dispersion PRIVATE CUDA::cudart)
+add_test(NAME cold2d_dispersion COMMAND test_cold2d_dispersion)
+set_tests_properties(cold2d_dispersion PROPERTIES LABELS "physics")
+
+add_executable(test_absorber2d tests/test_absorber2d.cu)
+target_include_directories(test_absorber2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_absorber2d PRIVATE CUDA::cudart)
+add_test(NAME absorber2d COMMAND test_absorber2d)
+set_tests_properties(absorber2d PROPERTIES LABELS "physics")

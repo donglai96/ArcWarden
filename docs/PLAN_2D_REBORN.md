@@ -382,8 +382,22 @@ additive. Reductions and diagnostics funnel through per-slab partials.
   `include/pic2d/` skeleton — background family (linedipole math + V0
   gate test), lean particle store layout, deck2d schema stub, runner
   stub with memory pre-flight; CMake wiring; V0 passing.
-- **P1 fields+fluid** (2–4 d): Yee port to (view,extent) form, cold_full
-  twin on the new stack, V2 gates; Umeda frame masks.
+- **P1 fields+fluid — LANDED 2026-08-17** (`include/pic2d/fields2d.hpp`):
+  (x,z)/∂y=0 Yee with Range-based kernels, cold_full twin (symmetric
+  staggering, EXACT Rodrigues rotation about local b̂ — robust at the
+  strong-B inner corner where Ω_eΔt ≈ 0.11), Umeda edge-frame masks.
+  V2 gates EXECUTED: oblique dispersion 12 modes θ = 6.6–51°,
+  k = 0.49–1.32 vs Appleton–Hartree — **worst 0.053%, best 0.003%**
+  (better than the legacy 0.003–0.46% gate); energy conservation 3.2e-3
+  over T = 6554 post-transient (the By-only white seed redistributes in
+  the first frames — instrumented, understood). Absorber gate in the
+  production linedipole geometry: R-whistler packet transits undamped
+  (99.88% over t = 400–1200), absorbed to 1.9e-4, wall pile-up 4.3e-6;
+  the 50/50 seed split (R-whistler + high-EM-branch) is derived in the
+  test header — an isotropic blob is the WRONG absorber seed (25%
+  quasi-perpendicular v_g→0 residual, first-run lesson kept on record).
+  V2 WKB flux-conservation gate (the one Lu's metric fails) moved to P3
+  with the antenna.
 - **P2 kinetic** (3–5 d): (E,μ) shell loader with analytic ∂lnf₀
   (bimax/losscone/prodkappa), multi-δf deposit/push with per-species
   ledgers, field-aligned wall reflection, V1+V3 gates.

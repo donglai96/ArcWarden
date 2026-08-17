@@ -329,8 +329,18 @@ max(stencil, jfilter);逐条带 tile sort;迁移缓冲已按种群分段)。单�
   7.8 GB 实测)。预检已经自证价值:**拒了我自己起草的 deck**,把 dx 从
   0.35 逼到 0.25——定量地正是 Ke 2025 承认 gcPIC 系列缺的上带分辨率;
   并暴露 ρ⊥/dz 规则的 full-f/δf 分野(full-f 硬、δf WARN + V1 裁决)。
-- **P1 场+流体(2–4 天)**:Yee 移植为 (view,extent) 形式,cold_full
-  孪生上新栈,V2 gates;Umeda 边框掩模。
+- **P1 场+流体 —— 已落地 2026-08-17**(`include/pic2d/fields2d.hpp`):
+  (x,z)/∂y=0 Yee(Range 化内核)、cold_full 孪生(对称 staggering、绕
+  局地 b̂ 的**精确** Rodrigues 旋转——内侧强 B 角落 Ω_eΔt≈0.11 依然
+  稳健)、Umeda 边框掩模。V2 gate 已执行:斜色散 12 模
+  θ=6.6–51°、k=0.49–1.32 vs Appleton–Hartree——**最差 0.053%、最好
+  0.003%**(优于 legacy 的 0.003–0.46%);瞬态后能量守恒 3.2e-3
+  (T=6554;By-only 白噪种子首帧重新分配——已仪器化、已理解)。
+  生产 linedipole 几何里的吸收层 gate:R-哨声包穿越内部无阻尼
+  (t=400–1200 间保 99.88%)、终态吸收到 1.9e-4、墙堆积 4.3e-6;
+  种子 50/50 分裂(R-哨声 + 高频 EM 支)在测试头注推导——各向同性
+  团块是错误的吸收层种子(25% 准垂直 v_g→0 残余,首跑教训留档)。
+  WKB 磁通守恒 gate(Lu 度规过不了的那个)随天线移到 P3。
 - **P2 动理学(3–5 天)**:(E,μ) 壳层加载器 + 全分布解析 ∂lnf₀
   (bimax/losscone/prodkappa),多 δf push/deposit + 逐种群台账,沿场
   u∥ 翻转墙,V1+V3 gates。
