@@ -165,6 +165,27 @@ static __global__ void k_mask_b(FieldViews2D v, Range r) {
     v.bx[c] *= m; v.by[c] *= m; v.bz[c] *= m;
 }
 
+// ---- binomial current filter (legacy jfilter, production recipe) ----------
+// 1-2-1 smoothing per axis; kills the k ~ Nyquist shot-noise currents that
+// otherwise pump grid-scale modes near the whistler resonance cone (v_g → 0
+// there: the energy cannot propagate to the masks and accumulates — the
+// P2 V1 first-run finding: W_EM grew secularly without it).
+
+static __global__ void k_filter_x(const float* src, float* dst, FieldViews2D v,
+                                  Range r) {
+    int i, k;
+    if (!in_range(r, i, k)) return;
+    dst[v.idx(i, k)] = 0.25f * src[v.idx(i - 1, k)] + 0.5f * src[v.idx(i, k)] +
+                       0.25f * src[v.idx(i + 1, k)];
+}
+static __global__ void k_filter_z(const float* src, float* dst, FieldViews2D v,
+                                  Range r) {
+    int i, k;
+    if (!in_range(r, i, k)) return;
+    dst[v.idx(i, k)] = 0.25f * src[v.idx(i, k - 1)] + 0.5f * src[v.idx(i, k)] +
+                       0.25f * src[v.idx(i, k + 1)];
+}
+
 // ---- energy ledger (double accumulation) -----------------------------------
 // WEM = ½Σ(E² + c²B²)dV (ε0 = 1, 1/μ0 = c²); Wc = ½ nc Σ|Vc|² dV.
 
@@ -191,9 +212,10 @@ static __global__ void k_energy(FieldViews2D v, Range r, double* acc) {
 
 struct Fields2D {
     arc::DeviceArray<float> ex, ey, ez, bx, by, bz, jx, jy, jz, vcx, vcy, vcz;
-    arc::DeviceArray<float> maske, maskb;
+    arc::DeviceArray<float> maske, maskb, jtmp;
     arc::DeviceArray<double> energy_acc;
     int nx = 0, nz = 0;
+    int jfilter = 3;                       // binomial passes per axis
     double dx = 0, dz = 0, dt = 0, cspeed = 1.0, nc = 1.0, x0 = 0, z0 = 0;
     Background2D bg;
     bool masks_on = false;
@@ -202,11 +224,11 @@ struct Fields2D {
         nx = nx_; nz = nz_;
         const size_t n = size_t(nx) * nz;
         for (auto* a : {&ex, &ey, &ez, &bx, &by, &bz, &jx, &jy, &jz,
-                        &vcx, &vcy, &vcz})
+                        &vcx, &vcy, &vcz, &jtmp})
             *a = arc::DeviceArray<float>(n);
         energy_acc = arc::DeviceArray<double>(2);
         for (auto* a : {&ex, &ey, &ez, &bx, &by, &bz, &jx, &jy, &jz,
-                        &vcx, &vcy, &vcz})
+                        &vcx, &vcy, &vcz, &jtmp})
             a->zero();
     }
 
@@ -247,6 +269,19 @@ struct Fields2D {
     }
 
 #ifdef __CUDACC__
+    // binomial-filter the deposited PARTICLE currents (call after the hot
+    // deposit, before the cold pass adds its smooth analytic currents)
+    void filter_j(cudaStream_t s = nullptr) {
+        FieldViews2D v = views();
+        const Range r = full();
+        const dim3 nb = f2d::blocks_for(r), tb(f2d::TX, f2d::TZ);
+        for (int pass = 0; pass < jfilter; ++pass)
+            for (auto* a : {&jx, &jy, &jz}) {
+                f2d::k_filter_x<<<nb, tb, 0, s>>>(a->data(), jtmp.data(), v, r);
+                f2d::k_filter_z<<<nb, tb, 0, s>>>(jtmp.data(), a->data(), v, r);
+            }
+    }
+
     // One field+fluid step (no kinetic species yet — P2 inserts the hot
     // deposit between zero-J and the cold pass, same worldline contract as
     // the legacy step_at).

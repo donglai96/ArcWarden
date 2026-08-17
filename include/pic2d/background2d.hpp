@@ -123,6 +123,33 @@ ARC2D_HD inline Vec2<Real> grad_lshell(Real x, Real z) {
     return { (x * x - z * z) / (x * x), Real(2) * z / x };
 }
 
+// ∇|B0| (needed by the δf weight equation's mapping term). linedipole:
+// |B| = M/r² ⇒ ∇|B| = −2|B| r̂/r (exact). kemirror/uniform: from the
+// closed forms; tilted/uniform have ∇|B| = 0.
+template <typename Real>
+ARC2D_HD inline Vec2<Real> grad_babs(const Background2D& bg, Real x, Real z) {
+    switch (B0Prof(bg.prof)) {
+        case B0Prof::linedipole: {
+            const Real r2 = x * x + z * z;
+            const Real f = Real(-2.0 * bg.M) / (r2 * r2);
+            return { f * x, f * z };
+        }
+        case B0Prof::kemirror: {
+            // |B|² = B0²[(1+az̃²)² + 4a²x̃²z̃²]; ∇|B| = ∇|B|²/(2|B|)
+            const Real xt = x - Real(bg.xc), zt = z - Real(bg.zc);
+            const Real B0 = Real(bg.B0eq), a = Real(bg.a);
+            const Real oz = Real(1) + a * zt * zt;
+            const Real Babs = B0 * std::sqrt(oz * oz + Real(4) * a * a * xt * xt * zt * zt);
+            const Real dx2 = B0 * B0 * Real(8) * a * a * xt * zt * zt;
+            const Real dz2 = B0 * B0 * (Real(4) * a * zt * oz +
+                                        Real(8) * a * a * xt * xt * zt);
+            return { dx2 / (Real(2) * Babs), dz2 / (Real(2) * Babs) };
+        }
+        default:
+            return { Real(0), Real(0) };
+    }
+}
+
 // Mirror ratio at latitude λ on any linedipole line: B/B_eq = sec²λ.
 ARC2D_HD inline double mirror_ratio(double lambda) {
     const double c = std::cos(lambda);

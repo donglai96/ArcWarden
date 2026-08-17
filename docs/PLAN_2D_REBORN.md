@@ -398,9 +398,37 @@ additive. Reductions and diagnostics funnel through per-slab partials.
   quasi-perpendicular v_g→0 residual, first-run lesson kept on record).
   V2 WKB flux-conservation gate (the one Lu's metric fails) moved to P3
   with the antenna.
-- **P2 kinetic** (3–5 d): (E,μ) shell loader with analytic ∂lnf₀
-  (bimax/losscone/prodkappa), multi-δf deposit/push with per-species
-  ledgers, field-aligned wall reflection, V1+V3 gates.
+- **P2 kinetic — first landing 2026-08-17** (`include/pic2d/kinetic2d.hpp`):
+  (E,μ) shell loader (equal-weight rejection ∝ n(x,z), markers only where
+  f₀ > 0), fused gather→δf-weight→Boris→reflect→Esirkepov kernel
+  (continuity unit-checked to 6.4e-7 vs scale 13.3), u∥-flip walls.
+  **V1 quiet hold EXECUTED and green** (2 T_b = 18000/ω_pe, 6.6M markers,
+  ~7 min on the 5090): zero escapes, wd_rms *decays* 1.00e-3 → 0.93e-3
+  (the weights damp the noise waves), hot KE drift **2.8e-7** — the
+  ρ⊥/dz = 2.8 δf grid-heating WARN answered empirically: none — and the
+  field floor sits at W_EM ≈ 2.6e-9 (δB_rms ~ 3e-7 vs full-f 1.3e-3: the
+  3+ decade δf dividend, measured). Three pre-registered-forensics
+  findings, each now a design rule in the header:
+  1. **Gyro-center ruling**: f₀'s shell profile must take the
+     GUIDING-CENTER L (in-plane offset carries only u_y; r_gc = r −
+     γ(u×b̂)/(|qm|B)) — with the particle L, edge markers ring at
+     dlnprof·ρ·sec²λ ≈ 0.3–0.5 (measured wd_rms → 0.55, floor 6e-3,
+     KE +3.3%). Shell edges are flat-top + Gaussian (bounded dln), NOT
+     raised-cosine (tan divergence at the foot).
+  2. **jfilter is load-bearing**: without binomial current smoothing the
+     shot-noise currents pump grid-scale modes near the resonance cone
+     (v_g → 0: energy cannot reach the masks) — seed level ×7 higher.
+  3. **Walls exist only at the high-|λ| line ends** (x < wx0, |z| > wz):
+     in-plane gc drift is identically zero so L cannot be crossed, and
+     testing the outer-radial edge pinned shell-tail markers in an
+     equatorial flip loop (z_gc jitter) — a coherent antenna at
+     (L = 226, λ = 0) driving a γ ≈ 0.07 Ω_e spurious instability through
+     the live-wd loop (bisected: wd-frozen arm clean, mode imaged, fix
+     verified: live-wd floor now BELOW the frozen-wd floor, 1.8e-9 vs
+     6.6e-9 at 25k steps).
+  Still open in P2: analytic ∂lnf₀ for losscone/prodkappa, anisotropic
+  hold rung (μ-slot ripple watch), multi-species orchestration + per-
+  species ledgers, V3 Li-band regression on the new stack.
 - **P3 production** (2–3 d): checkpoint (git-hash-embedded), diagnostics
   pack (§2.5), deck-finalize gate battery, V4/V5; W10 first-light deck.
 - **P4 science**: §3 arm ladder, in the PLAN_2D staged-gate style
