@@ -25,7 +25,13 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, "../scripts")
 from ckpt_fvpar import parse_header, DTS  # noqa: E402
 
-WSPLIT = 5.5e-6          # engine w=6.491e-6 > split > pancake w=4.467e-6
+# Species ID by weight family. fullf weights are per-species delta values
+# but the ABSOLUTE scale is run-dependent (expG2 engine 6.49e-6, ubscan
+# arms 4.30e-8) and the pancake can be lighter (n70) or HEAVIER (n140,
+# 5.9e-8) than the engine -> neither a fixed threshold nor "heavier =
+# engine" works. Robust rule: the engine is always the MAJORITY family
+# by marker count (75.7-86% in all arms); detected per run from a 1M
+# sample. Exactly-2-families is asserted.
 DX, NX = 5041.92 / 19392, 19392
 XCUT = 150.0
 CH = 50_000_000
@@ -45,17 +51,28 @@ def arrays(path):
     return step, time, mm
 
 
+def engine_weight(pw):
+    idx = np.linspace(0, pw.shape[0] - 1, 1_000_000).astype(np.int64)
+    uw, cts = np.unique(np.round(pw[idx].astype(np.float64), 12),
+                        return_counts=True)
+    assert len(uw) == 2, f"expected 2 weight families, got {uw}"
+    return uw[np.argmax(cts)]
+
+
 def species_stats(mm, engine, bins):
     px, ux, uy, uz, pw = (mm(k) for k in ("px", "pux", "puy", "puz", "pw"))
+    w_eng = engine_weight(pw)
     xeq = NX / 2.0
     hw = np.zeros(len(bins) - 1)
     s_w = s_vpar2 = s_vper2 = s_upar2 = 0.0
     nsel = 0
     ntot = px.shape[0]
+    tol = 0.02 * w_eng
     for a0 in range(0, ntot, CH):
         sl = slice(a0, min(a0 + CH, ntot))
         x = px[sl]
-        wsel = (pw[sl] > WSPLIT) if engine else (pw[sl] < WSPLIT)
+        is_eng = np.abs(pw[sl] - w_eng) < tol
+        wsel = is_eng if engine else ~is_eng
         m = wsel & (np.abs((x.astype(np.float64) - xeq) * DX) < XCUT)
         if not m.any():
             continue
