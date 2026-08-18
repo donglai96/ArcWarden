@@ -42,6 +42,7 @@ namespace arc2d {
 struct Deck2D {
     // [domain]
     double lam_w   = 50.0 * M_PI / 180.0;  // half-latitude coverage (radians)
+    double active_Lmin = 0, active_Lmax = 0;  // field-update L band (0 = full)
     double margin  = 60.0;                 // box margin beyond shell+absorber (c/ωpe)
     double dx = 0.35, dz = 0.35;
     double x0 = 0, x1 = 0, z0 = 0, z1 = 0; // derived (or explicit override)
@@ -146,7 +147,8 @@ inline Deck2D load_deck2d(const std::string& path) {
     // (a misspelled key would otherwise run 10 hours on a default value)
     {
         const std::map<std::string, std::vector<std::string>> known = {
-            {"domain", {"lam_w_deg", "margin", "dx", "dz"}},
+            {"domain", {"lam_w_deg", "margin", "dx", "dz", "active_Lmin",
+                        "active_Lmax"}},
             {"background", {"profile", "B0eq", "L0", "a", "theta_deg"}},
             {"time", {"dt", "nsteps"}},
             {"cold", {"nc", "nonlinear", "c"}},
@@ -192,6 +194,8 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.bg.finalize();
 
     d.lam_w  = getd(m, "domain", "lam_w_deg", 50.0) * M_PI / 180.0;
+    d.active_Lmin = getd(m, "domain", "active_Lmin", 0.0);
+    d.active_Lmax = getd(m, "domain", "active_Lmax", 0.0);
     d.margin = getd(m, "domain", "margin", 60.0);
     d.dx = getd(m, "domain", "dx", 0.35);
     d.dz = getd(m, "domain", "dz", 0.35);

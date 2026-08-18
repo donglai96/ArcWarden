@@ -46,6 +46,8 @@ struct FieldViews2D {
     float *maske, *maskb;               // Umeda damping profiles (nullptr = off)
     float *jxr, *jyr, *jzr;             // replicated J (contention relief);
     int nrep;                           //   nrep = 1 ⇒ aliases of jx,jy,jz
+    const uint8_t* tile_active;         // per-16×16-tile flag (nullptr = all)
+    int ntx;                            // tiles per row
     int nx, nz;
     float dx, dz, dt, c2;
     float qm_c, nc;                     // cold q/m (−1) and density
@@ -74,9 +76,19 @@ __device__ inline bool in_range(const Range& r, int& i, int& k) {
     return i < r.i1 && k < r.k1;
 }
 
+// active-band skip: with 16×16 blocks, blockIdx IS the tile coordinate.
+// Inactive tiles hold frozen zero wave fields (never written; the band
+// mask damps everything approaching the band edge, so their neighbours'
+// halo reads of 0 are consistent).
+__device__ inline bool tile_off(const FieldViews2D& v) {
+    return v.tile_active &&
+           !v.tile_active[blockIdx.y * v.ntx + blockIdx.x];
+}
+
 // ---- Maxwell ---------------------------------------------------------------
 
 static __global__ void k_faraday(FieldViews2D v, Range r, float dt2) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -88,6 +100,7 @@ static __global__ void k_faraday(FieldViews2D v, Range r, float dt2) {
 }
 
 static __global__ void k_ampere(FieldViews2D v, Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -106,6 +119,7 @@ static __global__ void k_ampere(FieldViews2D v, Range r) {
 
 static __global__ void k_cold_step(FieldViews2D v, Range r, Background2D bg,
                                    float x0, float z0) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -140,6 +154,7 @@ static __global__ void k_cold_step(FieldViews2D v, Range r, Background2D bg,
 // Jc scatter (separate pass: neighbours' Vc must be final). Jc = qe nc Vc,
 // qe = −1 ⇒ Jc = −nc Vc; symmetric average onto the staggered J sites.
 static __global__ void k_cold_current(FieldViews2D v, Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -152,6 +167,7 @@ static __global__ void k_cold_current(FieldViews2D v, Range r) {
 // ---- Umeda masked damping (edge frame absorbers) ---------------------------
 
 static __global__ void k_mask_e(FieldViews2D v, Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -160,6 +176,7 @@ static __global__ void k_mask_e(FieldViews2D v, Range r) {
     v.vcx[c] *= m; v.vcy[c] *= m; v.vcz[c] *= m;
 }
 static __global__ void k_mask_b(FieldViews2D v, Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -173,6 +190,7 @@ static __global__ void k_mask_b(FieldViews2D v, Range r) {
 // and reducing removes the contention. nrep = 1 is the exact legacy path.
 
 static __global__ void k_reduce_j(FieldViews2D v, Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -212,6 +230,7 @@ static __global__ void k_filter_z(const float* src, float* dst, FieldViews2D v,
 // the ppc=1 probe showed the field pipeline was HALF the V4R step cost.
 static __global__ void k_filter7(const float* src, float* dst, FieldViews2D v,
                                  Range r) {
+    if (tile_off(v)) return;
     __shared__ float tile[22][22];              // 16×16 block + halo 3
     const int i0 = blockIdx.x * 16, k0 = blockIdx.y * 16;
     for (int t = threadIdx.y * blockDim.x + threadIdx.x; t < 22 * 22;
@@ -263,7 +282,9 @@ static __global__ void k_energy(FieldViews2D v, Range r, double* acc) {
 struct Fields2D {
     arc::DeviceArray<float> ex, ey, ez, bx, by, bz, jx, jy, jz, vcx, vcy, vcz;
     arc::DeviceArray<float> maske, maskb, jtmp, jxr, jyr, jzr;
+    arc::DeviceArray<uint8_t> tile_flags;
     arc::DeviceArray<double> energy_acc;
+    double band_Lmin = 0, band_Lmax = 0;   // 0 = full box active
     int nx = 0, nz = 0;
     int jfilter = 3;                       // binomial passes per axis
     int nrep = 1;                          // J replicas (allocate_replicas)
@@ -304,11 +325,45 @@ struct Fields2D {
                  nrep > 1 ? jxr.data() : jx.data(),
                  nrep > 1 ? jyr.data() : jy.data(),
                  nrep > 1 ? jzr.data() : jz.data(), nrep,
+                 tile_flags.empty() ? nullptr : tile_flags.data(),
+                 (nx + f2d::TX - 1) / f2d::TX,
                  nx, nz, float(dx), float(dz), float(dt),
                  float(cspeed * cspeed), -1.f, float(nc) };
     }
 
     Range full() const { return {0, nx, 0, nz}; }
+
+    // Active L-band restriction (user insight 2026-08-18: most L-shells
+    // are never used, yet the field pipeline — half the step cost — sweeps
+    // them). Tiles entirely outside [Lmin, Lmax] are frozen at zero wave
+    // field; the companion band mask (build_masks) damps waves approaching
+    // the band edge, so the cut ABSORBS instead of reflecting (a hard
+    // plasma→vacuum cut would totally reflect whistlers). B0 stays
+    // analytic everywhere — it was never gridded and costs nothing.
+    void set_active_band(double Lmin, double Lmax) {
+        band_Lmin = Lmin;
+        band_Lmax = Lmax;
+        const int ntx = (nx + f2d::TX - 1) / f2d::TX;
+        const int ntz = (nz + f2d::TZ - 1) / f2d::TZ;
+        std::vector<uint8_t> h(size_t(ntx) * ntz, 1);
+        if (Lmax > Lmin && Lmin > 0) {
+            const double margin = 40.0;    // halo + filter reach, physical units
+            for (int tk = 0; tk < ntz; ++tk)
+                for (int ti = 0; ti < ntx; ++ti) {
+                    bool act = false;
+                    for (int c = 0; c < 4 && !act; ++c) {
+                        const double xx = x0 + (ti + (c & 1)) * f2d::TX * dx;
+                        const double zz = z0 + (tk + (c >> 1)) * f2d::TZ * dz;
+                        const double L = lshell_of<double>(bg, xx, zz);
+                        act = L >= Lmin - margin && L <= Lmax + margin;
+                    }
+                    h[size_t(tk) * ntx + ti] = act ? 1 : 0;
+                }
+        }
+        tile_flags = arc::DeviceArray<uint8_t>(h.size());
+        CUDA_CHECK(cudaMemcpy(tile_flags.data(), h.data(), h.size(),
+                              cudaMemcpyHostToDevice));
+    }
 
     // Umeda-style edge frame: cell-centred damping profile m(d) rising
     // smoothly from (1 − nu_max) at the boundary to 1 over nd cells; applied
@@ -324,7 +379,19 @@ struct Fields2D {
             for (int i = 0; i < nx; ++i) {
                 const int d = std::min(std::min(i, nx - 1 - i),
                                        std::min(k, nz - 1 - k));
-                h[size_t(k) * nx + i] = float(prof(d));
+                double m = prof(d);
+                if (band_Lmax > band_Lmin && band_Lmin > 0) {
+                    // band-edge damping ramp in L (width 120): the cut
+                    // absorbs; outside the ramp the (frozen) field is 0
+                    const double L = lshell_of<double>(
+                        bg, x0 + (i + 0.5) * dx, z0 + (k + 0.5) * dz);
+                    const double a = std::max(band_Lmin - L, L - band_Lmax);
+                    if (a > 0) {
+                        const double t = std::min(1.0, a / 120.0);
+                        m *= 1.0 - nu_max * t * t;
+                    }
+                }
+                h[size_t(k) * nx + i] = float(m);
             }
         maske = arc::DeviceArray<float>(h.size());
         maskb = arc::DeviceArray<float>(h.size());

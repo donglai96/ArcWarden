@@ -53,7 +53,9 @@ struct Sim2D {
         F.cspeed = d.cspeed; F.nc = d.nc;
         F.x0 = d.x0; F.z0 = d.z0;
         F.bg = d.bg;
-        F.build_masks(d.absorber_cells, 0.05);
+        if (d.active_Lmax > d.active_Lmin && d.active_Lmin > 0)
+            F.set_active_band(d.active_Lmin, d.active_Lmax);
+        F.build_masks(d.absorber_cells, 0.05);   // uses the band if set
         // replica heuristic: only worthwhile on small, contended grids
         const double ppc_tot = [&] {
             double s = 0;
