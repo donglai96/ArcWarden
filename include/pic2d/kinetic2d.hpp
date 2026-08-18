@@ -289,8 +289,16 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
             }
         }
     }
+    // periodic wrap of the STORED position (box = grid extent); the deposit
+    // below uses the PRE-wrap worldline — its stencil indices sit at most a
+    // few cells outside [0,n) where idx()'s single wrap is exact. Walls, if
+    // configured inside the box, fire first and make the wrap a no-op.
+    {
+        const float Lx = v.nx * v.dx, Lz = v.nz * v.dz;
+        p.x[m] = xn - Lx * floorf((xn - x0) / Lx);
+        p.z[m] = zn - Lz * floorf((zn - z0) / Lz);
+    }
     p.ux[m] = ux; p.uy[m] = uy; p.uz[m] = uz;
-    p.x[m] = xn;  p.z[m] = zn;
 
     // ---- Esirkepov CIC deposit over the worldline x→xn -------------------
     const float qw = c.qm > 0.f ? p.w[m] * p.wd[m] : -p.w[m] * p.wd[m];
