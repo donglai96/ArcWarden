@@ -10,6 +10,7 @@
 //
 // Usage: ./warden2d <deck.ini> [outdir] [--nsteps=N] [--preflight]
 
+#include "pic2d/checkpoint2d.hpp"
 #include "pic2d/sim2d.hpp"
 
 #include <chrono>
@@ -45,10 +46,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string outdir = "warden2d_out";
-    long nsteps_cli = -1;
-    bool preflight_only = false;
+    long nsteps_cli = -1, ckpt_every = 0;
+    bool preflight_only = false, resume = false;
     for (int i = 2; i < argc; ++i) {
         if (!std::strncmp(argv[i], "--nsteps=", 9)) nsteps_cli = atol(argv[i] + 9);
+        else if (!std::strncmp(argv[i], "--ckpt=", 7)) ckpt_every = atol(argv[i] + 7);
+        else if (!std::strcmp(argv[i], "--resume")) resume = true;
         else if (!std::strcmp(argv[i], "--preflight")) preflight_only = true;
         else if (argv[i][0] != '-') outdir = argv[i];
     }
@@ -88,15 +91,18 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(outdir);
     Sim2D S;
     S.build(d);
+    if (resume) load_checkpoint(S, outdir + "/ckpt.bin");
     std::printf("\nloaded %zu species:\n", S.sp.size());
     for (size_t i = 0; i < S.sp.size(); ++i)
         std::printf("  %-10s %.2e markers  %s\n", S.sp[i].name.c_str(),
                     double(S.sp[i].mk->n), S.sp[i].C.deltaf ? "δf" : "full-f");
 
-    FILE* ecsv = std::fopen((outdir + "/energy.csv").c_str(), "w");
-    std::fprintf(ecsv, "t,W_EM,W_cold");
-    for (auto& s : S.sp) std::fprintf(ecsv, ",wdrms_%s", s.name.c_str());
-    std::fprintf(ecsv, "\n");
+    FILE* ecsv = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
+    if (!resume) {
+        std::fprintf(ecsv, "t,W_EM,W_cold");
+        for (auto& s : S.sp) std::fprintf(ecsv, ",wdrms_%s", s.name.c_str());
+        std::fprintf(ecsv, "\n");
+    }
 
     // meta: probe stations with LOCAL Omega_e (dual-normalization contract)
     FILE* probes = nullptr;
@@ -118,12 +124,18 @@ int main(int argc, char** argv) {
                      DIAG_NREG, S.diag.npar, S.diag.nperp, S.diag.vmax,
                      S.diag.uqmax, DIAG_NREG, S.diag.nvb, 8L);
         std::fclose(meta);
-        probes = std::fopen((outdir + "/probes.bin").c_str(), "wb");
+        probes = std::fopen((outdir + "/probes.bin").c_str(), resume ? "ab" : "wb");
     }
 
+    const long n_start = S.nstep;
     const auto t0 = std::chrono::steady_clock::now();
-    for (long n = 0; n < d.nsteps; ++n) {
+    for (long n = n_start; n < d.nsteps; ++n) {
         S.step();
+        if (ckpt_every > 0 && (n + 1) % ckpt_every == 0) {
+            CUDA_CHECK(cudaDeviceSynchronize());
+            save_checkpoint(S, outdir + "/ckpt.bin");
+            std::printf("  checkpoint at step %ld\n", n + 1);
+        }
         if (S.diag_on) {
             if (n % 8 == 7) S.diag_ledger(float(8 * d.dt));
             if (n % probe_every == probe_every - 1) {
@@ -171,10 +183,11 @@ int main(int argc, char** argv) {
             S.F.energies(W);
             const double el = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - t0).count();
+            const double per = el / double(n + 1 - n_start);
             std::printf("  step %8ld/%ld  t=%9.1f  W_EM %.3e  %.2f ms/step  "
                         "ETA %.0f min\n",
-                        n + 1, d.nsteps, S.time, W[0], 1e3 * el / (n + 1),
-                        el / (n + 1) * (d.nsteps - n) / 60);
+                        n + 1, d.nsteps, S.time, W[0], 1e3 * per,
+                        per * (d.nsteps - n) / 60);
         }
     }
     CUDA_CHECK(cudaDeviceSynchronize());

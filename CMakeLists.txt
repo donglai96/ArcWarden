@@ -38,6 +38,16 @@ endif()
 # cudart / cufft via modern imported targets (CUDA::cudart, CUDA::cufft)
 find_package(CUDAToolkit REQUIRED)
 
+# provenance: configure-time git hash embedded in checkpoints (pic2d)
+execute_process(COMMAND git rev-parse HEAD
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE AW_GIT_HASH OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+if(NOT AW_GIT_HASH)
+  set(AW_GIT_HASH "unknown")
+endif()
+add_compile_definitions(AW_GIT_HASH="${AW_GIT_HASH}")
+
 # ---- main executable (Step 1: just prints the GPU) ----
 add_executable(arcwarden src/main.cpp)
 target_include_directories(arcwarden PRIVATE ${CMAKE_SOURCE_DIR}/include)
@@ -306,3 +316,9 @@ target_include_directories(test_li2019_reborn PRIVATE ${CMAKE_SOURCE_DIR}/includ
 target_link_libraries(test_li2019_reborn PRIVATE CUDA::cudart)
 add_test(NAME li2019_reborn COMMAND test_li2019_reborn)
 set_tests_properties(li2019_reborn PROPERTIES LABELS "regression")
+
+add_executable(test_ckpt2d tests/test_ckpt2d.cu)
+target_include_directories(test_ckpt2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_ckpt2d PRIVATE CUDA::cudart)
+add_test(NAME ckpt2d COMMAND test_ckpt2d)
+set_tests_properties(ckpt2d PROPERTIES LABELS "unit")
