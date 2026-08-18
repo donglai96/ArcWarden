@@ -43,6 +43,10 @@ struct Deck2D {
     // [domain]
     double lam_w   = 50.0 * M_PI / 180.0;  // half-latitude coverage (radians)
     double active_Lmin = 0, active_Lmax = 0;  // field-update L band (0 = full)
+    double x_min   = 0;                    // user inner-x cut (0 = follow lam_w);
+                                           // moves the particle wall to the
+                                           // latitude where the lines exit
+    double lam_eff = 0;                    // effective wall latitude (derived)
     double margin  = 60.0;                 // box margin beyond shell+absorber (c/ωpe)
     double dx = 0.35, dz = 0.35;
     double x0 = 0, x1 = 0, z0 = 0, z1 = 0; // derived (or explicit override)
@@ -148,7 +152,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     {
         const std::map<std::string, std::vector<std::string>> known = {
             {"domain", {"lam_w_deg", "margin", "dx", "dz", "active_Lmin",
-                        "active_Lmax"}},
+                        "active_Lmax", "x_min"}},
             {"background", {"profile", "B0eq", "L0", "a", "theta_deg"}},
             {"time", {"dt", "nsteps"}},
             {"cold", {"nc", "nonlinear", "c"}},
@@ -196,6 +200,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.lam_w  = getd(m, "domain", "lam_w_deg", 50.0) * M_PI / 180.0;
     d.active_Lmin = getd(m, "domain", "active_Lmin", 0.0);
     d.active_Lmax = getd(m, "domain", "active_Lmax", 0.0);
+    d.x_min = getd(m, "domain", "x_min", 0.0);
     d.margin = getd(m, "domain", "margin", 60.0);
     d.dx = getd(m, "domain", "dx", 0.35);
     d.dz = getd(m, "domain", "dz", 0.35);
@@ -252,9 +257,26 @@ inline void finalize_deck2d(Deck2D& d) {
         double xw, zw;                       // innermost point: high-λ end of Lin
         line_point_of(d.bg, Lin, d.lam_w, xw, zw);
         d.x0 = std::max(10.0 * d.dx, xw - d.margin);
+        d.lam_eff = d.lam_w;
+        if (d.x_min > 0) {                   // user inner cut: wall moves to the
+            d.x0 = d.x_min;                  // latitude where the lines exit
+            const double xwall = d.x_min + d.absorber_cells * d.dx;
+            double q = xwall / d.bg.L0;      // cos^3 (dipole2d) or cos^2 (circle)
+            const double c = B0Prof(d.bg.prof) == B0Prof::dipole2d
+                                 ? std::cbrt(q)
+                                 : std::sqrt(q);
+            if (c < 1.0) d.lam_eff = std::min(d.lam_w, std::acos(c));
+        }
         d.x1 = Lout + d.margin;
-        d.z1 = 0.5 * Lout + d.margin;        // max z on a line is L/2 (at λ=45°)
-        d.z0 = -d.z1;
+        {   // z-extent: max |z| reached by the outermost line INSIDE the box
+            const double le = std::min(d.lam_eff, 0.9);
+            double zm = 0;
+            for (double l = 0; l <= le + 1e-9; l += le / 64)
+                { double xx, zz; line_point_of(d.bg, Lout, l, xx, zz);
+                  zm = std::max(zm, zz); }
+            d.z1 = zm + d.margin + d.absorber_cells * d.dz;
+            d.z0 = -d.z1;
+        }
     } else if (d.x1 <= d.x0) {               // non-dipole: explicit box required
         gate("box", false, true, "explicit x0/x1/z0/z1 required for non-dipole profiles");
         return;
@@ -322,7 +344,7 @@ inline void finalize_deck2d(Deck2D& d) {
     // ---- absorber strictly outside the runway ---------------------------
     const double absorber_arc = d.absorber_cells * std::max(d.dx, d.dz);
     const double runway_end_s = arc_s_of(d.bg, d.bg.L0, d.runway_lam);
-    const double wall_s       = arc_s_of(d.bg, d.bg.L0, d.lam_w);
+    const double wall_s       = arc_s_of(d.bg, d.bg.L0, d.lam_eff);
     std::snprintf(buf, sizeof buf, "runway ends s=%.0f, wall s=%.0f, absorber %.0f",
                   runway_end_s, wall_s, absorber_arc);
     gate("absorber", runway_end_s + absorber_arc <= wall_s, true, buf);
@@ -330,8 +352,9 @@ inline void finalize_deck2d(Deck2D& d) {
     // ---- shell-compact marker budget (|∇L| = sec²λ ⇒ exact shell area) --
     double markers_total = 0;
     for (auto& s : d.species) {
+        const double lw = d.lam_eff > 0 ? d.lam_eff : d.lam_w;
         const double area = s.shell_dL * s.shell_L0 *
-                            (d.lam_w + std::sin(d.lam_w) * std::cos(d.lam_w));
+                            (lw + std::sin(lw) * std::cos(lw));
         const double cells = area / (d.dx * d.dz);
         s.nmax = uint64_t(cells * s.ppc);
         markers_total += double(s.nmax);
@@ -344,8 +367,9 @@ inline void finalize_deck2d(Deck2D& d) {
 
 inline void print_deck2d_report(const Deck2D& d, std::FILE* out = stdout) {
     std::fprintf(out, "pic2d deck report\n");
-    std::fprintf(out, "  geometry : L0 = %.1f (l_re), λ_w = %.1f°, mirror ratio at wall %.2f\n",
-                 d.bg.L0, d.lam_w * 180 / M_PI, mirror_ratio_of(d.bg, d.lam_w));
+    std::fprintf(out, "  geometry : L0 = %.1f (l_re), wall λ = %.1f° (deck λ_w %.1f°), mirror ratio %.2f\n",
+                 d.bg.L0, d.lam_eff * 180 / M_PI, d.lam_w * 180 / M_PI,
+                 mirror_ratio_of(d.bg, d.lam_eff));
     std::fprintf(out, "  box      : x [%.0f, %.0f]  z [%.0f, %.0f]  (%d × %d cells, dx %.2f dz %.2f)\n",
                  d.x0, d.x1, d.z0, d.z1, d.nx, d.nz, d.dx, d.dz);
     std::fprintf(out, "  plasma   : ωpe/Ωe(eq) = %.2f, c = %.1f, cold nc = %.3f (%s fluid)\n",
