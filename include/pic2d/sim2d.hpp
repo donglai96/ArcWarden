@@ -70,7 +70,7 @@ struct Sim2D {
             KineticCfg& C = s.C;
             C.qm = -1.f;
             C.deltaf = q.deltaf ? 1 : 0;
-            C.rel = 0;
+            C.rel = q.rel;
             C.dist = q.dist;
             C.kappa = float(q.kappa);
             C.tpar = float(q.uthpar * q.uthpar);

@@ -177,6 +177,7 @@ inline Deck2D load_deck2d(const std::string& path) {
         SpeciesCfg s;
         s.name     = sec.size() > 8 ? sec.substr(8) : "hot";
         s.deltaf   = getd(m, sec, "deltaf", 1) != 0;
+        s.rel      = int(getd(m, sec, "rel", 0));
         s.dist     = int(getd(m, sec, "dist", 0));
         s.n0       = getd(m, sec, "n0", 0.01);
         s.uthpar   = getd(m, sec, "uthpar", 0.2);

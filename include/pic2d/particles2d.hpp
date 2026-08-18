@@ -44,6 +44,7 @@ enum class Dist : int { bimax = 0, losscone = 1, prodkappa = 2, conecut = 3 };
 struct SpeciesCfg {
     std::string name;
     bool   deltaf   = true;    // δf (production) vs full-f (cross-arm)
+    int    rel      = 0;       // relativistic push (A=5 tails demand it)
     int    dist     = int(Dist::bimax);
     double n0       = 0.01;    // peak density / n_c at the shell center, equator
     double uthpar   = 0.2;     // thermal momenta (units of c·[code c])
