@@ -50,9 +50,16 @@ enum class B0Prof : int { uniform = 0, tilted = 1, kemirror = 2, linedipole = 3,
 //     ψ = (B0eq L0³/2) · x⁴/r⁶  =  g(L),  L = r³/x²,
 // whose level curves ARE the real 3D dipole's meridional line shapes
 // r = L cos²λ (equatorial curvature radius L/3, not the circle's L/2).
-// Along a line: B/B_eq = sec²λ·√(1+4tan²λ) — within ~5% of the true
-// dipole √(1+3sin²λ)/cos⁶λ for λ ≤ 45° (the circle was ~40% low), and
-// B_eq(L) = B0eq (L0/L)³, the real radial scaling. Exactly 2D-solenoidal;
+// Along a line: B/B_eq = sec²λ·√(1+4tan²λ). CORRECTED accounting vs the
+// true dipole √(1+3sin²λ)/cos⁶λ: the ratio is EXACTLY cos³λ — i.e. the
+// 2D profile misses precisely the azimuthal flux-tube convergence factor
+// 1/h_φ ∝ 1/cos³λ, which NO planar solenoidal field can carry (B on a
+// line is pinned to |∇L| by 2D flux conservation). Shortfall: 4% at 10°,
+// 17% at 20°, 35% at 30°, 55% at 40° — half the circle's error at every
+// latitude, exact line SHAPES, and B_eq(L) = B0eq(L0/L)³ real radial
+// scaling. The residual is the irreducible price of the meridional-2D
+// wave metric; report high-|λ| bounce/cone quantities accordingly.
+// Exactly 2D-solenoidal;
 // NOT curl-free (a distributed supporting current, as in Ke's slab
 // mirror) — harmless: B0 is force-only, the wave equations never see it.
 
