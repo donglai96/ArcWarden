@@ -191,6 +191,25 @@ struct Sim2D {
         ++nstep;
     }
 
+    // periodic validity sweep (cheap insurance for overnight runs): counts
+    // non-finite markers + checks W_EM finiteness. The RUNNER decides what
+    // to do on failure (write an emergency checkpoint, then abort) — the
+    // V4R2 lesson: pathologies can surface hours in; a poisoned run must
+    // die loudly WITH a resumable state, not corrupt silently.
+    bool healthy() {
+        acc.zero();
+        for (auto& s : sp) {
+            MarkerViews mv = s.mk->views();
+            k2d::k_finite_scan<<<int((s.mk->n + 255) / 256), 256>>>(
+                mv, acc.data(), s.mk->n);
+        }
+        double bad;
+        CUDA_CHECK(cudaMemcpy(&bad, acc.data(), 8, cudaMemcpyDeviceToHost));
+        double W[2];
+        F.energies(W);
+        return bad == 0.0 && std::isfinite(W[0]) && std::isfinite(W[1]);
+    }
+
     unsigned long long runaway_count() {
         unsigned long long h;
         CUDA_CHECK(cudaMemcpy(&h, runaway.data(), 8, cudaMemcpyDeviceToHost));

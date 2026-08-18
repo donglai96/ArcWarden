@@ -181,6 +181,14 @@ int main(int argc, char** argv) {
         }
         if (n % 10000 == 9999) {
             CUDA_CHECK(cudaDeviceSynchronize());
+            if (!S.healthy()) {
+                std::fprintf(stderr,
+                             "warden2d: HEALTH CHECK FAILED at step %ld — "
+                             "writing emergency checkpoint and aborting\n",
+                             n + 1);
+                save_checkpoint(S, outdir + "/ckpt_emergency.bin");
+                return 3;
+            }
             double W[2];
             S.F.energies(W);
             const double el = std::chrono::duration<double>(

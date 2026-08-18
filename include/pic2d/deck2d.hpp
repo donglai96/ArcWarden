@@ -27,6 +27,7 @@
 #include "pic2d/background2d.hpp"
 #include "pic2d/particles2d.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -140,6 +141,41 @@ inline Deck2D load_deck2d(const std::string& path) {
     using namespace detail;
     const IniMap m = parse_ini(path);
     Deck2D d;
+
+    // silent-typo protection: warn on any key this parser does not consume
+    // (a misspelled key would otherwise run 10 hours on a default value)
+    {
+        const std::map<std::string, std::vector<std::string>> known = {
+            {"domain", {"lam_w_deg", "margin", "dx", "dz"}},
+            {"background", {"profile", "B0eq", "L0", "a", "theta_deg"}},
+            {"time", {"dt", "nsteps"}},
+            {"cold", {"nc", "nonlinear", "c"}},
+            {"boundary", {"absorber_cells", "runway_lam_deg"}},
+            {"diag", {"target_band_max", "target_wna_deg", "target_lam_deg",
+                      "snap_every", "energy_every"}},
+        };
+        const std::vector<std::string> sp_keys = {
+            "deltaf", "rel", "dist", "n0", "uthpar", "uthperp", "kappa",
+            "lc_rho", "taud", "wdnoise", "shell_L0", "shell_dL", "edge_dL",
+            "ppc"};
+        for (const auto& [sec, kv] : m) {
+            const bool is_sp = sec.rfind("species", 0) == 0;
+            const auto* keys = is_sp ? &sp_keys
+                                     : (known.count(sec) ? &known.at(sec)
+                                                         : nullptr);
+            if (!keys) {
+                std::fprintf(stderr, "deck2d: WARNING unknown section [%s]\n",
+                             sec.c_str());
+                continue;
+            }
+            for (const auto& [k, val] : kv)
+                if (std::find(keys->begin(), keys->end(), k) == keys->end())
+                    std::fprintf(stderr,
+                                 "deck2d: WARNING unknown key '%s' in [%s] "
+                                 "(typo? value ignored)\n",
+                                 k.c_str(), sec.c_str());
+        }
+    }
 
     // background
     const std::string prof = gets(m, "background", "profile", "linedipole");
@@ -265,6 +301,13 @@ inline void finalize_deck2d(Deck2D& d) {
                       (!pass && s.deltaf) ? " (δf: V1 hold gate must confirm)" : "");
         gate("gyro/" + s.name, pass, !s.deltaf, buf);
     }
+
+    // ---- kappa mapping not implemented for curved backgrounds -----------
+    for (const auto& sp : d.species)
+        if (sp.dist == 1 && has_lines(d.bg))
+            gate("kappa/" + sp.name, false, true,
+                 "bi-kappa (E,mu) mapping unimplemented: dist=1 requires "
+                 "uniform/tilted background");
 
     // ---- δf discipline: τ_D forbidden by default (H1/H2 ruling) ---------
     for (const auto& s : d.species)

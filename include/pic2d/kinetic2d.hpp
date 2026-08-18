@@ -212,8 +212,13 @@ static __global__ void k_load(MarkerViews p, KineticCfg c, Background2D bg,
     if (c.dist == 1) {                  // bi-kappa: shared sqrt(κ/W) factor
         const int ndof = int(2.f * c.kappa - 1.f + 0.5f);
         float W = 0.f;
+        // gauss streams >= 105 (u01 slots >= 210): the position-rejection
+        // loop consumes slots 16..207 — streams 8..14 COLLIDED with it,
+        // correlating each marker's position with its chi^2 speed factor
+        // (bug found in the 2026-08-18 code review; the V3 Li run carried
+        // it — integrated verdicts robust, recorded in the review doc).
         for (int j = 0; j < ndof; ++j) {
-            const float g = rng_gauss(seed, uint32_t(i), 8u + j);
+            const float g = rng_gauss(seed, uint32_t(i), 105u + j);
             W += g * g;
         }
         const float fac = sqrtf(c.kappa / W);
