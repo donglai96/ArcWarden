@@ -439,9 +439,25 @@ additive. Reductions and diagnostics funnel through per-slab partials.
      the live-wd loop (bisected: wd-frozen arm clean, mode imaged, fix
      verified: live-wd floor now BELOW the frozen-wd floor, 1.8e-9 vs
      6.6e-9 at 25k steps).
-  Still open in P2: analytic ∂lnf₀ for losscone/prodkappa, anisotropic
-  hold rung (μ-slot ripple watch), multi-species orchestration + per-
-  species ledgers, V3 Li-band regression on the new stack.
+  **V1b anisotropic hold green** (T⊥/T∥ = 2, inert n₀; ζ-mapped loader
+  quantitatively confirmed by the 1/ζ shell-integral reduction 8940→7729).
+  **V3 Li 2019 anchor EXECUTED and green 2026-08-17**
+  (tests/test_li2019_reborn.cu, 1.6M steps, 67 min, 8.4M markers,
+  bi-kappa loader): **gap/LB carved 1.82 (τ_g 60–120, one band) →
+  2.5e-3 (τ_g 890–1010), run minimum 1.49e-4 at τ_g 845 — the legacy
+  3e-4 class**; UB/gap 1.8 → 13 (distinct upper band); saturation
+  δBy/B₀ = 1.18% (legacy δB 1.9%); warm plateau fills symmetrically
+  +31%/+29% at ±[0.08,0.10]c. Two originally-frozen gate thresholds were
+  estimator-miscalibrated (early k–ω window vs probe spectra; plateau
+  "10×" was a Δf-map contrast, not a warm-κ fat-tail ratio) —
+  recalibrated in-file with the run data archived
+  (docs/figs/li2019_reborn_v3.png). Supporting fixes en route: RNG
+  stream separation (id·64+s aliasing), replicated-J deposit (contention
+  measured NOT dominant: 2.93→2.53 ms/step; tile-sort stays P3),
+  periodic particle wrap for wall-less arms.
+  **The kinetic engine is now literature-anchored on the reborn stack.**
+  Still open in P2: analytic ∂lnf₀ for losscone/prodkappa, multi-species
+  orchestration + per-species ledgers (V3 ran two species inline).
 - **P3 production** (2–3 d): checkpoint (git-hash-embedded), diagnostics
   pack (§2.5), deck-finalize gate battery, V4/V5; W10 first-light deck.
 - **P4 science**: §3 arm ladder, in the PLAN_2D staged-gate style

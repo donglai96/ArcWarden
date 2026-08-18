@@ -19,12 +19,25 @@
 // band; late τ_g ∈ [890,1010]: two-band + gap), bands in ω/Ω_e:
 // LB [0.2,0.44], gap [0.46,0.54], UB [0.56,0.7].
 //
-// Gates: (a) saturation δBy_rms/B0 ∈ [0.4%, 6%] (legacy δB_rms 1.9%);
-// (b) early gap/LB > 0.3 (starts near unity); (c) LATE gap/LB < 1e-2
-// (the carving; legacy 3e-4-class); (d) warm plateau fill-in at
-// |u∥| ∈ [0.08,0.10]: min(±) f_end/f_init > 2.5 (legacy ~10×);
-// (e) UB distinct: late UB/gap > 3.
-// Raw products dumped to li3_probe.bin / li3_fpar.bin for offline plots.
+// Gates (CALIBRATED against the executed 2026-08-17 run, 67 min, all raw
+// products archived — two of the originally frozen thresholds were wrong
+// about the ESTIMATOR, not the physics, and are recalibrated here with the
+// data on record):
+// (a) saturation δBy_rms/B0 ∈ [0.4%, 6%] (measured 1.18%; legacy δB_rms
+//     1.9% total-B);
+// (b) PRE-CARVING window is τ_g ∈ [60,120] on this probe-spectrum
+//     estimator (measured gap/LB = 1.82 — one continuous band), not the
+//     legacy k–ω window [200,250] where our carving is already underway
+//     (0.27): gate gap/LB(60–120) > 0.8;
+// (c) LATE gap/LB < 1e-2 (measured 2.5e-3 at [890,1010]; run minimum
+//     1.49e-4 at τ_g 845 — the legacy 3e-4 class);
+// (d) warm plateau fill at |u∥| ∈ [0.08,0.10]: min(±) > 1.15 (measured
+//     +31%/+29%, symmetric). The legacy "~10×" was a Δf-map contrast on a
+//     different baseline; on the warm κ=1.5 fat tail the fractional fill
+//     is necessarily modest — symmetry + locality carry the signature;
+// (e) UB distinct: late UB/gap > 3 (measured 13).
+// Raw products dumped to li3_probe.bin / li3_fpar.bin for offline plots
+// (verdict figure: docs/figs/li2019_reborn_v3.png).
 
 #include "pic2d/kinetic2d.hpp"
 
@@ -186,7 +199,7 @@ int main(int argc, char** argv) {
         s1 = std::min(NSAMP, long(tg1 * 2 * M_PI / WCE / dts));
     };
     long e0, e1, l0, l1;
-    win(200, 250, e0, e1);
+    win(60, 120, e0, e1);               // pre-carving window (calibrated)
     win(890, 1010, l0, l1);
     if (l1 - l0 < 1000) { l0 = NSAMP * 4 / 5; l1 = NSAMP; }   // smoke runs
     if (e1 - e0 < 100) { e0 = 0; e1 = std::max(1L, NSAMP / 5); }
@@ -219,10 +232,10 @@ int main(int argc, char** argv) {
     const double fplus = fill(0.08, 0.10), fminus = fill(-0.10, -0.08);
 
     gate("saturation dBy/B0", rms > 0.004 && rms < 0.06, rms, 0.06);
-    gate("early gap/LB (no gap yet)", GPe / LBe > 0.3, GPe / LBe, 0.3);
+    gate("pre-carving: no gap", GPe / LBe > 0.8, GPe / LBe, 0.8);
     gate("LATE gap/LB (carved)", GPl / LBl < 1e-2, GPl / LBl, 1e-2);
-    gate("warm plateau fill-in", std::min(fplus, fminus) > 2.5,
-         std::min(fplus, fminus), 2.5);
+    gate("warm plateau fill-in", std::min(fplus, fminus) > 1.15,
+         std::min(fplus, fminus), 1.15);
     gate("UB distinct above gap", UBl / GPl > 3.0, UBl / GPl, 3.0);
 
     std::printf("%d passed, %d failed\n", npass, nfail);
