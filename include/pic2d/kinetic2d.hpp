@@ -76,8 +76,13 @@ struct KineticCfg {
                              // past |wd| ~ 1 and the deposit runs away
                              // (V4 first-run failure, imaged at step 46500).
     float wdnoise = 0.f;
-    float ucap    = 1.0f;    // runaway guard: |u| clamp (counted, reported) —
-                             // turns the failure mode into a counter
+    float ucap    = 4.0f;    // runaway DISASTER guard only: |u| clamp with a
+                             // reported count. Must sit far above the
+                             // physical thermal tail — the first V4 rerun
+                             // at ucap=1.0 clipped ~5.7k genuine tail
+                             // markers per step (u_perp=0.345c Maxwellian),
+                             // eroding f0 and sourcing spurious wd. Load-
+                             // time caps (kappa 0.6c) handle distributions.
     float wx0 = 0, wx1 = 0, wz0 = 0, wz1 = 0;   // reflecting wall rectangle
 };
 
