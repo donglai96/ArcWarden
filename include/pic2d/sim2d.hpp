@@ -37,6 +37,7 @@ struct Sim2D {
     std::vector<Sp> sp;
     Diag2D diag;
     Sorter2D sorter;
+    arc::DeviceArray<unsigned long long> runaway;   // ucap clamp counter
     bool diag_on = false;
     long sort_every = 25;              // 0 = off (markers drift ~0.06 cells/step)
     double time = 0;
@@ -59,6 +60,8 @@ struct Sim2D {
         }();
         if (size_t(d.nx) * d.nz < 1u << 20 && ppc_tot > 256) F.allocate_replicas(16);
         acc = arc::DeviceArray<double>(4);
+        runaway = arc::DeviceArray<unsigned long long>(1);
+        runaway.zero();
 
         const bool dipole = B0Prof(d.bg.prof) == B0Prof::linedipole;
         for (const auto& q : d.species) {
@@ -73,6 +76,7 @@ struct Sim2D {
             C.tpar = float(q.uthpar * q.uthpar);
             C.tperp = float(q.uthperp * q.uthperp);
             C.n0 = float(q.n0);
+            C.taud = float(q.taud);
             C.L0 = float(q.shell_L0);
             C.dL = float(q.shell_dL);
             C.edge = float(q.edge_dL);
@@ -151,7 +155,8 @@ struct Sim2D {
         for (auto& s : sp) {
             MarkerViews mv = s.mk->views();
             k2d::k_push_deposit<<<int((s.mk->n + 255) / 256), 256>>>(
-                mv, s.C, v, F.bg, float(F.x0), float(F.z0), s.mk->n);
+                mv, s.C, v, F.bg, float(F.x0), float(F.z0), s.mk->n,
+                runaway.data());
         }
         F.reduce_j();
         F.filter_j();
@@ -167,6 +172,12 @@ struct Sim2D {
         }
         time += F.dt;
         ++nstep;
+    }
+
+    unsigned long long runaway_count() {
+        unsigned long long h;
+        CUDA_CHECK(cudaMemcpy(&h, runaway.data(), 8, cudaMemcpyDeviceToHost));
+        return h;
     }
 
     double wd_rms(int is) {

@@ -68,7 +68,16 @@ struct KineticCfg {
     int   deltaf  = 1;
     int   rel     = 0;       // relativistic push; weight equation in u
     int   wdfreeze = 0;      // diagnostic: freeze wd at load values
+    float taud    = 0.f;     // δf weight relaxation time (0 = off). FORBIDDEN
+                             // in H2 gap-memory arms (PLAN_2D v4 ruling);
+                             // ALLOWED for strong-drive chirping arms — the
+                             // Lu 2021 precedent (τ_D ≈ 2000/Ω_e): without it
+                             // trapped-marker weights grow secularly, blow
+                             // past |wd| ~ 1 and the deposit runs away
+                             // (V4 first-run failure, imaged at step 46500).
     float wdnoise = 0.f;
+    float ucap    = 1.0f;    // runaway guard: |u| clamp (counted, reported) —
+                             // turns the failure mode into a counter
     float wx0 = 0, wx1 = 0, wz0 = 0, wz1 = 0;   // reflecting wall rectangle
 };
 
@@ -233,7 +242,8 @@ __device__ inline float gather(const float* f, const FieldViews2D& v,
 
 static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
                                       FieldViews2D v, Background2D bg,
-                                      float x0, float z0, uint64_t n) {
+                                      float x0, float z0, uint64_t n,
+                                      unsigned long long* runaway = nullptr) {
     const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
     if (m >= n) return;
     const float x = p.x[m], z = p.z[m];
@@ -272,7 +282,11 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         const float udota = ux * ax + uy * ay + uz * az;
         const float updota = upx * ax + uy * ay + upz * az;
         const float dlnf = dE * udota + dMu * updota / B0a;
-        if (!c.wdfreeze) p.wd[m] += -(1.f - p.wd[m]) * dlnf * v.dt;
+        if (!c.wdfreeze) {
+            float wd = p.wd[m] + -(1.f - p.wd[m]) * dlnf * v.dt;
+            if (c.taud > 0.f) wd -= wd * v.dt / c.taud;
+            p.wd[m] = wd;
+        }
     }
 
     {   // Boris with total B = wave + analytic background
@@ -292,6 +306,16 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         uy += pz * sx - px * sz;
         uz += px * sy - py * sx;
         ux += hk * Ex; uy += hk * Ey; uz += hk * Ez;
+    }
+    {   // runaway guard: a marker past ucap is already unphysical for these
+        // arms; clamping (with a reported count) keeps the deposit stencil
+        // in the single-wrap range instead of corrupting memory
+        const float uu = ux * ux + uy * uy + uz * uz;
+        if (uu > c.ucap * c.ucap) {
+            const float r = c.ucap * rsqrtf(uu);
+            ux *= r; uy *= r; uz *= r;
+            if (runaway) atomicAdd(runaway, 1ull);
+        }
     }
     const float gam1 = c.rel ? sqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
     float xn = x + ux / gam1 * v.dt;
