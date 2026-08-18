@@ -297,3 +297,6 @@ target_include_directories(test_deltaf2d_hold PRIVATE ${CMAKE_SOURCE_DIR}/includ
 target_link_libraries(test_deltaf2d_hold PRIVATE CUDA::cudart)
 add_test(NAME deltaf2d_hold COMMAND test_deltaf2d_hold)
 set_tests_properties(deltaf2d_hold PROPERTIES LABELS "physics")
+
+add_test(NAME deltaf2d_hold_aniso COMMAND test_deltaf2d_hold aniso)
+set_tests_properties(deltaf2d_hold_aniso PROPERTIES LABELS "physics")

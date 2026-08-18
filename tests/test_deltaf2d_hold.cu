@@ -28,6 +28,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 using namespace arc2d;
@@ -39,8 +40,16 @@ static void gate(const char* name, bool pass, double val, double lim) {
     (pass ? npass : nfail)++;
 }
 
-int main() {
-    std::printf("test_deltaf2d_hold — V1 isotropic δf shell quiet hold\n");
+int main(int argc, char** argv) {
+    // V1b (arg "aniso"): T⊥/T∥ = 2 at physically-inert density n0 = 1e-5
+    // (γ ∝ n0 → no real instability inside 2 T_b; the weight equation has
+    // no n0, so the μ-slot machinery and the ζ-mapped loader are exercised
+    // at full strength). Pre-registered expectation: a load-vs-f₀ mismatch
+    // transient (the loader samples the local mapped bi-Max at the particle
+    // position, f₀ lives on gc invariants), then plateau — same gates.
+    const bool aniso = argc > 1 && std::string(argv[1]) == "aniso";
+    std::printf("test_deltaf2d_hold — V1%s δf shell quiet hold\n",
+                aniso ? "b ANISOTROPIC (T⊥/T∥ = 2)" : " isotropic");
 
     const double DX = 0.25, DT = 0.15;
     const double X0 = 60, X1 = 240, Z0 = -140, Z1 = 140;
@@ -59,8 +68,9 @@ int main() {
 
     KineticCfg C;
     C.qm = -1.f; C.deltaf = 1; C.rel = 0;
-    C.tpar = C.tperp = 0.14f * 0.14f;             // isotropic: exact equilibrium
-    C.n0 = 0.01f;
+    C.tpar = 0.14f * 0.14f;
+    C.tperp = aniso ? 2.f * C.tpar : C.tpar;
+    C.n0 = aniso ? 1e-5f : 0.01f;
     C.L0 = 200.f; C.dL = 20.f; C.edge = 5.f;
     C.wdnoise = 1e-3f;
     C.wx0 = float(X0 + ND * DX); C.wx1 = float(X1 - ND * DX);

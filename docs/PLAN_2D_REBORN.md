@@ -205,6 +205,19 @@ grid (the mechanism the ribbon amputated and Lu's metric handles
 ambiguously — here it is exact, trivially, because the grid is Cartesian
 and B₀ is analytic).
 
+OSIRIS cross-reference (2026-08-17, source-verified in
+`osiris_stable/osiris-1.0.0/source/emf/os-emf-gridval.f03`; the user ran a
+parabolic-field case with it): OSIRIS `ext_fld = static` evaluates the
+external B (uniform / math-func / dipole) ONCE onto grid arrays at the
+exact per-component Yee stagger offsets, keeps it out of the Maxwell
+advance entirely, and particles interpolate a pre-summed `b_part = b +
+ext_b`. Same architectural separation as ours (waves-only Maxwell +
+additive background); the difference is gridded-B₀ (O(dx²) representation,
+pointwise components so grid-∇·B₀ ≠ 0 at O(dx²)) vs our analytic-at-the-
+particle B₀ (exact solenoidality; V0 μ secular 2e-5; ~10 flops/marker, no
+memory traffic). Our variant is the strictly stronger form of the same
+design; the field standard validates the architecture.
+
 Out-of-plane invariance (∂/∂y = 0) is retained — meridional 2D, k_φ = 0,
 same as Ke/Lu. Azimuthal drifts move particles in v_y only, never off
 their meridional position: **flux shells cannot leak in-plane** (in-plane
