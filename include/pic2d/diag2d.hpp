@@ -54,6 +54,26 @@ __host__ __device__ inline int lam_region(float lam_deg) {
 
 #ifdef __CUDACC__
 
+// CIC marker-weight deposit on cell centres → density map (initial-load
+// verification and occasional snapshots; dens uses the jtmp scratch, so
+// zero it first and unpack before writing to disk)
+static __global__ void k_dens(MarkerViews p, FieldViews2D v, float x0, float z0,
+                              float* dens, uint64_t n) {
+    const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
+    if (m >= n) return;
+    const float gx = (p.x[m] - x0) / v.dx - 0.5f;
+    const float gz = (p.z[m] - z0) / v.dz - 0.5f;
+    const int i0 = int(floorf(gx)), k0 = int(floorf(gz));
+    const float fx = gx - i0, fz = gz - k0;
+    const float w = p.w[m];
+    for (int c = 0; c < 4; ++c) {
+        const int s = v.idx(i0 + (c & 1), k0 + (c >> 1));
+        if (s >= 0)
+            atomicAdd(&dens[s], w * ((c & 1) ? fx : 1.f - fx) *
+                                    ((c >> 1) ? fz : 1.f - fz));
+    }
+}
+
 // fields at precomputed line points, rotated to the field-aligned frame:
 // out[6][NS] = {E∥, E1, Ey, B∥w, B1, By}
 static __global__ void k_sample_line(FieldViews2D v, const float* px,
@@ -67,10 +87,10 @@ static __global__ void k_sample_line(FieldViews2D v, const float* px,
         const float ax = gx - ox, az = gz - oz;
         const int i0 = int(floorf(ax)), k0 = int(floorf(az));
         const float fx = ax - i0, fz = az - k0;
-        return (1.f - fx) * (1.f - fz) * f[v.idx(i0, k0)] +
-               fx * (1.f - fz) * f[v.idx(i0 + 1, k0)] +
-               (1.f - fx) * fz * f[v.idx(i0, k0 + 1)] +
-               fx * fz * f[v.idx(i0 + 1, k0 + 1)];
+        return (1.f - fx) * (1.f - fz) * v.ld(f, i0, k0) +
+               fx * (1.f - fz) * v.ld(f, i0 + 1, k0) +
+               (1.f - fx) * fz * v.ld(f, i0, k0 + 1) +
+               fx * fz * v.ld(f, i0 + 1, k0 + 1);
     };
     const float Ex = g(v.ex, 0.5f, 0.f), Ey = g(v.ey, 0.f, 0.f),
                 Ez = g(v.ez, 0.f, 0.5f);
@@ -106,10 +126,10 @@ static __global__ void k_ledger(MarkerViews p, KineticCfg c, FieldViews2D v,
             const float ax = gx - ox, az = gz - oz;
             const int i0 = int(floorf(ax)), k0 = int(floorf(az));
             const float fx = ax - i0, fz = az - k0;
-            return (1.f - fx) * (1.f - fz) * f[v.idx(i0, k0)] +
-                   fx * (1.f - fz) * f[v.idx(i0 + 1, k0)] +
-                   (1.f - fx) * fz * f[v.idx(i0, k0 + 1)] +
-                   fx * fz * f[v.idx(i0 + 1, k0 + 1)];
+            return (1.f - fx) * (1.f - fz) * v.ld(f, i0, k0) +
+                   fx * (1.f - fz) * v.ld(f, i0 + 1, k0) +
+                   (1.f - fx) * fz * v.ld(f, i0, k0 + 1) +
+                   fx * fz * v.ld(f, i0 + 1, k0 + 1);
         };
         const float Ex = g(v.ex, 0.5f, 0.f), Ey = g(v.ey, 0.f, 0.f),
                     Ez = g(v.ez, 0.f, 0.5f);

@@ -48,13 +48,14 @@ struct Sim2D {
 
 #ifdef __CUDACC__
     void build(const Deck2D& d) {
-        F.allocate(d.nx, d.nz);
+        F.nx = d.nx; F.nz = d.nz;
         F.dx = d.dx; F.dz = d.dz; F.dt = d.dt;
         F.cspeed = d.cspeed; F.nc = d.nc;
         F.x0 = d.x0; F.z0 = d.z0;
         F.bg = d.bg;
         if (d.active_Lmax > d.active_Lmin && d.active_Lmin > 0)
-            F.set_active_band(d.active_Lmin, d.active_Lmax);
+            F.build_tiles(d.active_Lmin, d.active_Lmax);  // BEFORE allocate
+        F.allocate(d.nx, d.nz);
         F.build_masks(d.absorber_cells, 0.05);   // uses the band if set
         // replica heuristic: only worthwhile on small, contended grids
         const double ppc_tot = [&] {
@@ -64,8 +65,8 @@ struct Sim2D {
         }();
         if (size_t(d.nx) * d.nz < 1u << 20 && ppc_tot > 256) F.allocate_replicas(16);
         acc = arc::DeviceArray<double>(4);
-        runaway = arc::DeviceArray<unsigned long long>(1);
-        runaway.zero();
+        runaway = arc::DeviceArray<unsigned long long>(3);  // [0] ucap clamps,
+        runaway.zero();               // [1] dropped deposits, [2] load exhausts
 
         const bool dipole = has_lines(d.bg);
         for (const auto& q : d.species) {
@@ -118,9 +119,21 @@ struct Sim2D {
             k2d::k_load<<<int((N + 255) / 256), 256>>>(mv, C, d.bg, bx0, bx1,
                                                        bz0, bz1, wmark,
                                                        20260817u + uint32_t(sp.size()),
-                                                       N);
+                                                       N, runaway.data() + 2);
             CUDA_CHECK(cudaDeviceSynchronize());
             sp.push_back(std::move(s));
+        }
+        {   // loader-exhaust report (fallback markers sit at the shell centre)
+            unsigned long long rr[3];
+            CUDA_CHECK(cudaMemcpy(rr, runaway.data(), 24, cudaMemcpyDeviceToHost));
+            if (rr[2])
+                std::printf("  load: %llu exhausted rejections (%.1e of total) "
+                            "placed at shell centre\n",
+                            rr[2], double(rr[2]) / std::max(1.0, [&] {
+                                double s = 0;
+                                for (auto& q : sp) s += double(q.mk->n);
+                                return s;
+                            }()));
         }
         if (dipole) {
             diag.build_line(d.bg, d.bg.L0, d.lam_w * 180 / M_PI, 1.0,
@@ -207,9 +220,12 @@ struct Sim2D {
         }
         double bad;
         CUDA_CHECK(cudaMemcpy(&bad, acc.data(), 8, cudaMemcpyDeviceToHost));
+        unsigned long long rr[2];
+        CUDA_CHECK(cudaMemcpy(rr, runaway.data(), 16, cudaMemcpyDeviceToHost));
         double W[2];
         F.energies(W);
-        return bad == 0.0 && std::isfinite(W[0]) && std::isfinite(W[1]);
+        return bad == 0.0 && rr[1] == 0 && std::isfinite(W[0]) &&
+               std::isfinite(W[1]);
     }
 
     unsigned long long runaway_count() {

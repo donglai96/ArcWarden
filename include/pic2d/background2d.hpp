@@ -44,6 +44,11 @@
 
 namespace arc2d {
 
+// Sparse tile pool / preflight contract: tiles are kept out to this many
+// L-units beyond the active band, covering the full 120-unit absorbing
+// ramp (build_masks) plus stencil halo before the hard zero cut.
+constexpr double BAND_MARGIN = 130.0;
+
 enum class B0Prof : int { uniform = 0, tilted = 1, kemirror = 2, linedipole = 3,
                           dipole2d = 4 };
 // dipole2d (2026-08-18 realism upgrade, user-directed): flux function

@@ -71,6 +71,9 @@ struct Deck2D {
     double target_lam = 20.0 * M_PI / 180.0;
     long   snap_every = 0;                 // full-field snapshot cadence (steps)
     long   energy_every = 1000;
+    long   probe_every = 4;                // probe-station sample cadence
+    long   fv_every = 20000;               // f(v) + ledger dump cadence
+    int    dens_init = 1;                  // dump per-species density at t=0
     // [species]
     std::vector<SpeciesCfg> species;
 
@@ -79,6 +82,7 @@ struct Deck2D {
     struct GateResult { std::string name; bool pass; bool hard; std::string msg; };
     std::vector<GateResult> gates;
     double mem_fields_gb = 0, mem_markers_gb = 0;
+    double sparse_frac = 1.0;              // pool cells / dense cells
 
     bool ok() const {
         for (const auto& g : gates) if (g.hard && !g.pass) return false;
@@ -158,7 +162,8 @@ inline Deck2D load_deck2d(const std::string& path) {
             {"cold", {"nc", "nonlinear", "c"}},
             {"boundary", {"absorber_cells", "runway_lam_deg"}},
             {"diag", {"target_band_max", "target_wna_deg", "target_lam_deg",
-                      "snap_every", "energy_every"}},
+                      "snap_every", "energy_every", "probe_every", "fv_every",
+                      "dens_init"}},
         };
         const std::vector<std::string> sp_keys = {
             "deltaf", "rel", "dist", "n0", "uthpar", "uthperp", "kappa",
@@ -216,6 +221,9 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.target_lam = getd(m, "diag", "target_lam_deg", 20.0) * M_PI / 180.0;
     d.snap_every = long(getd(m, "diag", "snap_every", 0));
     d.energy_every = long(getd(m, "diag", "energy_every", 1000));
+    d.probe_every = long(getd(m, "diag", "probe_every", 4));
+    d.fv_every = long(getd(m, "diag", "fv_every", 20000));
+    d.dens_init = int(getd(m, "diag", "dens_init", 1));
 
     for (const auto& [sec, kv] : m) {
         if (sec.rfind("species", 0) != 0) continue;
@@ -360,8 +368,29 @@ inline void finalize_deck2d(Deck2D& d) {
         markers_total += double(s.nmax);
         d.shell_cells_total += cells;
     }
-    constexpr int nfield_arrays = 15;  // E,B,J (9) + cold vc (3) + scratch (3)
-    d.mem_fields_gb  = double(d.nx) * d.nz * 4.0 * nfield_arrays / 1e9;
+    constexpr int nfield_arrays = 15;  // E,B,J (9) + cold vc (3) + jtmp + masks
+    // sparse tile pool: with an active band the field arrays hold only the
+    // tiles within band ± BAND_MARGIN — count them exactly as build_tiles will
+    size_t field_cells = size_t(d.nx) * d.nz;
+    if (d.active_Lmax > d.active_Lmin && d.active_Lmin > 0 && has_lines(d.bg)) {
+        const int ntx = (d.nx + 15) / 16, ntz = (d.nz + 15) / 16;
+        size_t nact = 0;
+        for (int tk = 0; tk < ntz; ++tk)
+            for (int ti = 0; ti < ntx; ++ti) {
+                bool act = false;
+                for (int c = 0; c < 4 && !act; ++c) {
+                    const double xx = d.x0 + (ti + (c & 1)) * 16 * d.dx;
+                    const double zz = d.z0 + (tk + (c >> 1)) * 16 * d.dz;
+                    const double L = lshell_of<double>(d.bg, xx, zz);
+                    act = L >= d.active_Lmin - BAND_MARGIN &&
+                          L <= d.active_Lmax + BAND_MARGIN;
+                }
+                nact += act;
+            }
+        field_cells = nact * 256;
+        d.sparse_frac = double(field_cells) / (double(d.nx) * d.nz);
+    }
+    d.mem_fields_gb  = double(field_cells) * 4.0 * nfield_arrays / 1e9;
     d.mem_markers_gb = MarkerStore::bytes_for(uint64_t(markers_total)) / 1e9;
 }
 
@@ -379,8 +408,14 @@ inline void print_deck2d_report(const Deck2D& d, std::FILE* out = stdout) {
         std::fprintf(out, "  species  : %-10s %s dist=%d n0=%.4f shell L0=%.0f ΔL=%.0f ppc=%d → %.2e markers\n",
                      s.name.c_str(), s.deltaf ? "δf   " : "full-f", s.dist, s.n0,
                      s.shell_L0, s.shell_dL, s.ppc, double(s.nmax));
-    std::fprintf(out, "  memory   : fields %.2f GB + markers %.2f GB (36 B/marker eff) = %.2f GB\n",
-                 d.mem_fields_gb, d.mem_markers_gb, d.mem_fields_gb + d.mem_markers_gb);
+    std::fprintf(out, "  memory   : fields %.2f GB%s + markers %.2f GB (36 B/marker eff) = %.2f GB\n",
+                 d.mem_fields_gb,
+                 d.sparse_frac < 1.0
+                     ? (" (sparse pool, " +
+                        std::to_string(int(100 * d.sparse_frac + 0.5)) +
+                        "% of dense)").c_str()
+                     : "",
+                 d.mem_markers_gb, d.mem_fields_gb + d.mem_markers_gb);
     std::fprintf(out, "  gates    :\n");
     for (const auto& g : d.gates)
         std::fprintf(out, "    [%s] %-16s %s\n",

@@ -323,6 +323,12 @@ target_link_libraries(test_ckpt2d PRIVATE CUDA::cudart)
 add_test(NAME ckpt2d COMMAND test_ckpt2d)
 set_tests_properties(ckpt2d PROPERTIES LABELS "unit")
 
+add_executable(test_sparse2d tests/test_sparse2d.cu)
+target_include_directories(test_sparse2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_sparse2d PRIVATE CUDA::cudart)
+add_test(NAME sparse2d COMMAND test_sparse2d)
+set_tests_properties(sparse2d PROPERTIES LABELS "unit")
+
 add_executable(bench2d tools/bench2d.cu)
 target_include_directories(bench2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(bench2d PRIVATE CUDA::cudart)

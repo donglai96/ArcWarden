@@ -46,16 +46,26 @@ struct FieldViews2D {
     float *maske, *maskb;               // Umeda damping profiles (nullptr = off)
     float *jxr, *jyr, *jzr;             // replicated J (contention relief);
     int nrep;                           //   nrep = 1 ⇒ aliases of jx,jy,jz
-    const uint8_t* tile_active;         // per-16×16-tile flag (nullptr = all)
-    int ntx;                            // tiles per row
+    const int32_t* tslot;               // per-16×16-tile pool slot, −1 =
+    int ntx;                            //   inactive; nullptr = DENSE layout
     int nx, nz;
     float dx, dz, dt, c2;
     float qm_c, nc;                     // cold q/m (−1) and density
 
+    // dense: row-major. sparse: (slot<<8) | tile-local offset, −1 outside
+    // the active set. Writes at a kernel's CENTRE cell are always valid
+    // (block-level tile skip guarantees it); NEIGHBOUR reads go through
+    // ld() which returns 0 outside — consistent with the band-edge damping.
     __host__ __device__ int idx(int i, int k) const {
         i += (i < 0) * nx - (i >= nx) * nx;   // periodic wrap (|off| ≤ nx)
         k += (k < 0) * nz - (k >= nz) * nz;
-        return k * nx + i;
+        if (!tslot) return k * nx + i;
+        const int ts = tslot[(k >> 4) * ntx + (i >> 4)];
+        return ts < 0 ? -1 : (ts << 8) | ((k & 15) << 4) | (i & 15);
+    }
+    __host__ __device__ float ld(const float* a, int i, int k) const {
+        const int s = idx(i, k);
+        return s < 0 ? 0.f : a[s];
     }
 };
 
@@ -81,8 +91,7 @@ __device__ inline bool in_range(const Range& r, int& i, int& k) {
 // mask damps everything approaching the band edge, so their neighbours'
 // halo reads of 0 are consistent).
 __device__ inline bool tile_off(const FieldViews2D& v) {
-    return v.tile_active &&
-           !v.tile_active[blockIdx.y * v.ntx + blockIdx.x];
+    return v.tslot && v.tslot[blockIdx.y * v.ntx + blockIdx.x] < 0;
 }
 
 // ---- Maxwell ---------------------------------------------------------------
@@ -92,8 +101,8 @@ static __global__ void k_faraday(FieldViews2D v, Range r, float dt2) {
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
-    const float ey_zp = v.ey[v.idx(i, k + 1)], ey_xp = v.ey[v.idx(i + 1, k)];
-    const float ex_zp = v.ex[v.idx(i, k + 1)], ez_xp = v.ez[v.idx(i + 1, k)];
+    const float ey_zp = v.ld(v.ey, i, k + 1), ey_xp = v.ld(v.ey, i + 1, k);
+    const float ex_zp = v.ld(v.ex, i, k + 1), ez_xp = v.ld(v.ez, i + 1, k);
     v.bx[c] += dt2 * (ey_zp - v.ey[c]) / v.dz;
     v.bz[c] -= dt2 * (ey_xp - v.ey[c]) / v.dx;
     v.by[c] += dt2 * (-(ex_zp - v.ex[c]) / v.dz + (ez_xp - v.ez[c]) / v.dx);
@@ -104,8 +113,8 @@ static __global__ void k_ampere(FieldViews2D v, Range r) {
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
-    const float by_zm = v.by[v.idx(i, k - 1)], by_xm = v.by[v.idx(i - 1, k)];
-    const float bx_zm = v.bx[v.idx(i, k - 1)], bz_xm = v.bz[v.idx(i - 1, k)];
+    const float by_zm = v.ld(v.by, i, k - 1), by_xm = v.ld(v.by, i - 1, k);
+    const float bx_zm = v.ld(v.bx, i, k - 1), bz_xm = v.ld(v.bz, i - 1, k);
     v.ex[c] += v.dt * (-v.c2 * (v.by[c] - by_zm) / v.dz - v.jx[c]);
     v.ez[c] += v.dt * (+v.c2 * (v.by[c] - by_xm) / v.dx - v.jz[c]);
     v.ey[c] += v.dt * (v.c2 * ((v.bx[c] - bx_zm) / v.dz - (v.bz[c] - bz_xm) / v.dx)
@@ -124,8 +133,8 @@ static __global__ void k_cold_step(FieldViews2D v, Range r, Background2D bg,
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
     // symmetric staggered E gather to the node
-    const float Ex = 0.5f * (v.ex[c] + v.ex[v.idx(i - 1, k)]);
-    const float Ez = 0.5f * (v.ez[c] + v.ez[v.idx(i, k - 1)]);
+    const float Ex = 0.5f * (v.ex[c] + v.ld(v.ex, i - 1, k));
+    const float Ez = 0.5f * (v.ez[c] + v.ld(v.ez, i, k - 1));
     const float Ey = v.ey[c];
     const float hk = 0.5f * v.qm_c * v.dt;
     float ux = v.vcx[c] + hk * Ex;
@@ -159,8 +168,8 @@ static __global__ void k_cold_current(FieldViews2D v, Range r) {
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
     const float q = -v.nc;
-    v.jx[c] += q * 0.5f * (v.vcx[c] + v.vcx[v.idx(i + 1, k)]);
-    v.jz[c] += q * 0.5f * (v.vcz[c] + v.vcz[v.idx(i, k + 1)]);
+    v.jx[c] += q * 0.5f * (v.vcx[c] + v.ld(v.vcx, i + 1, k));
+    v.jz[c] += q * 0.5f * (v.vcz[c] + v.ld(v.vcz, i, k + 1));
     v.jy[c] += q * v.vcy[c];
 }
 
@@ -212,17 +221,19 @@ static __global__ void k_reduce_j(FieldViews2D v, Range r) {
 
 static __global__ void k_filter_x(const float* src, float* dst, FieldViews2D v,
                                   Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
-    dst[v.idx(i, k)] = 0.25f * src[v.idx(i - 1, k)] + 0.5f * src[v.idx(i, k)] +
-                       0.25f * src[v.idx(i + 1, k)];
+    dst[v.idx(i, k)] = 0.25f * v.ld(src, i - 1, k) + 0.5f * src[v.idx(i, k)] +
+                       0.25f * v.ld(src, i + 1, k);
 }
 static __global__ void k_filter_z(const float* src, float* dst, FieldViews2D v,
                                   Range r) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
-    dst[v.idx(i, k)] = 0.25f * src[v.idx(i, k - 1)] + 0.5f * src[v.idx(i, k)] +
-                       0.25f * src[v.idx(i, k + 1)];
+    dst[v.idx(i, k)] = 0.25f * v.ld(src, i, k - 1) + 0.5f * src[v.idx(i, k)] +
+                       0.25f * v.ld(src, i, k + 1);
 }
 
 // fused binomial^3: three 1-2-1 passes per axis == one separable 7-tap pass
@@ -236,7 +247,7 @@ static __global__ void k_filter7(const float* src, float* dst, FieldViews2D v,
     for (int t = threadIdx.y * blockDim.x + threadIdx.x; t < 22 * 22;
          t += blockDim.x * blockDim.y) {
         const int li = t % 22, lk = t / 22;
-        tile[lk][li] = src[v.idx(i0 + li - 3, k0 + lk - 3)];
+        tile[lk][li] = v.ld(src, i0 + li - 3, k0 + lk - 3);
     }
     __syncthreads();
     const int i = i0 + threadIdx.x, k = k0 + threadIdx.y;
@@ -259,6 +270,7 @@ static __global__ void k_filter7(const float* src, float* dst, FieldViews2D v,
 // WEM = ½Σ(E² + c²B²)dV (ε0 = 1, 1/μ0 = c²); Wc = ½ nc Σ|Vc|² dV.
 
 static __global__ void k_energy(FieldViews2D v, Range r, double* acc) {
+    if (tile_off(v)) return;
     int i, k;
     if (!in_range(r, i, k)) return;
     const int c = v.idx(i, k);
@@ -282,9 +294,12 @@ static __global__ void k_energy(FieldViews2D v, Range r, double* acc) {
 struct Fields2D {
     arc::DeviceArray<float> ex, ey, ez, bx, by, bz, jx, jy, jz, vcx, vcy, vcz;
     arc::DeviceArray<float> maske, maskb, jtmp, jxr, jyr, jzr;
-    arc::DeviceArray<uint8_t> tile_flags;
+    arc::DeviceArray<int32_t> tslot_dev;
+    std::vector<int32_t> tslot_host;       // per-tile pool slot (−1 inactive)
     arc::DeviceArray<double> energy_acc;
     double band_Lmin = 0, band_Lmax = 0;   // 0 = full box active
+    size_t field_cells = 0;                // dense nx·nz or pool nslots·256
+    int nslots = 0;                        // active tiles (0 = dense mode)
     int nx = 0, nz = 0;
     int jfilter = 3;                       // binomial passes per axis
     int nrep = 1;                          // J replicas (allocate_replicas)
@@ -292,22 +307,90 @@ struct Fields2D {
     Background2D bg;
     bool masks_on = false;
 
+    // Build the sparse tile table from the active band. MUST run before
+    // allocate(); requires geometry (x0/z0/dx/dz/bg) already set. Dense
+    // mode (no call, or full box) keeps nslots = 0.
+    void build_tiles(double Lmin, double Lmax) {
+        band_Lmin = Lmin; band_Lmax = Lmax;
+        if (!(Lmax > Lmin && Lmin > 0)) return;
+        const int ntx_ = (nx + f2d::TX - 1) / f2d::TX;
+        const int ntz_ = (nz + f2d::TZ - 1) / f2d::TZ;
+        tslot_host.assign(size_t(ntx_) * ntz_, -1);
+        const double margin = BAND_MARGIN;   // full damping ramp + halo
+        int slot = 0;
+        for (int tk = 0; tk < ntz_; ++tk)
+            for (int ti = 0; ti < ntx_; ++ti) {
+                bool act = false;
+                for (int c = 0; c < 4 && !act; ++c) {
+                    const double xx = x0 + (ti + (c & 1)) * f2d::TX * dx;
+                    const double zz = z0 + (tk + (c >> 1)) * f2d::TZ * dz;
+                    const double L = lshell_of<double>(bg, xx, zz);
+                    act = L >= Lmin - margin && L <= Lmax + margin;
+                }
+                if (act) tslot_host[size_t(tk) * ntx_ + ti] = slot++;
+            }
+        nslots = slot;
+        tslot_dev = arc::DeviceArray<int32_t>(tslot_host.size());
+        CUDA_CHECK(cudaMemcpy(tslot_dev.data(), tslot_host.data(),
+                              tslot_host.size() * 4, cudaMemcpyHostToDevice));
+    }
+
+    // every tile active: pool layout with dense coverage (S1 bitwise gate;
+    // also the only sparse option for backgrounds without field lines)
+    void build_tiles_all() {
+        const int ntx_ = (nx + f2d::TX - 1) / f2d::TX;
+        const int ntz_ = (nz + f2d::TZ - 1) / f2d::TZ;
+        tslot_host.resize(size_t(ntx_) * ntz_);
+        for (size_t t = 0; t < tslot_host.size(); ++t) tslot_host[t] = int32_t(t);
+        nslots = int(tslot_host.size());
+        tslot_dev = arc::DeviceArray<int32_t>(tslot_host.size());
+        CUDA_CHECK(cudaMemcpy(tslot_dev.data(), tslot_host.data(),
+                              tslot_host.size() * 4, cudaMemcpyHostToDevice));
+    }
+
     void allocate(int nx_, int nz_) {
         nx = nx_; nz = nz_;
-        const size_t n = size_t(nx) * nz;
+        field_cells = nslots > 0 ? size_t(nslots) * 256 : size_t(nx) * nz;
         for (auto* a : {&ex, &ey, &ez, &bx, &by, &bz, &jx, &jy, &jz,
                         &vcx, &vcy, &vcz, &jtmp})
-            *a = arc::DeviceArray<float>(n);
+            *a = arc::DeviceArray<float>(field_cells);
         energy_acc = arc::DeviceArray<double>(2);
         for (auto* a : {&ex, &ey, &ez, &bx, &by, &bz, &jx, &jy, &jz,
                         &vcx, &vcy, &vcz, &jtmp})
             a->zero();
     }
 
+    // host pack/unpack between dense (nx·nz) and the storage layout
+    void pack_host(const std::vector<float>& dense, std::vector<float>& out) const {
+        if (nslots == 0) { out = dense; return; }
+        out.assign(field_cells, 0.f);
+        const int ntx_ = (nx + f2d::TX - 1) / f2d::TX;
+        for (int k = 0; k < nz; ++k)
+            for (int i = 0; i < nx; ++i) {
+                const int ts = tslot_host[size_t(k >> 4) * ntx_ + (i >> 4)];
+                if (ts >= 0)
+                    out[(size_t(ts) << 8) | ((k & 15) << 4) | (i & 15)] =
+                        dense[size_t(k) * nx + i];
+            }
+    }
+    void unpack_host(const std::vector<float>& stor, std::vector<float>& dense) const {
+        if (nslots == 0) { dense = stor; return; }
+        dense.assign(size_t(nx) * nz, 0.f);
+        const int ntx_ = (nx + f2d::TX - 1) / f2d::TX;
+        for (int k = 0; k < nz; ++k)
+            for (int i = 0; i < nx; ++i) {
+                const int ts = tslot_host[size_t(k >> 4) * ntx_ + (i >> 4)];
+                if (ts >= 0)
+                    dense[size_t(k) * nx + i] =
+                        stor[(size_t(ts) << 8) | ((k & 15) << 4) | (i & 15)];
+            }
+    }
+
     // Deposit contention relief for high-ppc/small-grid runs; memory cost
     // nrep × 3 × cells × 4 B (deck-sized: Li-class 4096 cells × 16 = 0.8 MB;
     // big boxes keep nrep = 1).
     void allocate_replicas(int n) {
+        if (nslots > 0) return;            // sparse mode: flat pool, nrep = 1
         nrep = n;
         if (nrep > 1) {
             const size_t sz = size_t(nrep) * nx * nz;
@@ -325,7 +408,7 @@ struct Fields2D {
                  nrep > 1 ? jxr.data() : jx.data(),
                  nrep > 1 ? jyr.data() : jy.data(),
                  nrep > 1 ? jzr.data() : jz.data(), nrep,
-                 tile_flags.empty() ? nullptr : tile_flags.data(),
+                 nslots > 0 ? tslot_dev.data() : nullptr,
                  (nx + f2d::TX - 1) / f2d::TX,
                  nx, nz, float(dx), float(dz), float(dt),
                  float(cspeed * cspeed), -1.f, float(nc) };
@@ -340,30 +423,7 @@ struct Fields2D {
     // the band edge, so the cut ABSORBS instead of reflecting (a hard
     // plasma→vacuum cut would totally reflect whistlers). B0 stays
     // analytic everywhere — it was never gridded and costs nothing.
-    void set_active_band(double Lmin, double Lmax) {
-        band_Lmin = Lmin;
-        band_Lmax = Lmax;
-        const int ntx = (nx + f2d::TX - 1) / f2d::TX;
-        const int ntz = (nz + f2d::TZ - 1) / f2d::TZ;
-        std::vector<uint8_t> h(size_t(ntx) * ntz, 1);
-        if (Lmax > Lmin && Lmin > 0) {
-            const double margin = 40.0;    // halo + filter reach, physical units
-            for (int tk = 0; tk < ntz; ++tk)
-                for (int ti = 0; ti < ntx; ++ti) {
-                    bool act = false;
-                    for (int c = 0; c < 4 && !act; ++c) {
-                        const double xx = x0 + (ti + (c & 1)) * f2d::TX * dx;
-                        const double zz = z0 + (tk + (c >> 1)) * f2d::TZ * dz;
-                        const double L = lshell_of<double>(bg, xx, zz);
-                        act = L >= Lmin - margin && L <= Lmax + margin;
-                    }
-                    h[size_t(tk) * ntx + ti] = act ? 1 : 0;
-                }
-        }
-        tile_flags = arc::DeviceArray<uint8_t>(h.size());
-        CUDA_CHECK(cudaMemcpy(tile_flags.data(), h.data(), h.size(),
-                              cudaMemcpyHostToDevice));
-    }
+    void set_active_band(double Lmin, double Lmax) { build_tiles(Lmin, Lmax); }
 
     // Umeda-style edge frame: cell-centred damping profile m(d) rising
     // smoothly from (1 − nu_max) at the boundary to 1 over nd cells; applied
@@ -393,11 +453,13 @@ struct Fields2D {
                 }
                 h[size_t(k) * nx + i] = float(m);
             }
-        maske = arc::DeviceArray<float>(h.size());
-        maskb = arc::DeviceArray<float>(h.size());
-        CUDA_CHECK(cudaMemcpy(maske.data(), h.data(), h.size() * sizeof(float),
+        std::vector<float> hp;
+        pack_host(h, hp);
+        maske = arc::DeviceArray<float>(hp.size());
+        maskb = arc::DeviceArray<float>(hp.size());
+        CUDA_CHECK(cudaMemcpy(maske.data(), hp.data(), hp.size() * sizeof(float),
                               cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(maskb.data(), h.data(), h.size() * sizeof(float),
+        CUDA_CHECK(cudaMemcpy(maskb.data(), hp.data(), hp.size() * sizeof(float),
                               cudaMemcpyHostToDevice));
         masks_on = true;
     }
@@ -426,7 +488,7 @@ struct Fields2D {
             for (auto* a : {&jx, &jy, &jz}) {
                 f2d::k_filter7<<<nb, tb, 0, s>>>(a->data(), jtmp.data(), v, r);
                 CUDA_CHECK(cudaMemcpyAsync(a->data(), jtmp.data(),
-                                           size_t(nx) * nz * 4,
+                                           field_cells * 4,
                                            cudaMemcpyDeviceToDevice, s));
             }
             return;

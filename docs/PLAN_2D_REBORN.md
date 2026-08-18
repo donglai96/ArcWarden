@@ -460,6 +460,19 @@ additive. Reductions and diagnostics funnel through per-slab partials.
   orchestration + per-species ledgers (V3 ran two species inline).
 - **P3 production** (2–3 d): checkpoint (git-hash-embedded), diagnostics
   pack (§2.5), deck-finalize gate battery, V4/V5; W10 first-light deck.
+  **P3+ optimization detour (user-directed 2026-08-18, "算力没有集中在
+  有效的区域")**: sparse tile-pool field storage implemented
+  (PLAN_SPARSE_GRID §5) — pool + int32 tslot table, guarded+counted
+  deposits, ckpt v2, sparse-aware preflight, BAND_MARGIN=130 fixing the
+  under-covered absorbing ramp; gates S1 (bitwise dense-vs-pool) and S2
+  (three-arm Sim2D envelope) in tests/test_sparse2d.cu. Compact box
+  V4R4 (x_min 2500, dL=60 ≥ 5.5 λ∥). V4R5-A5 shakedown deck: A=5 short
+  run whose deliverables are the user's validation trio — (1) initial
+  density map vs designed shell (dens_init + plot_density2d.py),
+  (2) fast whistler excitation with visible chirping (quicklook2d.py
+  spectrograms every 10k steps), (3) wave propagation maps in-domain
+  (plot_wavemap2d.py from f2d snapshots). Deck-driven cadences
+  (probe_every/fv_every/dens_init) close review item D4.
 - **P4 science**: §3 arm ladder, in the PLAN_2D staged-gate style
   (report at every stage; no parameter roulette; corridors pre-computed).
 

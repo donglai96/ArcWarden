@@ -11,6 +11,7 @@
 // Usage: ./warden2d <deck.ini> [outdir] [--nsteps=N] [--preflight]
 
 #include "pic2d/checkpoint2d.hpp"
+#include "pic2d/diag2d.hpp"
 #include "pic2d/sim2d.hpp"
 
 #include <chrono>
@@ -25,16 +26,39 @@
 using namespace arc2d;
 
 static void snapshot(Fields2D& F, const std::string& outdir, long n) {
-    const size_t nc = size_t(F.nx) * F.nz;
-    std::vector<float> h(nc);
+    std::vector<float> h(F.field_cells), dense;
     char path[512];
     std::snprintf(path, sizeof path, "%s/f2d_%07ld.bin", outdir.c_str(), n);
     FILE* f = std::fopen(path, "wb");
     for (auto* a : {&F.ex, &F.ey, &F.ez, &F.bx, &F.by, &F.bz}) {
-        CUDA_CHECK(cudaMemcpy(h.data(), a->data(), nc * 4, cudaMemcpyDeviceToHost));
-        std::fwrite(h.data(), 4, nc, f);
+        CUDA_CHECK(cudaMemcpy(h.data(), a->data(), F.field_cells * 4,
+                              cudaMemcpyDeviceToHost));
+        F.unpack_host(h, dense);   // file stays dense [nz][nx] for the plots
+        std::fwrite(dense.data(), 4, dense.size(), f);
     }
     std::fclose(f);
+}
+
+// per-species CIC density into the jtmp scratch → dense file (t=0 gate:
+// the loaded shell must sit between its designed L contours)
+static void dump_density(Sim2D& S, const std::string& outdir) {
+    for (auto& sp : S.sp) {
+        S.F.jtmp.zero();
+        MarkerViews mv = sp.mk->views();
+        d2d::k_dens<<<int((sp.mk->n + 255) / 256), 256>>>(
+            mv, S.F.views(), float(S.F.x0), float(S.F.z0), S.F.jtmp.data(),
+            sp.mk->n);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        std::vector<float> h(S.F.field_cells), dense;
+        CUDA_CHECK(cudaMemcpy(h.data(), S.F.jtmp.data(), S.F.field_cells * 4,
+                              cudaMemcpyDeviceToHost));
+        S.F.unpack_host(h, dense);
+        FILE* f = std::fopen((outdir + "/dens_" + sp.name + ".bin").c_str(), "wb");
+        std::fwrite(dense.data(), 4, dense.size(), f);
+        std::fclose(f);
+        S.F.jtmp.zero();
+    }
+    std::printf("  initial density maps written (dens_<species>.bin)\n");
 }
 
 int main(int argc, char** argv) {
@@ -106,16 +130,30 @@ int main(int argc, char** argv) {
         std::fprintf(ecsv, "\n");
     }
 
+    if (!resume && d.dens_init) dump_density(S, outdir);
+
     // meta: probe stations with LOCAL Omega_e (dual-normalization contract)
     FILE* probes = nullptr;
     std::vector<float> pline(size_t(6) * std::max(S.diag.ns, 1));
-    const long probe_every = 4, sline_every = std::max(1L, d.snap_every / 4),
-               fv_every = 20000;
+    const long probe_every = d.probe_every,
+               sline_every = std::max(1L, d.snap_every / 4),
+               fv_every = d.fv_every;
     if (S.diag_on) {
         FILE* meta = std::fopen((outdir + "/meta.txt").c_str(), "w");
         std::fprintf(meta, "deck %s\nL0 %.2f lam_w_deg %.1f B0eq %.4f\n"
                            "line ns %d fields Epar,E1,Ey,Bpar,B1,By\n",
                      argv[1], d.bg.L0, d.lam_w * 180 / M_PI, d.bg.B0eq, S.diag.ns);
+        const char* pnames[] = {"uniform", "tilted", "kemirror", "linedipole",
+                                "dipole2d"};
+        std::fprintf(meta, "profile %s\nbox %.3f %.3f %.3f %.3f %d %d %.4f %.4f\n",
+                     pnames[d.bg.prof], d.x0, d.x1, d.z0, d.z1, d.nx, d.nz,
+                     d.dx, d.dz);
+        for (const auto& s : d.species)
+            std::fprintf(meta, "shell %s L0=%.1f dL=%.1f edge=%.1f\n",
+                         s.name.c_str(), s.shell_L0, s.shell_dL, s.edge_dL);
+        if (d.active_Lmax > d.active_Lmin && d.active_Lmin > 0)
+            std::fprintf(meta, "active_band %.1f %.1f\n", d.active_Lmin,
+                         d.active_Lmax);
         std::fprintf(meta, "probe_every %ld dt %.4f\nprobes (lam_deg, wce_local):\n",
                      probe_every, d.dt);
         for (size_t i = 0; i < S.diag.probe_idx.size(); ++i)

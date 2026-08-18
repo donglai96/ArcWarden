@@ -1,12 +1,14 @@
 // pic2d — P3c checkpoint/restart (PLAN_2D_REBORN §2.6).
 //
 // Binary layout (little-endian, all sizes explicit):
-//   char[8]  "AW2DCKP1"
+//   char[8]  "AW2DCKP2"  (v2: sparse tile pool; v1 dense still loadable)
 //   char[64] git hash (CMake configure-time AW_GIT_HASH — closes the
 //            legacy provenance gap; stale-by-one-commit is accepted and
 //            recorded as such)
 //   i64 nstep, f64 time, i32 nx, i32 nz, i32 nspecies
-//   12 × field arrays [nx*nz] f32  (ex,ey,ez,bx,by,bz,jx,jy,jz,vcx,vcy,vcz)
+//   u64 field_cells (v2 only; storage length of every field array —
+//       dense nx·nz or pool nslots·256; must match the rebuilt deck)
+//   12 × field arrays [field_cells] f32 (ex..bz, jx..jz, vcx..vcz)
 //   per species: char[32] name, u64 n, 7 × [n] f32 (x,z,ux,uy,uz,w,wd)
 // Written to <path>.tmp then atomically renamed (legacy convention: a
 // killed job never leaves a torn checkpoint). Device↔host streamed in
@@ -59,7 +61,7 @@ inline void save_checkpoint(Sim2D& S, const std::string& path) {
     const std::string tmp = path + ".tmp";
     FILE* f = std::fopen(tmp.c_str(), "wb");
     if (!f) throw std::runtime_error("ckpt: cannot open " + tmp);
-    std::fwrite("AW2DCKP1", 1, 8, f);
+    std::fwrite("AW2DCKP2", 1, 8, f);
     char gh[64] = {0};
     std::strncpy(gh, AW_GIT_HASH, sizeof gh - 1);
     std::fwrite(gh, 1, 64, f);
@@ -70,7 +72,9 @@ inline void save_checkpoint(Sim2D& S, const std::string& path) {
     std::fwrite(&nx, 4, 1, f);
     std::fwrite(&nz, 4, 1, f);
     std::fwrite(&nsp, 4, 1, f);
-    const size_t nc = size_t(nx) * nz;
+    const uint64_t fc = S.F.field_cells;
+    std::fwrite(&fc, 8, 1, f);
+    const size_t nc = fc;
     for (auto* a : {&S.F.ex, &S.F.ey, &S.F.ez, &S.F.bx, &S.F.by, &S.F.bz,
                     &S.F.jx, &S.F.jy, &S.F.jz, &S.F.vcx, &S.F.vcy, &S.F.vcz})
         ckpt::stream_out(f, a->data(), nc);
@@ -94,8 +98,10 @@ inline void load_checkpoint(Sim2D& S, const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) throw std::runtime_error("ckpt: cannot open " + path);
     char magic[8], gh[64];
-    if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, "AW2DCKP1", 8))
+    if (std::fread(magic, 1, 8, f) != 8 ||
+        (std::memcmp(magic, "AW2DCKP1", 8) && std::memcmp(magic, "AW2DCKP2", 8)))
         throw std::runtime_error("ckpt: bad magic");
+    const bool v2 = magic[7] == '2';
     (void)!std::fread(gh, 1, 64, f);
     int64_t ns;
     int32_t nx, nz, nsp;
@@ -106,8 +112,13 @@ inline void load_checkpoint(Sim2D& S, const std::string& path) {
     (void)!std::fread(&nsp, 4, 1, f);
     if (nx != S.F.nx || nz != S.F.nz || nsp != int32_t(S.sp.size()))
         throw std::runtime_error("ckpt: geometry/species mismatch vs deck");
+    uint64_t fc = size_t(nx) * nz;      // v1: always dense
+    if (v2) (void)!std::fread(&fc, 8, 1, f);
+    if (fc != S.F.field_cells)
+        throw std::runtime_error("ckpt: field layout mismatch vs deck "
+                                 "(sparse band changed?)");
     S.nstep = ns;
-    const size_t nc = size_t(nx) * nz;
+    const size_t nc = fc;
     for (auto* a : {&S.F.ex, &S.F.ey, &S.F.ez, &S.F.bx, &S.F.by, &S.F.bz,
                     &S.F.jx, &S.F.jy, &S.F.jz, &S.F.vcx, &S.F.vcy, &S.F.vcz})
         ckpt::stream_in(f, a->data(), nc);

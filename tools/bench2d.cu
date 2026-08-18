@@ -25,6 +25,12 @@ int main(int argc, char** argv) {
     for (auto& s : S.sp) nm += double(s.mk->n);
     std::printf("markers %.2e cells %.2e sort_every %ld tiled %d\n",
                 nm, double(d.nx) * d.nz, S.sort_every, S.deposit_tiled);
+    size_t mfree = 0, mtot = 0;
+    cudaMemGetInfo(&mfree, &mtot);
+    std::printf("field_cells %.2e (%.0f%% of dense)  VRAM used %.2f GB\n",
+                double(S.F.field_cells),
+                100.0 * S.F.field_cells / (double(d.nx) * d.nz),
+                (mtot - mfree) / 1e9);
     for (int i = 0; i < 30; ++i) S.step();
     CUDA_CHECK(cudaDeviceSynchronize());
     cudaEvent_t a, b;

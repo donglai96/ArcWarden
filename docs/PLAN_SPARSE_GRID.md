@@ -83,3 +83,33 @@ tile 读取返回零、写入丢弃)。
 
 不改变 dx=0.25 的分辨率契约(res/UB 硬性检验不动);不引入曲线
 坐标;不在一期引入多分辨率;背景场 B₀ 保持解析、处处存在。
+
+## 五、一期实现记录(2026-08-18/19)
+
+已完成的结构改动:
+- `FieldViews2D`:`tile_active`(uint8 跳过标志)→ `tslot`(int32
+  每 tile 池槽号,−1 = 非活动,nullptr = 稠密模式,与旧行为逐位
+  一致);`idx()` 返回 `(slot<<8)|((k&15)<<4)|(i&15)` 或 −1;新增
+  `ld()` 保护读(非活动读 0)。全部场 kernel 的邻居 stencil、粒子
+  gather、诊断线采样迁移到 `ld()`。
+- 三个原本无 tile 保护的 kernel(k_energy、k_filter_x/z)补上
+  `tile_off` 保护——稠密模式行为不变,稀疏模式下否则会经 idx=−1
+  越界。
+- Fields2D 所有者侧:`build_tiles()`(必须先于 `allocate()`,
+  Sim2D::build 已调整顺序)、池尺寸 `field_cells = nslots·256`、
+  `pack_host/unpack_host`(掩模构建、快照、密度图共用)、filter_j
+  拷回改为池尺寸、稀疏模式强制 nrep=1、`build_tiles_all()`(S1
+  测试与无磁力线背景)。
+- 沉积保护:活动集外的沉积**丢弃并计数**(FlatAcc/TileAcc 共用),
+  计数进 runaway[1],`healthy()` 检查为零——粒子都在带内深处,
+  非零即配置错误,绝不无声丢电荷。
+- checkpoint v2(AW2DCKP2):头部记录 field_cells,加载校验布局
+  一致;仍接受 v1(稠密)。
+- deck 预检的场内存改为精确扫描活动 tile(与 build_tiles 同一
+  判据),报告 sparse 占比;margin 常数统一为 BAND_MARGIN=130
+  (原 40 只覆盖 120 L-单位吸收 ramp 的三分之一——**修正了一个
+  先前就存在的缺陷**:硬零切割前的阻尼不足)。
+- 验证:tests/test_sparse2d.cu — S1(全 tile 活动池 vs 稠密,
+  500 步场管线 + 掩模 + 两种 filter,**逐位一致**)+ S2(mini
+  linedipole Sim2D 三臂:稠密/全活动稀疏/带状稀疏,healthy、
+  零丢弃沉积、W_EM 包络、池确实变小)。

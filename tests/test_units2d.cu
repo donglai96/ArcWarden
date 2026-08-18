@@ -33,6 +33,8 @@ int main() {
         {"decks/warden2d_v4r.ini", true},
         {"decks/warden2d_v4r2.ini", true},
         {"decks/warden2d_v4r3.ini", true},
+        {"decks/warden2d_v4r4.ini", true},
+        {"decks/warden2d_v4r5_a5.ini", true},
     };
     int bad = 0;
     for (const auto& dk : decks) {

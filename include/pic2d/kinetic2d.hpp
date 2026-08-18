@@ -186,17 +186,34 @@ inline double shell_density_integral(const KineticCfg& c, const Background2D& bg
 // across the shell is a second-order load residual, V1-measured.)
 static __global__ void k_load(MarkerViews p, KineticCfg c, Background2D bg,
                               float bx0, float bx1, float bz0, float bz1,
-                              float wmark, uint32_t seed, uint64_t n) {
+                              float wmark, uint32_t seed, uint64_t n,
+                              unsigned long long* exhaust) {
     const uint64_t i = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
     if (i >= n) return;
     const float u2 = sqrtf(c.tperp) * rng_gauss(seed, uint32_t(i), 3u);
+    // Rejection sampling. The old 64-attempt loop KEPT the last rejected
+    // candidate on exhaust — at few-% mean acceptance (big loader boxes)
+    // that silently loaded a percent-class population ∝ uniform instead of
+    // ∝ f₀ (found 2026-08-19 by the sparse-pool dropped-deposit gate: two
+    // strays at L ≈ 400 where prof = e⁻⁷²²). Attempts 0–63 keep their
+    // original RNG slots (bit-preserving the accepted 1−ε of every prior
+    // load); attempts 64+ draw from slots 4096+ (clear of the kappa χ²
+    // streams at 210+ — the collision class fixed in the 08-18 review).
+    // True exhaust (P < 1e-40 at any sane acceptance) collapses to the
+    // shell centre (f₀ > 0 by construction) and is counted.
     float x = 0, z = 0;
-    for (uint32_t t = 0; t < 64; ++t) {
-        x = bx0 + (bx1 - bx0) * rng_u01(seed, uint32_t(i), 16u + 3u * t);
-        z = bz0 + (bz1 - bz0) * rng_u01(seed, uint32_t(i), 17u + 3u * t);
-        if (rng_u01(seed, uint32_t(i), 18u + 3u * t) <=
-            density_factor(x, z, u2, 1.f, c, bg))
-            break;
+    bool accepted = false;
+    for (uint32_t t = 0; t < 1024 && !accepted; ++t) {
+        const uint32_t s0 = t < 64 ? 16u + 3u * t : 4096u + 3u * (t - 64u);
+        x = bx0 + (bx1 - bx0) * rng_u01(seed, uint32_t(i), s0);
+        z = bz0 + (bz1 - bz0) * rng_u01(seed, uint32_t(i), s0 + 1u);
+        accepted = rng_u01(seed, uint32_t(i), s0 + 2u) <=
+                   density_factor(x, z, u2, 1.f, c, bg);
+    }
+    if (!accepted) {
+        x = fminf(fmaxf(c.L0, bx0), bx1);
+        z = 0.f;
+        if (exhaust) atomicAdd(exhaust, 1ull);
     }
     p.x[i] = x; p.z[i] = z;
     float zeta = 1.f;                   // uniform/tilted arms: no mapping
@@ -244,10 +261,10 @@ __device__ inline float gather(const float* f, const FieldViews2D& v,
                                float gx, float gz) {
     const int i0 = int(floorf(gx)), k0 = int(floorf(gz));
     const float fx = gx - i0, fz = gz - k0;
-    return (1.f - fx) * (1.f - fz) * f[v.idx(i0, k0)] +
-           fx * (1.f - fz) * f[v.idx(i0 + 1, k0)] +
-           (1.f - fx) * fz * f[v.idx(i0, k0 + 1)] +
-           fx * fz * f[v.idx(i0 + 1, k0 + 1)];
+    return (1.f - fx) * (1.f - fz) * v.ld(f, i0, k0) +
+           fx * (1.f - fz) * v.ld(f, i0 + 1, k0) +
+           (1.f - fx) * fz * v.ld(f, i0, k0 + 1) +
+           fx * fz * v.ld(f, i0 + 1, k0 + 1);
 }
 
 // ---- single-marker physics, shared by the flat and tiled kernels ----------
@@ -405,12 +422,21 @@ __device__ inline void esirkepov_2d(const PushOut& o, const FieldViews2D& v,
         }
 }
 
+// deposits outside the active set are DROPPED AND COUNTED — markers live
+// deep inside the band, so a nonzero count is a configuration error
+// surfaced by the health check, never silent charge loss.
 struct FlatAcc {
     const FieldViews2D& v;
     float *JX, *JY, *JZ;
-    __device__ void jx(int i, int k, float val) { atomicAdd(&JX[v.idx(i, k)], val); }
-    __device__ void jy(int i, int k, float val) { atomicAdd(&JY[v.idx(i, k)], val); }
-    __device__ void jz(int i, int k, float val) { atomicAdd(&JZ[v.idx(i, k)], val); }
+    unsigned long long* dropped;
+    __device__ void add(float* a, int i, int k, float val) {
+        const int s = v.idx(i, k);
+        if (s >= 0) atomicAdd(&a[s], val);
+        else if (dropped) atomicAdd(dropped, 1ull);
+    }
+    __device__ void jx(int i, int k, float val) { add(JX, i, k, val); }
+    __device__ void jy(int i, int k, float val) { add(JY, i, k, val); }
+    __device__ void jz(int i, int k, float val) { add(JZ, i, k, val); }
 };
 
 static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
@@ -422,7 +448,7 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
     const size_t ncell = size_t(v.nx) * v.nz;
     const int rep = blockIdx.x % v.nrep;
     FlatAcc acc{v, v.jxr + size_t(rep) * ncell, v.jyr + size_t(rep) * ncell,
-                v.jzr + size_t(rep) * ncell};
+                v.jzr + size_t(rep) * ncell, runaway ? runaway + 1 : nullptr};
     const PushOut o = push_move_one(p, m, c, v, bg, x0, z0, runaway);
     esirkepov_2d(o, v, acc);
 }
@@ -440,12 +466,16 @@ struct TileAcc {
     const FieldViews2D& v;
     float *sjx, *sjy, *sjz;     // shared window [TS_W][TS_W]
     int wx0, wz0;               // window origin (unwrapped cell coords)
+    unsigned long long* dropped;
     __device__ void add(float* sh, float* gl, int i, int k, float val) {
         const int li = i - wx0, lk = k - wz0;
-        if (li >= 0 && li < TS_W && lk >= 0 && lk < TS_W)
+        if (li >= 0 && li < TS_W && lk >= 0 && lk < TS_W) {
             atomicAdd(&sh[lk * TS_W + li], val);
-        else
-            atomicAdd(&gl[v.idx(i, k)], val);
+            return;
+        }
+        const int s = v.idx(i, k);
+        if (s >= 0) atomicAdd(&gl[s], val);
+        else if (dropped) atomicAdd(dropped, 1ull);
     }
     __device__ void jx(int i, int k, float val) { add(sjx, v.jx, i, k, val); }
     __device__ void jy(int i, int k, float val) { add(sjy, v.jy, i, k, val); }
@@ -477,7 +507,8 @@ static __global__ void k_push_deposit_tiled(MarkerViews p, KineticCfg c,
         sjx[i] = sjy[i] = sjz[i] = 0.f;
     __syncthreads();
 
-    TileAcc acc{v, sjx, sjy, sjz, ti - TS_HALO, tk - TS_HALO};
+    TileAcc acc{v, sjx, sjy, sjz, ti - TS_HALO, tk - TS_HALO,
+                runaway ? runaway + 1 : nullptr};
     for (int r = 0; r < wrows; ++r)
         for (uint32_t m = rs[r] + threadIdx.x; m < re[r]; m += blockDim.x) {
             const PushOut o = push_move_one(p, m, c, v, bg, x0, z0, runaway);
@@ -486,9 +517,15 @@ static __global__ void k_push_deposit_tiled(MarkerViews p, KineticCfg c,
     __syncthreads();
     for (int i = threadIdx.x; i < TS_W * TS_W; i += blockDim.x) {
         const int gi = acc.wx0 + (i % TS_W), gk = acc.wz0 + (i / TS_W);
-        if (sjx[i] != 0.f) atomicAdd(&v.jx[v.idx(gi, gk)], sjx[i]);
-        if (sjy[i] != 0.f) atomicAdd(&v.jy[v.idx(gi, gk)], sjy[i]);
-        if (sjz[i] != 0.f) atomicAdd(&v.jz[v.idx(gi, gk)], sjz[i]);
+        const int s = v.idx(gi, gk);
+        if (s < 0) {
+            if ((sjx[i] != 0.f || sjy[i] != 0.f || sjz[i] != 0.f) && acc.dropped)
+                atomicAdd(acc.dropped, 1ull);
+            continue;
+        }
+        if (sjx[i] != 0.f) atomicAdd(&v.jx[s], sjx[i]);
+        if (sjy[i] != 0.f) atomicAdd(&v.jy[s], sjy[i]);
+        if (sjz[i] != 0.f) atomicAdd(&v.jz[s], sjz[i]);
     }
 }
 

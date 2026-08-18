@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
         MarkerViews mv = mk.views();
         const int tb = 256;
         k2d::k_load<<<int((NMARK + tb - 1) / tb), tb>>>(
-            mv, C, F.bg, bx0, bx1, bz0, bz1, wmark, 20260817u, NMARK);
+            mv, C, F.bg, bx0, bx1, bz0, bz1, wmark, 20260817u, NMARK, nullptr);
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 

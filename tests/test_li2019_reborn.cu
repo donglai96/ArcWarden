@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
         const float wmark = float(n0 * (NX * DX) * (NZ * DX) / double(N));
         k2d::k_load<<<int((N + 255) / 256), 256>>>(mv, C, F.bg, 0.f,
                                                    float(NX * DX), 0.f,
-                                                   float(NZ * DX), wmark, seed, N);
+                                                   float(NZ * DX), wmark, seed, N, nullptr);
         CUDA_CHECK(cudaDeviceSynchronize());
     };
     MarkerStore cold, warm;
