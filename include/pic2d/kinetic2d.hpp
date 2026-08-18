@@ -54,6 +54,11 @@ namespace arc2d {
 
 struct KineticCfg {
     float qm      = -1.f;    // charge/mass (electrons)
+    int   dist    = 0;       // 0 = bi-Maxwellian; 1 = bi-kappa (product form,
+    float kappa   = 0.f;     //     shared χ²_{2κ−1} factor, integer 2κ−1 ≤ 7,
+                             //     |u| capped at 0.6c — the legacy Li lesson;
+                             //     mirror (E,μ) mapping for kappa is a P2
+                             //     open item: dist=1 requires uniform/tilted)
     float tpar    = 0.f;     // T∥ in u² units (= uthpar²)
     float tperp   = 0.f;     // T⊥eq in u² units
     float n0      = 0.f;     // peak density at shell centre, equator
@@ -79,8 +84,14 @@ __host__ __device__ inline uint32_t hash_u32(uint32_t x) {
     x ^= x >> 15; x *= 0x846ca68bU;
     x ^= x >> 16; return x;
 }
+// full hash-combined (id, stream) separation — the earlier id*64+s scheme
+// had only 64 clean slots per marker while the rejection loop consumes up
+// to ~208, aliasing neighbours' streams and (worse) correlating the kappa
+// χ² draws with the position draws. Statistical gates re-run after this
+// change (all sampled numbers shift).
 __host__ __device__ inline float rng_u01(uint32_t seed, uint32_t id, uint32_t s) {
-    return (hash_u32(seed ^ hash_u32(id * 64u + s)) >> 8) * (1.f / 16777216.f) +
+    return (hash_u32(seed ^ hash_u32(id) ^ (0x9E3779B9u * (s + 1u))) >> 8) *
+               (1.f / 16777216.f) +
            (0.5f / 16777216.f);
 }
 __host__ __device__ inline float rng_gauss(uint32_t seed, uint32_t id, uint32_t s) {
@@ -122,6 +133,8 @@ __host__ __device__ inline void gc_pos(float x, float z, float uy, float gam,
 __host__ __device__ inline float density_factor(float x, float z, float uy,
                                                 float gam, const KineticCfg& c,
                                                 const Background2D& bg) {
+    if (B0Prof(bg.prof) != B0Prof::linedipole)
+        return 1.f;                     // uniform/tilted arms: no shell, ζ = 1
     float xg, zg;
     gc_pos(x, z, uy, gam, c, bg, xg, zg);
     const float Lg = lshell(xg, zg);
@@ -172,17 +185,35 @@ static __global__ void k_load(MarkerViews p, KineticCfg c, Background2D bg,
             break;
     }
     p.x[i] = x; p.z[i] = z;
-    const float L = lshell(x, z);
-    const float Beq = float(bg.M) / (L * L);
-    const float b = b0_abs<float>(bg, x, z) / Beq;
-    const float Aeq = c.tperp / c.tpar - 1.f;
-    const float zeta = 1.f + Aeq * (1.f - 1.f / b);
-    const float upar = sqrtf(c.tpar) * rng_gauss(seed, uint32_t(i), 1u);
-    const float u1 = sqrtf(c.tperp / zeta) * rng_gauss(seed, uint32_t(i), 2u);
+    float zeta = 1.f;                   // uniform/tilted arms: no mapping
+    if (B0Prof(bg.prof) == B0Prof::linedipole) {
+        const float L = lshell(x, z);
+        const float Beq = float(bg.M) / (L * L);
+        const float b = b0_abs<float>(bg, x, z) / Beq;
+        zeta = 1.f + (c.tperp / c.tpar - 1.f) * (1.f - 1.f / b);
+    }
+    float upar = sqrtf(c.tpar) * rng_gauss(seed, uint32_t(i), 1u);
+    float u1 = sqrtf(c.tperp / zeta) * rng_gauss(seed, uint32_t(i), 2u);
+    float u2f = u2;
+    if (c.dist == 1) {                  // bi-kappa: shared sqrt(κ/W) factor
+        const int ndof = int(2.f * c.kappa - 1.f + 0.5f);
+        float W = 0.f;
+        for (int j = 0; j < ndof; ++j) {
+            const float g = rng_gauss(seed, uint32_t(i), 8u + j);
+            W += g * g;
+        }
+        const float fac = sqrtf(c.kappa / W);
+        upar *= fac; u1 *= fac; u2f *= fac;
+        const float uu = upar * upar + u1 * u1 + u2f * u2f;
+        if (uu > 0.36f) {               // 0.6c cap (legacy superluminal lesson)
+            const float r = 0.6f / sqrtf(uu);
+            upar *= r; u1 *= r; u2f *= r;
+        }
+    }
     const Vec2<float> bh = b0_bhat<float>(bg, x, z);
     p.ux[i] = upar * bh.x + u1 * bh.z;
     p.uz[i] = upar * bh.z - u1 * bh.x;
-    p.uy[i] = u2;
+    p.uy[i] = u2f;
     p.w[i]  = wmark;
     p.wd[i] = c.deltaf ? c.wdnoise * rng_gauss(seed, uint32_t(i), 4u) : 1.f;
     p.cell[i] = 0;
@@ -227,11 +258,15 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         const float bhx = B0.x / B0a, bhz = B0.z / B0a;
         const float upar = ux * bhx + uz * bhz;
         const float upx = ux - upar * bhx, upz = uz - upar * bhz;
-        // gc-form weight equation (header ruling): wave-only, ∂_L dropped
-        float xg, zg;
-        gc_pos(x, z, uy, gam0, c, bg, xg, zg);
-        const float Lg = lshell(xg, zg);
-        const float Beq = float(bg.M) / (Lg * Lg);
+        // gc-form weight equation (header ruling): wave-only, ∂_L dropped;
+        // uniform/tilted arms have no mapping: B_eq = local B₀ exactly
+        float Beq = B0a;
+        if (B0Prof(bg.prof) == B0Prof::linedipole) {
+            float xg, zg;
+            gc_pos(x, z, uy, gam0, c, bg, xg, zg);
+            const float Lg = lshell(xg, zg);
+            Beq = float(bg.M) / (Lg * Lg);
+        }
         const float dE = -1.f / c.tpar;
         const float dMu = Beq * (1.f / c.tpar - 1.f / c.tperp);
         const float udota = ux * ax + uy * ay + uz * az;
@@ -301,6 +336,11 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
     p.ux[m] = ux; p.uy[m] = uy; p.uz[m] = uz;
 
     // ---- Esirkepov CIC deposit over the worldline x→xn -------------------
+    // block-strided replica choice (contention relief; nrep = 1 ⇒ jx itself)
+    const size_t ncell = size_t(v.nx) * v.nz;
+    float* JX = v.jxr + size_t(blockIdx.x % v.nrep) * ncell;
+    float* JY = v.jyr + size_t(blockIdx.x % v.nrep) * ncell;
+    float* JZ = v.jzr + size_t(blockIdx.x % v.nrep) * ncell;
     const float qw = c.qm > 0.f ? p.w[m] * p.wd[m] : -p.w[m] * p.wd[m];
     const float g1x = (xn - x0) / v.dx, g1z = (zn - z0) / v.dz;
     const int ib = int(floorf(fminf(gx, g1x)));
@@ -321,14 +361,14 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         float acc = 0.f;
         for (int a = 0; a < 2; ++a) {
             acc += DSx[a] * (S0z[b] + 0.5f * DSz[b]);
-            atomicAdd(&v.jx[v.idx(ib + a, kb + b)], fx * acc);
+            atomicAdd(&JX[v.idx(ib + a, kb + b)], fx * acc);
         }
     }
     for (int a = 0; a < 3; ++a) {                 // Jz(k+½): prefix over b
         float acc = 0.f;
         for (int b = 0; b < 2; ++b) {
             acc += DSz[b] * (S0x[a] + 0.5f * DSx[a]);
-            atomicAdd(&v.jz[v.idx(ib + a, kb + b)], fz * acc);
+            atomicAdd(&JZ[v.idx(ib + a, kb + b)], fz * acc);
         }
     }
     for (int a = 0; a < 3; ++a)                   // node Jy (Wy weights)
@@ -336,7 +376,7 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
             const float Wy = S0x[a] * S0z[b] +
                              0.5f * (DSx[a] * S0z[b] + S0x[a] * DSz[b]) +
                              (1.f / 3.f) * DSx[a] * DSz[b];
-            atomicAdd(&v.jy[v.idx(ib + a, kb + b)], fy * Wy);
+            atomicAdd(&JY[v.idx(ib + a, kb + b)], fy * Wy);
         }
 }
 

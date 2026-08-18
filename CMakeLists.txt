@@ -300,3 +300,9 @@ set_tests_properties(deltaf2d_hold PROPERTIES LABELS "physics")
 
 add_test(NAME deltaf2d_hold_aniso COMMAND test_deltaf2d_hold aniso)
 set_tests_properties(deltaf2d_hold_aniso PROPERTIES LABELS "physics")
+
+add_executable(test_li2019_reborn tests/test_li2019_reborn.cu)
+target_include_directories(test_li2019_reborn PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_li2019_reborn PRIVATE CUDA::cudart)
+add_test(NAME li2019_reborn COMMAND test_li2019_reborn)
+set_tests_properties(li2019_reborn PROPERTIES LABELS "regression")

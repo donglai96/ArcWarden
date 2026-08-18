@@ -44,6 +44,8 @@ struct FieldViews2D {
     float *ex, *ey, *ez, *bx, *by, *bz, *jx, *jy, *jz;
     float *vcx, *vcy, *vcz;             // cold fluid velocity at nodes
     float *maske, *maskb;               // Umeda damping profiles (nullptr = off)
+    float *jxr, *jyr, *jzr;             // replicated J (contention relief);
+    int nrep;                           //   nrep = 1 ⇒ aliases of jx,jy,jz
     int nx, nz;
     float dx, dz, dt, c2;
     float qm_c, nc;                     // cold q/m (−1) and density
@@ -165,6 +167,25 @@ static __global__ void k_mask_b(FieldViews2D v, Range r) {
     v.bx[c] *= m; v.by[c] *= m; v.bz[c] *= m;
 }
 
+// ---- replicated-J reduction ------------------------------------------------
+// High-ppc/small-grid runs (Li-class: 2000 markers/cell on 4096 cells)
+// serialize on global atomics; depositing into nrep block-strided replicas
+// and reducing removes the contention. nrep = 1 is the exact legacy path.
+
+static __global__ void k_reduce_j(FieldViews2D v, Range r) {
+    int i, k;
+    if (!in_range(r, i, k)) return;
+    const int c = v.idx(i, k);
+    const size_t n = size_t(v.nx) * v.nz;
+    float sx = 0, sy = 0, sz = 0;
+    for (int rep = 0; rep < v.nrep; ++rep) {
+        sx += v.jxr[rep * n + c];
+        sy += v.jyr[rep * n + c];
+        sz += v.jzr[rep * n + c];
+    }
+    v.jx[c] = sx; v.jy[c] = sy; v.jz[c] = sz;
+}
+
 // ---- binomial current filter (legacy jfilter, production recipe) ----------
 // 1-2-1 smoothing per axis; kills the k ~ Nyquist shot-noise currents that
 // otherwise pump grid-scale modes near the whistler resonance cone (v_g → 0
@@ -212,10 +233,11 @@ static __global__ void k_energy(FieldViews2D v, Range r, double* acc) {
 
 struct Fields2D {
     arc::DeviceArray<float> ex, ey, ez, bx, by, bz, jx, jy, jz, vcx, vcy, vcz;
-    arc::DeviceArray<float> maske, maskb, jtmp;
+    arc::DeviceArray<float> maske, maskb, jtmp, jxr, jyr, jzr;
     arc::DeviceArray<double> energy_acc;
     int nx = 0, nz = 0;
     int jfilter = 3;                       // binomial passes per axis
+    int nrep = 1;                          // J replicas (allocate_replicas)
     double dx = 0, dz = 0, dt = 0, cspeed = 1.0, nc = 1.0, x0 = 0, z0 = 0;
     Background2D bg;
     bool masks_on = false;
@@ -232,11 +254,27 @@ struct Fields2D {
             a->zero();
     }
 
+    // Deposit contention relief for high-ppc/small-grid runs; memory cost
+    // nrep × 3 × cells × 4 B (deck-sized: Li-class 4096 cells × 16 = 0.8 MB;
+    // big boxes keep nrep = 1).
+    void allocate_replicas(int n) {
+        nrep = n;
+        if (nrep > 1) {
+            const size_t sz = size_t(nrep) * nx * nz;
+            jxr = arc::DeviceArray<float>(sz);
+            jyr = arc::DeviceArray<float>(sz);
+            jzr = arc::DeviceArray<float>(sz);
+        }
+    }
+
     FieldViews2D views() {
         return { ex.data(), ey.data(), ez.data(), bx.data(), by.data(), bz.data(),
                  jx.data(), jy.data(), jz.data(), vcx.data(), vcy.data(), vcz.data(),
                  masks_on ? maske.data() : nullptr,
                  masks_on ? maskb.data() : nullptr,
+                 nrep > 1 ? jxr.data() : jx.data(),
+                 nrep > 1 ? jyr.data() : jy.data(),
+                 nrep > 1 ? jzr.data() : jz.data(), nrep,
                  nx, nz, float(dx), float(dz), float(dt),
                  float(cspeed * cspeed), -1.f, float(nc) };
     }
@@ -269,6 +307,19 @@ struct Fields2D {
     }
 
 #ifdef __CUDACC__
+    // zero the particle-deposit target (replicas when nrep > 1)
+    void zero_j(cudaStream_t s = nullptr) {
+        if (nrep > 1) { jxr.zero(s); jyr.zero(s); jzr.zero(s); }
+        else          { jx.zero(s);  jy.zero(s);  jz.zero(s); }
+    }
+    // sum replicas into jx,jy,jz (no-op at nrep = 1)
+    void reduce_j(cudaStream_t s = nullptr) {
+        if (nrep <= 1) return;
+        FieldViews2D v = views();
+        const Range r = full();
+        f2d::k_reduce_j<<<f2d::blocks_for(r), dim3(f2d::TX, f2d::TZ), 0, s>>>(v, r);
+    }
+
     // binomial-filter the deposited PARTICLE currents (call after the hot
     // deposit, before the cold pass adds its smooth analytic currents)
     void filter_j(cudaStream_t s = nullptr) {

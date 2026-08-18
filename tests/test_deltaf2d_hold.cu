@@ -144,12 +144,13 @@ int main(int argc, char** argv) {
         const Range r = F.full();
         const dim3 nb = f2d::blocks_for(r);
         f2d::k_faraday<<<nb, tb>>>(v, r, float(DT / 2));
-        F.jx.zero(); F.jy.zero(); F.jz.zero();
+        F.zero_j();
         {
             MarkerViews mv = mk.views();
             k2d::k_push_deposit<<<int((NMARK + 255) / 256), 256>>>(
                 mv, C, v, F.bg, float(X0), float(Z0), NMARK);
         }
+        F.reduce_j();
         F.filter_j();                    // jfilter=3, the production recipe
         f2d::k_cold_step<<<nb, tb>>>(v, r, F.bg, float(X0), float(Z0));
         f2d::k_cold_current<<<nb, tb>>>(v, r);
