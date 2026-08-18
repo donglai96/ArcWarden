@@ -51,7 +51,8 @@ struct SpeciesCfg {
     double kappa    = 0.0;     // prodkappa
     double lc_rho   = 0.0;     // losscone depth parameter
     double taud     = 0.0;     // δf weight relaxation; DEFAULT 0 (H1/H2 arm knob)
-    // shell-compact support in L (raised-cosine edges of width edge_dL):
+    double wdnoise  = 1e-3;    // δf ignition knob (SCALES_REALISM)
+    // shell-compact support in L (flat top + Gaussian edges of width edge_dL):
     double shell_L0 = 1330.5;
     double shell_dL = 40.0;
     double edge_dL  = 8.0;

@@ -1,0 +1,155 @@
+// pic2d — Sim2D: deck-driven multi-species orchestrator (P3a).
+//
+// Owns the field engine + N kinetic species and runs the validated step
+// sequence (the exact order the V1/V3 gates ran inline):
+//     faraday ½ → zero J → per-species push+deposit → reduce → jfilter →
+//     cold fluid (if nc > 0) → faraday ½ → ampère → masks
+// Species are deck-defined ([species <name>] blocks); each carries its own
+// KineticCfg (f₀, δf/full-f, dist) and MarkerStore — multi-δf is the
+// architecture, not a special case (PLAN_2D_REBORN §2.2).
+//
+// P3a scope: build-from-deck, step, energy/wd monitors, decimated field
+// snapshots. The §2.5 ledger pack (J·E by species × channel, fv monitors,
+// WNA/k⊥ products) lands P3b; checkpoint P3c.
+
+#ifndef ARC_PIC2D_SIM2D_HPP
+#define ARC_PIC2D_SIM2D_HPP
+
+#include "pic2d/deck2d.hpp"
+#include "pic2d/fields2d.hpp"
+#include "pic2d/kinetic2d.hpp"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace arc2d {
+
+struct Sim2D {
+    Fields2D F;
+    struct Sp {
+        std::string name;
+        KineticCfg C;
+        std::unique_ptr<MarkerStore> mk;
+    };
+    std::vector<Sp> sp;
+    double time = 0;
+    long nstep = 0;
+    arc::DeviceArray<double> acc;      // small reduction scratch
+
+#ifdef __CUDACC__
+    void build(const Deck2D& d) {
+        F.allocate(d.nx, d.nz);
+        F.dx = d.dx; F.dz = d.dz; F.dt = d.dt;
+        F.cspeed = d.cspeed; F.nc = d.nc;
+        F.x0 = d.x0; F.z0 = d.z0;
+        F.bg = d.bg;
+        F.build_masks(d.absorber_cells, 0.05);
+        // replica heuristic: only worthwhile on small, contended grids
+        const double ppc_tot = [&] {
+            double s = 0;
+            for (const auto& q : d.species) s += q.ppc;
+            return s;
+        }();
+        if (size_t(d.nx) * d.nz < 1u << 20 && ppc_tot > 256) F.allocate_replicas(16);
+        acc = arc::DeviceArray<double>(4);
+
+        const bool dipole = B0Prof(d.bg.prof) == B0Prof::linedipole;
+        for (const auto& q : d.species) {
+            Sp s;
+            s.name = q.name;
+            KineticCfg& C = s.C;
+            C.qm = -1.f;
+            C.deltaf = q.deltaf ? 1 : 0;
+            C.rel = 0;
+            C.dist = q.dist;
+            C.kappa = float(q.kappa);
+            C.tpar = float(q.uthpar * q.uthpar);
+            C.tperp = float(q.uthperp * q.uthperp);
+            C.n0 = float(q.n0);
+            C.L0 = float(q.shell_L0);
+            C.dL = float(q.shell_dL);
+            C.edge = float(q.edge_dL);
+            C.wdnoise = float(q.wdnoise);
+            // walls at the high-|λ| line ends only (P2 ruling): inner-x and
+            // ±z at the mask interior edge; NO outer-radial wall
+            const double nd = d.absorber_cells;
+            C.wx0 = float(d.x0 + nd * d.dx);
+            C.wx1 = 1e9f;
+            C.wz0 = float(d.z0 + nd * d.dz);
+            C.wz1 = float(d.z1 - nd * d.dz);
+            // loader bounding box: shell support ∩ interior (dipole) or box
+            float bx0, bx1, bz0, bz1;
+            if (dipole) {
+                bx0 = C.wx0;
+                bx1 = std::min(float(d.x1 - nd * d.dx),
+                               float(q.shell_L0 + 0.5 * q.shell_dL + 3 * q.edge_dL + 1));
+                bz0 = C.wz0;
+                bz1 = C.wz1;
+            } else {
+                bx0 = float(d.x0); bx1 = float(d.x1);
+                bz0 = float(d.z0); bz1 = float(d.z1);
+            }
+            const double nint = dipole
+                ? k2d::shell_density_integral(C, d.bg, bx0, bx1, bz0, bz1, 0.5)
+                : double(bx1 - bx0) * (bz1 - bz0);
+            const uint64_t N = q.nmax > 0
+                ? q.nmax
+                : uint64_t(double(q.ppc) * (bx1 - bx0) * (bz1 - bz0) / (d.dx * d.dz));
+            const float wmark = float(q.n0 * nint / double(N));
+            s.mk = std::make_unique<MarkerStore>();
+            s.mk->allocate(N);
+            s.mk->n = N;
+            MarkerViews mv = s.mk->views();
+            k2d::k_load<<<int((N + 255) / 256), 256>>>(mv, C, d.bg, bx0, bx1,
+                                                       bz0, bz1, wmark,
+                                                       20260817u + uint32_t(sp.size()),
+                                                       N);
+            CUDA_CHECK(cudaDeviceSynchronize());
+            sp.push_back(std::move(s));
+        }
+    }
+
+    void step() {
+        FieldViews2D v = F.views();
+        const Range r = F.full();
+        const dim3 nb = f2d::blocks_for(r), tb(f2d::TX, f2d::TZ);
+        f2d::k_faraday<<<nb, tb>>>(v, r, float(F.dt / 2));
+        F.zero_j();
+        for (auto& s : sp) {
+            MarkerViews mv = s.mk->views();
+            k2d::k_push_deposit<<<int((s.mk->n + 255) / 256), 256>>>(
+                mv, s.C, v, F.bg, float(F.x0), float(F.z0), s.mk->n);
+        }
+        F.reduce_j();
+        F.filter_j();
+        if (F.nc > 0.0) {
+            f2d::k_cold_step<<<nb, tb>>>(v, r, F.bg, float(F.x0), float(F.z0));
+            f2d::k_cold_current<<<nb, tb>>>(v, r);
+        }
+        f2d::k_faraday<<<nb, tb>>>(v, r, float(F.dt / 2));
+        f2d::k_ampere<<<nb, tb>>>(v, r);
+        if (F.masks_on) {
+            f2d::k_mask_e<<<nb, tb>>>(v, r);
+            f2d::k_mask_b<<<nb, tb>>>(v, r);
+        }
+        time += F.dt;
+        ++nstep;
+    }
+
+    double wd_rms(int is) {
+        acc.zero();
+        MarkerViews mv = sp[is].mk->views();
+        k2d::k_wd_stats<<<int((sp[is].mk->n + 255) / 256), 256>>>(
+            mv, acc.data(), sp[is].mk->n);
+        double h;
+        CUDA_CHECK(cudaMemcpy(&h, acc.data(), sizeof(double),
+                              cudaMemcpyDeviceToHost));
+        return std::sqrt(h / double(sp[is].mk->n));
+    }
+#endif
+};
+
+}  // namespace arc2d
+
+#endif  // ARC_PIC2D_SIM2D_HPP

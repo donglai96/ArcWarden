@@ -63,6 +63,8 @@ struct Deck2D {
     double target_band_max = 0.75;
     double target_wna = 45.0 * M_PI / 180.0;
     double target_lam = 20.0 * M_PI / 180.0;
+    long   snap_every = 0;                 // full-field snapshot cadence (steps)
+    long   energy_every = 1000;
     // [species]
     std::vector<SpeciesCfg> species;
 
@@ -166,6 +168,8 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.target_band_max = getd(m, "diag", "target_band_max", 0.75);
     d.target_wna = getd(m, "diag", "target_wna_deg", 45.0) * M_PI / 180.0;
     d.target_lam = getd(m, "diag", "target_lam_deg", 20.0) * M_PI / 180.0;
+    d.snap_every = long(getd(m, "diag", "snap_every", 0));
+    d.energy_every = long(getd(m, "diag", "energy_every", 1000));
 
     for (const auto& [sec, kv] : m) {
         if (sec.rfind("species", 0) != 0) continue;
@@ -179,6 +183,7 @@ inline Deck2D load_deck2d(const std::string& path) {
         s.kappa    = getd(m, sec, "kappa", 0.0);
         s.lc_rho   = getd(m, sec, "lc_rho", 0.0);
         s.taud     = getd(m, sec, "taud", 0.0);
+        s.wdnoise  = getd(m, sec, "wdnoise", 1e-3);
         s.shell_L0 = getd(m, sec, "shell_L0", d.bg.L0);
         s.shell_dL = getd(m, sec, "shell_dL", 40.0);
         s.edge_dL  = getd(m, sec, "edge_dL", 8.0);
