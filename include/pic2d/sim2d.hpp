@@ -63,7 +63,7 @@ struct Sim2D {
         runaway = arc::DeviceArray<unsigned long long>(1);
         runaway.zero();
 
-        const bool dipole = B0Prof(d.bg.prof) == B0Prof::linedipole;
+        const bool dipole = has_lines(d.bg);
         for (const auto& q : d.species) {
             Sp s;
             s.name = q.name;

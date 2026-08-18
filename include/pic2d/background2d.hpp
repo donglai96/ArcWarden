@@ -44,7 +44,17 @@
 
 namespace arc2d {
 
-enum class B0Prof : int { uniform = 0, tilted = 1, kemirror = 2, linedipole = 3 };
+enum class B0Prof : int { uniform = 0, tilted = 1, kemirror = 2, linedipole = 3,
+                          dipole2d = 4 };
+// dipole2d (2026-08-18 realism upgrade, user-directed): flux function
+//     ψ = (B0eq L0³/2) · x⁴/r⁶  =  g(L),  L = r³/x²,
+// whose level curves ARE the real 3D dipole's meridional line shapes
+// r = L cos²λ (equatorial curvature radius L/3, not the circle's L/2).
+// Along a line: B/B_eq = sec²λ·√(1+4tan²λ) — within ~5% of the true
+// dipole √(1+3sin²λ)/cos⁶λ for λ ≤ 45° (the circle was ~40% low), and
+// B_eq(L) = B0eq (L0/L)³, the real radial scaling. Exactly 2D-solenoidal;
+// NOT curl-free (a distributed supporting current, as in Ke's slab
+// mirror) — harmless: B0 is force-only, the wave equations never see it.
 
 // POD, copied by value into kernels (repo Views pattern).
 struct Background2D {
@@ -72,6 +82,17 @@ ARC2D_HD inline Vec2<Real> b0_field(const Background2D& bg, Real x, Real z) {
             const Real ir4 = Real(1) / (r2 * r2);
             return { Real(-2.0 * bg.M) * x * z * ir4,
                      Real(bg.M) * (x * x - z * z) * ir4 };
+        }
+        case B0Prof::dipole2d: {
+            // ψ = C x⁴/r⁶, C = B0eq L0³/2:
+            // Bx = ∂ψ/∂z = −6C x⁴ z / r⁸ ;  Bz = −∂ψ/∂x = C x³(2x²−4z²)/r⁸
+            // (signs fixed so Bz(eq) = +B0eq(L0/x)³, matching linedipole)
+            const Real r2 = x * x + z * z;
+            const Real ir8 = Real(1) / (r2 * r2 * r2 * r2);
+            const Real C = Real(0.5 * bg.B0eq * bg.L0 * bg.L0 * bg.L0);
+            const Real x3 = x * x * x;
+            return { Real(-6) * C * x3 * x * z * ir8,
+                     C * x3 * (Real(2) * x * x - Real(4) * z * z) * ir8 };
         }
         case B0Prof::kemirror: {
             const Real xt = x - Real(bg.xc), zt = z - Real(bg.zc);
@@ -161,6 +182,68 @@ ARC2D_HD inline void line_point(double L, double lambda, double& x, double& z) {
     const double c = std::cos(lambda);
     x = L * c * c;
     z = L * c * std::sin(lambda);
+}
+
+// ---- profile-dispatched field-line geometry (linedipole | dipole2d) -------
+// Every consumer (loader ζ-mapping, deck gates, diagnostics line) goes
+// through these; adding a background member means extending them, nothing
+// else.
+
+ARC2D_HD inline bool has_lines(const Background2D& bg) {
+    return B0Prof(bg.prof) == B0Prof::linedipole ||
+           B0Prof(bg.prof) == B0Prof::dipole2d;
+}
+
+template <typename Real>
+ARC2D_HD inline Real lshell_of(const Background2D& bg, Real x, Real z) {
+    const Real r2 = x * x + z * z;
+    if (B0Prof(bg.prof) == B0Prof::dipole2d)
+        return r2 * Real(std::sqrt(double(r2))) / (x * x);   // L = r³/x²
+    return r2 / x;                                           // circle: L = r²/x
+}
+
+ARC2D_HD inline double beq_of(const Background2D& bg, double L) {
+    if (B0Prof(bg.prof) == B0Prof::dipole2d) {
+        const double q = bg.L0 / L;
+        return bg.B0eq * q * q * q;               // real L⁻³ scaling
+    }
+    return bg.M / (L * L);
+}
+
+ARC2D_HD inline double mirror_ratio_of(const Background2D& bg, double lam) {
+    const double c = std::cos(lam), t = std::tan(lam);
+    if (B0Prof(bg.prof) == B0Prof::dipole2d)
+        return std::sqrt(1.0 + 4.0 * t * t) / (c * c);
+    return 1.0 / (c * c);
+}
+
+ARC2D_HD inline void line_point_of(const Background2D& bg, double L, double lam,
+                                   double& x, double& z) {
+    const double c = std::cos(lam);
+    if (B0Prof(bg.prof) == B0Prof::dipole2d) {
+        x = L * c * c * c;                        // r = L cos²λ (true dipole shape)
+        z = L * c * c * std::sin(lam);
+    } else {
+        x = L * c * c;
+        z = L * c * std::sin(lam);
+    }
+}
+
+// arc length along the line from the equator to λ (host; Simpson)
+inline double arc_s_of(const Background2D& bg, double L, double lam) {
+    const int n = 64;
+    double s = 0;
+    for (int i = 0; i < n; ++i) {
+        const double a = lam * i / n, b = lam * (i + 1) / n, m = 0.5 * (a + b);
+        auto ds = [&](double u) {
+            const double c = std::cos(u);
+            if (B0Prof(bg.prof) == B0Prof::dipole2d)
+                return L * c * std::sqrt(1.0 + 3.0 * (1 - c * c));
+            return L;                             // circle: ds = L dλ exactly
+        };
+        s += (b - a) / 6.0 * (ds(a) + 4.0 * ds(m) + ds(b));
+    }
+    return s;
 }
 
 }  // namespace arc2d

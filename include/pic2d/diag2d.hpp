@@ -180,10 +180,10 @@ struct Diag2D {
                     double ds, int nspecies) {
         std::vector<float> hx, hz, hbx, hbz;
         const double lw = lam_w_deg * M_PI / 180.0;
-        for (double s = -L0 * lw; s <= L0 * lw; s += ds) {
-            const double lam = s / L0;
+        const double dlam = ds / L0;
+        for (double lam = -lw; lam <= lw; lam += dlam) {
             double x, z;
-            line_point(L0, lam, x, z);
+            line_point_of(bg, L0, lam, x, z);
             hx.push_back(float(x));
             hz.push_back(float(z));
             const Vec2<double> b = b0_bhat<double>(bg, x, z);

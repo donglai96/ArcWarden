@@ -145,6 +145,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     const std::string prof = gets(m, "background", "profile", "linedipole");
     if      (prof == "linedipole") d.bg.prof = int(B0Prof::linedipole);
     else if (prof == "kemirror")   d.bg.prof = int(B0Prof::kemirror);
+    else if (prof == "dipole2d")   d.bg.prof = int(B0Prof::dipole2d);
     else if (prof == "tilted")     d.bg.prof = int(B0Prof::tilted);
     else if (prof == "uniform")    d.bg.prof = int(B0Prof::uniform);
     else throw std::runtime_error("deck2d: unknown profile " + prof);
@@ -202,13 +203,13 @@ inline void finalize_deck2d(Deck2D& d) {
     char buf[256];
 
     // ---- box from geometry (linedipole): shell ± absorber ± margin ----
-    if (B0Prof(d.bg.prof) == B0Prof::linedipole) {
+    if (has_lines(d.bg)) {
         double dLmax = 0;
         for (const auto& s : d.species) dLmax = std::max(dLmax, s.shell_dL);
         const double Lin  = d.bg.L0 - 0.5 * dLmax - d.margin;
         const double Lout = d.bg.L0 + 0.5 * dLmax + d.margin;
         double xw, zw;                       // innermost point: high-λ end of Lin
-        line_point(Lin, d.lam_w, xw, zw);
+        line_point_of(d.bg, Lin, d.lam_w, xw, zw);
         d.x0 = std::max(10.0 * d.dx, xw - d.margin);
         d.x1 = Lout + d.margin;
         d.z1 = 0.5 * Lout + d.margin;        // max z on a line is L/2 (at λ=45°)
@@ -230,7 +231,7 @@ inline void finalize_deck2d(Deck2D& d) {
     // §1.2.2): (a) UB — band_max at target WNA, evaluated at the local Ωe
     // of the UB domain |λ| ≤ target_lam; (b) LB corridor — 0.55 Ωe at 30°,
     // out to the runway edge.
-    const double wce_ub = d.bg.B0eq * mirror_ratio(std::min(d.target_lam, d.runway_lam));
+    const double wce_ub = d.bg.B0eq * mirror_ratio_of(d.bg, std::min(d.target_lam, d.runway_lam));
     const double k_ub = detail::whistler_k(d.target_band_max, wce_ub, d.cspeed) /
                         std::cos(d.target_wna);
     const double cpl_ub = 2.0 * M_PI / (k_ub * std::max(d.dx, d.dz));
@@ -240,7 +241,7 @@ inline void finalize_deck2d(Deck2D& d) {
                   d.target_wna * 180 / M_PI, k_ub);
     gate("res/UB", cpl_ub >= 8.0, true, buf);
 
-    const double wce_rw = d.bg.B0eq * mirror_ratio(d.runway_lam);
+    const double wce_rw = d.bg.B0eq * mirror_ratio_of(d.bg, d.runway_lam);
     const double k_lb = detail::whistler_k(0.55, wce_rw, d.cspeed) /
                         std::cos(30.0 * M_PI / 180.0);
     const double cpl_lb = 2.0 * M_PI / (k_lb * std::max(d.dx, d.dz));
@@ -272,8 +273,8 @@ inline void finalize_deck2d(Deck2D& d) {
 
     // ---- absorber strictly outside the runway ---------------------------
     const double absorber_arc = d.absorber_cells * std::max(d.dx, d.dz);
-    const double runway_end_s = d.bg.L0 * d.runway_lam;
-    const double wall_s       = d.bg.L0 * d.lam_w;
+    const double runway_end_s = arc_s_of(d.bg, d.bg.L0, d.runway_lam);
+    const double wall_s       = arc_s_of(d.bg, d.bg.L0, d.lam_w);
     std::snprintf(buf, sizeof buf, "runway ends s=%.0f, wall s=%.0f, absorber %.0f",
                   runway_end_s, wall_s, absorber_arc);
     gate("absorber", runway_end_s + absorber_arc <= wall_s, true, buf);
@@ -296,7 +297,7 @@ inline void finalize_deck2d(Deck2D& d) {
 inline void print_deck2d_report(const Deck2D& d, std::FILE* out = stdout) {
     std::fprintf(out, "pic2d deck report\n");
     std::fprintf(out, "  geometry : L0 = %.1f (l_re), λ_w = %.1f°, mirror ratio at wall %.2f\n",
-                 d.bg.L0, d.lam_w * 180 / M_PI, mirror_ratio(d.lam_w));
+                 d.bg.L0, d.lam_w * 180 / M_PI, mirror_ratio_of(d.bg, d.lam_w));
     std::fprintf(out, "  box      : x [%.0f, %.0f]  z [%.0f, %.0f]  (%d × %d cells, dx %.2f dz %.2f)\n",
                  d.x0, d.x1, d.z0, d.z1, d.nx, d.nz, d.dx, d.dz);
     std::fprintf(out, "  plasma   : ωpe/Ωe(eq) = %.2f, c = %.1f, cold nc = %.3f (%s fluid)\n",

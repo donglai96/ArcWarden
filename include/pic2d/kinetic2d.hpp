@@ -147,13 +147,13 @@ __host__ __device__ inline void gc_pos(float x, float z, float uy, float gam,
 __host__ __device__ inline float density_factor(float x, float z, float uy,
                                                 float gam, const KineticCfg& c,
                                                 const Background2D& bg) {
-    if (B0Prof(bg.prof) != B0Prof::linedipole)
+    if (!has_lines(bg))
         return 1.f;                     // uniform/tilted arms: no shell, ζ = 1
     float xg, zg;
     gc_pos(x, z, uy, gam, c, bg, xg, zg);
-    const float Lg = lshell(xg, zg);
-    const float L = lshell(x, z);
-    const float Beq = float(bg.M) / (L * L);
+    const float Lg = lshell_of<float>(bg, xg, zg);
+    const float L = lshell_of<float>(bg, x, z);
+    const float Beq = float(beq_of(bg, L));
     const float b = b0_abs<float>(bg, x, z) / Beq;
     const float Aeq = c.tperp / c.tpar - 1.f;
     const float zeta = 1.f + Aeq * (1.f - 1.f / b);
@@ -200,9 +200,9 @@ static __global__ void k_load(MarkerViews p, KineticCfg c, Background2D bg,
     }
     p.x[i] = x; p.z[i] = z;
     float zeta = 1.f;                   // uniform/tilted arms: no mapping
-    if (B0Prof(bg.prof) == B0Prof::linedipole) {
-        const float L = lshell(x, z);
-        const float Beq = float(bg.M) / (L * L);
+    if (has_lines(bg)) {
+        const float L = lshell_of<float>(bg, x, z);
+        const float Beq = float(beq_of(bg, L));
         const float b = b0_abs<float>(bg, x, z) / Beq;
         zeta = 1.f + (c.tperp / c.tpar - 1.f) * (1.f - 1.f / b);
     }
@@ -276,11 +276,10 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         // gc-form weight equation (header ruling): wave-only, ∂_L dropped;
         // uniform/tilted arms have no mapping: B_eq = local B₀ exactly
         float Beq = B0a;
-        if (B0Prof(bg.prof) == B0Prof::linedipole) {
+        if (has_lines(bg)) {
             float xg, zg;
             gc_pos(x, z, uy, gam0, c, bg, xg, zg);
-            const float Lg = lshell(xg, zg);
-            Beq = float(bg.M) / (Lg * Lg);
+            Beq = float(beq_of(bg, lshell_of<float>(bg, xg, zg)));
         }
         const float dE = -1.f / c.tpar;
         const float dMu = Beq * (1.f / c.tpar - 1.f / c.tperp);

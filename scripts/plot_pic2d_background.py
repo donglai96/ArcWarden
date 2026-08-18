@@ -101,6 +101,9 @@ ax2.plot(np.degrees(lam), Bpar, "b--", lw=1.6,
          label=r"1D code parabolic $1+(s/l_{re})^2$,  $l_{re}=L$")
 ax2.plot(np.degrees(lam), B3d, "r-.", lw=1.6,
          label=r"real 3D dipole $\sqrt{1+3\sin^2\lambda}/\cos^6\lambda$")
+Bd2 = np.sqrt(1 + 4 * np.tan(lam)**2) / np.cos(lam)**2
+ax2.plot(np.degrees(lam), Bd2, "g-", lw=2.0,
+         label=r"pic2d dipole2d: $\sec^2\lambda\sqrt{1+4\tan^2\lambda}$ (2026-08-18)")
 for lamv, c in [(20, "seagreen"), (40, "royalblue"), (50, "purple")]:
     ax2.axvline(lamv, ls=":", color=c, lw=1.2)
 ax2.axhline(2.42, ls=":", color="purple", lw=1)

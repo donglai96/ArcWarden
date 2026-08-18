@@ -218,10 +218,134 @@ static void bounce_orbit() {
     gate("bounce period vs quadrature", Tb_err < 1e-2, Tb_err, 1e-2);
 }
 
+// ---- Part C: dipole2d (realism upgrade, 2026-08-18) -----------------------
+// Same orbit gates in the true-dipole-shaped background: ∇·B = 0 numeric,
+// on-line |B| matches sec²λ√(1+4tan²λ)·B_eq exactly, B_eq(L) ∝ L⁻³,
+// turning point from mirror_ratio_of root-find, bounce period vs quadrature
+// with the true-dipole metric ds = L cosλ√(1+3sin²λ) dλ.
+static void dipole2d_orbit() {
+    std::printf("Part C: dipole2d bounce orbit\n");
+    Background2D bg;
+    bg.prof = int(B0Prof::dipole2d);
+    bg.B0eq = 0.2; bg.L0 = 300.0; bg.finalize();
+
+    // field identities
+    std::mt19937 rng(20260818);
+    std::uniform_real_distribution<double> ulam(-0.85, 0.85), uL(220.0, 380.0);
+    double div_max = 0, babs_max = 0, beq_err = 0;
+    for (int i = 0; i < 200; ++i) {
+        const double L = uL(rng), lam = ulam(rng);
+        double x, z;
+        line_point_of(bg, L, lam, x, z);
+        const double h = 1e-5 * std::sqrt(x * x + z * z);
+        auto Bx = [&](double X, double Z) { return b0_field<double>(bg, X, Z).x; };
+        auto Bz = [&](double X, double Z) { return b0_field<double>(bg, X, Z).z; };
+        const double div = (Bx(x + h, z) - Bx(x - h, z)) / (2 * h) +
+                           (Bz(x, z + h) - Bz(x, z - h)) / (2 * h);
+        const double B = b0_abs<double>(bg, x, z);
+        div_max = std::max(div_max, std::fabs(div) * std::sqrt(x * x + z * z) / B);
+        const double pred = beq_of(bg, L) * mirror_ratio_of(bg, lam);
+        babs_max = std::max(babs_max, std::fabs(B / pred - 1.0));
+        double xe, ze;
+        line_point_of(bg, L, 0.0, xe, ze);
+        beq_err = std::max(beq_err,
+                           std::fabs(b0_abs<double>(bg, xe, ze) / beq_of(bg, L) - 1.0));
+    }
+    gate("d2d div B", div_max < 1e-6, div_max, 1e-6);
+    gate("d2d |B| = Beq*sec2*sqrt", babs_max < 1e-9, babs_max, 1e-9);
+    gate("d2d Beq ~ L^-3", beq_err < 1e-9, beq_err, 1e-9);
+
+    // orbit (same protocol as Part B)
+    const double alpha = 55.0 * M_PI / 180.0, umag = 0.18, qm = -1.0, dt = 0.25;
+    double x0d, z0d;
+    line_point_of(bg, bg.L0, 0.0, x0d, z0d);
+    State s{ x0d, z0d, umag * std::sin(alpha), 0.0, umag * std::cos(alpha) };
+    const double Tg = 2.0 * M_PI * std::sqrt(1.0 + umag * umag) / bg.B0eq;
+    const int nga = int(std::round(Tg / dt));
+    double mu0 = 0, xgc = 0, zgc = 0;
+    State s0 = s;
+    for (int i = 0; i < nga; ++i) {
+        mu0 += mu_of(bg, s0); xgc += s0.x; zgc += s0.z;
+        boris_step(bg, s0, dt, qm);
+    }
+    mu0 /= nga; xgc /= nga; zgc /= nga;
+    const double Lgc = lshell_of<double>(bg, xgc, zgc);
+    const double Bgc = b0_abs<double>(bg, xgc, zgc);
+    const double sin2a = 2.0 * mu0 * Bgc / (umag * umag);
+    // turning latitude: mirror_ratio_of(λ_m) = 1/sin²α (bisection)
+    double lo = 0, hi = 1.4;
+    for (int it = 0; it < 100; ++it) {
+        const double mid = 0.5 * (lo + hi);
+        (mirror_ratio_of(bg, mid) < 1.0 / sin2a ? lo : hi) = mid;
+    }
+    const double lam_m = 0.5 * (lo + hi);
+    const double sm_pred = arc_s_of(bg, Lgc, lam_m);
+
+    // quadrature bounce period with the true-dipole metric
+    const double v = umag / std::sqrt(1.0 + umag * umag);
+    const int nq = 200000;
+    double Tq = 0;
+    for (int i = 0; i < nq; ++i) {
+        const double th = (i + 0.5) * (M_PI / 2) / nq;    // λ = λ_m sinθ
+        const double lam = lam_m * std::sin(th);
+        const double c = std::cos(lam);
+        const double dsdlam = Lgc * c * std::sqrt(1.0 + 3.0 * (1 - c * c));
+        const double rad = 1.0 - sin2a * mirror_ratio_of(bg, lam);
+        if (rad <= 0) continue;
+        Tq += lam_m * std::cos(th) * (M_PI / 2) / nq * dsdlam / (v * std::sqrt(rad));
+    }
+    Tq *= 4.0;
+
+    const long nsteps = long(6.5 * Tq / dt);
+    std::vector<double> flips, smax_list;
+    double smax_cur = 0, last_flip = -1e9, upar_prev = 1;
+    double mu_acc = 0;
+    std::vector<double> mu_ga;
+    int ga = 0;
+    for (long n = 0; n < nsteps; ++n) {
+        const Vec2<double> bh = b0_bhat<double>(bg, s.x, s.z);
+        const double upar = s.ux * bh.x + s.uz * bh.z;
+        const double lam = std::atan2(s.z, s.x);
+        smax_cur = std::max(smax_cur,
+                            arc_s_of(bg, lshell_of<double>(bg, s.x, s.z),
+                                     std::fabs(lam)));
+        mu_acc += mu_of(bg, s);
+        if (++ga == nga) { mu_ga.push_back(mu_acc / nga); mu_acc = 0; ga = 0; }
+        const double t = n * dt;
+        if (upar * upar_prev < 0 && t - last_flip > 8 * Tg) {
+            flips.push_back(t);
+            smax_list.push_back(smax_cur);
+            smax_cur = 0;
+            last_flip = t;
+        }
+        upar_prev = upar;
+        boris_step(bg, s, dt, qm);
+    }
+    double mu_late = 0;
+    const int ntail = int(mu_ga.size()) / 5;
+    for (int i = int(mu_ga.size()) - ntail; i < int(mu_ga.size()); ++i)
+        mu_late += mu_ga[i];
+    mu_late /= ntail;
+    gate("d2d mu secular drift", std::fabs(mu_late / mu0 - 1.0) < 3e-3,
+         std::fabs(mu_late / mu0 - 1.0), 3e-3);
+    double sm_meas = 0;
+    for (size_t i = 1; i < smax_list.size(); ++i) sm_meas += smax_list[i];
+    sm_meas /= double(smax_list.size() - 1);
+    std::printf("    d2d turning: measured s=%.2f, predicted %.2f (lam_m %.1f deg)\n",
+                sm_meas, sm_pred, lam_m * 180 / M_PI);
+    gate("d2d turning point", std::fabs(sm_meas / sm_pred - 1.0) < 1e-2,
+         std::fabs(sm_meas / sm_pred - 1.0), 1e-2);
+    const double Tb_meas = (flips.back() - flips[1]) / double(flips.size() - 2) * 2.0;
+    std::printf("    d2d bounce: measured %.1f, quadrature %.1f\n", Tb_meas, Tq);
+    gate("d2d bounce period", std::fabs(Tb_meas / Tq - 1.0) < 1e-2,
+         std::fabs(Tb_meas / Tq - 1.0), 1e-2);
+}
+
 int main() {
     std::printf("test_dipole2d_orbit — V0 gate for pic2d/background2d.hpp\n");
     field_identities();
     bounce_orbit();
+    dipole2d_orbit();
     std::printf("%d passed, %d failed\n", npass, nfail);
     return nfail ? 1 : 0;
 }
