@@ -19,6 +19,7 @@
 #include "pic2d/diag2d.hpp"
 #include "pic2d/fields2d.hpp"
 #include "pic2d/kinetic2d.hpp"
+#include "pic2d/sort2d.hpp"
 
 #include <memory>
 #include <string>
@@ -35,7 +36,9 @@ struct Sim2D {
     };
     std::vector<Sp> sp;
     Diag2D diag;
+    Sorter2D sorter;
     bool diag_on = false;
+    long sort_every = 25;              // 0 = off (markers drift ~0.06 cells/step)
     double time = 0;
     long nstep = 0;
     arc::DeviceArray<double> acc;      // small reduction scratch
@@ -136,6 +139,10 @@ struct Sim2D {
     }
 
     void step() {
+        if (sort_every > 0 && nstep % sort_every == 0)
+            for (auto& s : sp)
+                sorter.sort(*s.mk, float(F.x0), float(F.z0), float(F.dx),
+                            float(F.dz), F.nx, F.nz);
         FieldViews2D v = F.views();
         const Range r = F.full();
         const dim3 nb = f2d::blocks_for(r), tb(f2d::TX, f2d::TZ);
