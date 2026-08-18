@@ -245,12 +245,22 @@ __device__ inline float gather(const float* f, const FieldViews2D& v,
            fx * fz * f[v.idx(i0 + 1, k0 + 1)];
 }
 
-static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
-                                      FieldViews2D v, Background2D bg,
-                                      float x0, float z0, uint64_t n,
-                                      unsigned long long* runaway = nullptr) {
-    const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
-    if (m >= n) return;
+// ---- single-marker physics, shared by the flat and tiled kernels ----------
+// Everything except the deposit target: gather → δf weight → Boris →
+// runaway guard → wall reflect → periodic wrap. Returns the pre-wrap
+// worldline in grid units + the deposit factors. ONE implementation —
+// the two kernels cannot diverge physically.
+struct PushOut {
+    float g0x, g0z, g1x, g1z;   // worldline in grid units (pre-wrap end)
+    float qw, vy1;              // signed charge·weight, v_y after push
+};
+
+__device__ inline PushOut push_move_one(MarkerViews& p, uint64_t m,
+                                        const KineticCfg& c,
+                                        const FieldViews2D& v,
+                                        const Background2D& bg, float x0,
+                                        float z0,
+                                        unsigned long long* runaway) {
     const float x = p.x[m], z = p.z[m];
     const float gx = (x - x0) / v.dx, gz = (z - z0) / v.dz;
     const float Ex = gather(v.ex, v, gx - 0.5f, gz);
@@ -273,8 +283,6 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         const float bhx = B0.x / B0a, bhz = B0.z / B0a;
         const float upar = ux * bhx + uz * bhz;
         const float upx = ux - upar * bhx, upz = uz - upar * bhz;
-        // gc-form weight equation (header ruling): wave-only, ∂_L dropped;
-        // uniform/tilted arms have no mapping: B_eq = local B₀ exactly
         float Beq = B0a;
         if (has_lines(bg)) {
             float xg, zg;
@@ -301,8 +309,8 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         const float f = c.qm * v.dt / (2.f * gam);
         const float tx = f * Bx, ty = f * By, tz = f * Bz;
         const float t2 = tx * tx + ty * ty + tz * tz;
-        const float s = 2.f / (1.f + t2);
-        const float sx = s * tx, sy = s * ty, sz = s * tz;
+        const float sfac = 2.f / (1.f + t2);
+        const float sx = sfac * tx, sy = sfac * ty, sz = sfac * tz;
         const float px = ux + (uy * tz - uz * ty);
         const float py = uy + (uz * tx - ux * tz);
         const float pz = uz + (ux * ty - uy * tx);
@@ -311,9 +319,7 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
         uz += px * sy - py * sx;
         ux += hk * Ex; uy += hk * Ey; uz += hk * Ez;
     }
-    {   // runaway guard: a marker past ucap is already unphysical for these
-        // arms; clamping (with a reported count) keeps the deposit stencil
-        // in the single-wrap range instead of corrupting memory
+    {   // runaway disaster guard (counted)
         const float uu = ux * ux + uy * uy + uz * uz;
         if (uu > c.ucap * c.ucap) {
             const float r = c.ucap * rsqrtf(uu);
@@ -325,87 +331,160 @@ static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
     float xn = x + ux / gam1 * v.dt;
     float zn = z + uz / gam1 * v.dt;
 
-    // wall test on the GUIDING CENTER (a gyro-excursion of the particle
-    // position past the wall is not an escape — flipping u∥ on it would
-    // not stop the gyration anyway); u∥-flip reverses the bounce motion,
-    // conserving |u| and μ exactly at any wall inclination
-    {
+    {   // walls at the high-|λ| line ends only (P2 ruling)
         float xg, zg;
         gc_pos(xn, zn, uy, gam1, c, bg, xg, zg);
-        // Walls exist ONLY at the high-|λ| line ends (x < wx0 and |z| > wz):
-        // in-plane gc drift is identically zero, so no marker can cross L —
-        // the outer-radial edge (x > wx1) must NOT be a particle wall.
-        // (P2 forensic: testing x > wx1 pinned the shell's outer-tail
-        // markers in a flip loop at the equator — z_gc jitters around 0, so
-        // "outward" fired every gyro-wobble — creating a coherent antenna
-        // layer at (L ≈ 226, λ = 0) that drove a γ ≈ 0.07 Ω_e spurious
-        // instability through the live-wd loop. Mode imaged at x = 226,
-        // z = 0.8, k ∥ b̂, before the fix.)
         if (xg < c.wx0 || zg < c.wz0 || zg > c.wz1) {
             const Vec2<float> bh = b0_bhat<float>(bg, xn, zn);
             const float up = ux * bh.x + uz * bh.z;
-            // "outward" = u∥·sign(z_gc) > 0 (b̂ points north); flip only
-            // then, or a just-reflected marker would flip every step
             if (up * (zg >= 0.f ? 1.f : -1.f) > 0.f) {
                 ux -= 2.f * up * bh.x;
                 uz -= 2.f * up * bh.z;
             }
         }
     }
-    // periodic wrap of the STORED position (box = grid extent); the deposit
-    // below uses the PRE-wrap worldline — its stencil indices sit at most a
-    // few cells outside [0,n) where idx()'s single wrap is exact. Walls, if
-    // configured inside the box, fire first and make the wrap a no-op.
-    {
+    {   // periodic wrap of the STORED position; deposit uses pre-wrap
         const float Lx = v.nx * v.dx, Lz = v.nz * v.dz;
         p.x[m] = xn - Lx * floorf((xn - x0) / Lx);
         p.z[m] = zn - Lz * floorf((zn - z0) / Lz);
     }
     p.ux[m] = ux; p.uy[m] = uy; p.uz[m] = uz;
 
-    // ---- Esirkepov CIC deposit over the worldline x→xn -------------------
-    // block-strided replica choice (contention relief; nrep = 1 ⇒ jx itself)
-    const size_t ncell = size_t(v.nx) * v.nz;
-    float* JX = v.jxr + size_t(blockIdx.x % v.nrep) * ncell;
-    float* JY = v.jyr + size_t(blockIdx.x % v.nrep) * ncell;
-    float* JZ = v.jzr + size_t(blockIdx.x % v.nrep) * ncell;
-    const float qw = c.qm > 0.f ? p.w[m] * p.wd[m] : -p.w[m] * p.wd[m];
-    const float g1x = (xn - x0) / v.dx, g1z = (zn - z0) / v.dz;
-    const int ib = int(floorf(fminf(gx, g1x)));
-    const int kb = int(floorf(fminf(gz, g1z)));
+    PushOut o;
+    o.g0x = gx; o.g0z = gz;
+    o.g1x = (xn - x0) / v.dx; o.g1z = (zn - z0) / v.dz;
+    o.qw = c.qm > 0.f ? p.w[m] * p.wd[m] : -p.w[m] * p.wd[m];
+    o.vy1 = uy / gam1;
+    return o;
+}
+
+// Esirkepov CIC over the worldline; ACC provides jx/jy/jz(i, k, val) with
+// UNWRAPPED global indices (accumulators handle wrap / shared windows).
+template <class ACC>
+__device__ inline void esirkepov_2d(const PushOut& o, const FieldViews2D& v,
+                                    ACC& acc) {
+    const int ib = int(floorf(fminf(o.g0x, o.g1x)));
+    const int kb = int(floorf(fminf(o.g0z, o.g1z)));
     float S0x[3], S1x[3], S0z[3], S1z[3], DSx[3], DSz[3];
     for (int a = 0; a < 3; ++a) {
-        S0x[a] = fmaxf(0.f, 1.f - fabsf(gx - (ib + a)));
-        S1x[a] = fmaxf(0.f, 1.f - fabsf(g1x - (ib + a)));
-        S0z[a] = fmaxf(0.f, 1.f - fabsf(gz - (kb + a)));
-        S1z[a] = fmaxf(0.f, 1.f - fabsf(g1z - (kb + a)));
+        S0x[a] = fmaxf(0.f, 1.f - fabsf(o.g0x - (ib + a)));
+        S1x[a] = fmaxf(0.f, 1.f - fabsf(o.g1x - (ib + a)));
+        S0z[a] = fmaxf(0.f, 1.f - fabsf(o.g0z - (kb + a)));
+        S1z[a] = fmaxf(0.f, 1.f - fabsf(o.g1z - (kb + a)));
         DSx[a] = S1x[a] - S0x[a];
         DSz[a] = S1z[a] - S0z[a];
     }
-    const float fx = -qw * v.dx / (v.dt * v.dx * v.dz);  // = −qw/(dt·dz)
-    const float fz = -qw * v.dz / (v.dt * v.dx * v.dz);
-    const float fy = qw * (uy / gam1) / (v.dx * v.dz);
-    for (int b = 0; b < 3; ++b) {                 // Jx(i+½): prefix over a
-        float acc = 0.f;
+    const float fx = -o.qw / (v.dt * v.dz);
+    const float fz = -o.qw / (v.dt * v.dx);
+    const float fy = o.qw * o.vy1 / (v.dx * v.dz);
+    for (int b = 0; b < 3; ++b) {
+        float a2 = 0.f;
         for (int a = 0; a < 2; ++a) {
-            acc += DSx[a] * (S0z[b] + 0.5f * DSz[b]);
-            atomicAdd(&JX[v.idx(ib + a, kb + b)], fx * acc);
+            a2 += DSx[a] * (S0z[b] + 0.5f * DSz[b]);
+            acc.jx(ib + a, kb + b, fx * a2);
         }
     }
-    for (int a = 0; a < 3; ++a) {                 // Jz(k+½): prefix over b
-        float acc = 0.f;
+    for (int a = 0; a < 3; ++a) {
+        float a2 = 0.f;
         for (int b = 0; b < 2; ++b) {
-            acc += DSz[b] * (S0x[a] + 0.5f * DSx[a]);
-            atomicAdd(&JZ[v.idx(ib + a, kb + b)], fz * acc);
+            a2 += DSz[b] * (S0x[a] + 0.5f * DSx[a]);
+            acc.jz(ib + a, kb + b, fz * a2);
         }
     }
-    for (int a = 0; a < 3; ++a)                   // node Jy (Wy weights)
+    for (int a = 0; a < 3; ++a)
         for (int b = 0; b < 3; ++b) {
             const float Wy = S0x[a] * S0z[b] +
                              0.5f * (DSx[a] * S0z[b] + S0x[a] * DSz[b]) +
                              (1.f / 3.f) * DSx[a] * DSz[b];
-            atomicAdd(&JY[v.idx(ib + a, kb + b)], fy * Wy);
+            acc.jy(ib + a, kb + b, fy * Wy);
         }
+}
+
+struct FlatAcc {
+    const FieldViews2D& v;
+    float *JX, *JY, *JZ;
+    __device__ void jx(int i, int k, float val) { atomicAdd(&JX[v.idx(i, k)], val); }
+    __device__ void jy(int i, int k, float val) { atomicAdd(&JY[v.idx(i, k)], val); }
+    __device__ void jz(int i, int k, float val) { atomicAdd(&JZ[v.idx(i, k)], val); }
+};
+
+static __global__ void k_push_deposit(MarkerViews p, KineticCfg c,
+                                      FieldViews2D v, Background2D bg,
+                                      float x0, float z0, uint64_t n,
+                                      unsigned long long* runaway = nullptr) {
+    const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
+    if (m >= n) return;
+    const size_t ncell = size_t(v.nx) * v.nz;
+    const int rep = blockIdx.x % v.nrep;
+    FlatAcc acc{v, v.jxr + size_t(rep) * ncell, v.jyr + size_t(rep) * ncell,
+                v.jzr + size_t(rep) * ncell};
+    const PushOut o = push_move_one(p, m, c, v, bg, x0, z0, runaway);
+    esirkepov_2d(o, v, acc);
+}
+
+// ---- P3d tiled deposit ----------------------------------------------------
+// One block per 16×16-cell tile; markers come from the sort-time CSR
+// (cell_start), so every marker is processed exactly once even after
+// drifting. Deposits land in a shared (16+2H)² window (H = 6 covers the
+// stencil + ≤5-cell drift between sorts); strays fall back to global
+// atomics. 98% of tiles are empty in shell-compact runs and exit
+// immediately, so the window flush cost lives only on shell tiles.
+constexpr int TS_TILE = 16, TS_HALO = 6, TS_W = TS_TILE + 2 * TS_HALO;
+
+struct TileAcc {
+    const FieldViews2D& v;
+    float *sjx, *sjy, *sjz;     // shared window [TS_W][TS_W]
+    int wx0, wz0;               // window origin (unwrapped cell coords)
+    __device__ void add(float* sh, float* gl, int i, int k, float val) {
+        const int li = i - wx0, lk = k - wz0;
+        if (li >= 0 && li < TS_W && lk >= 0 && lk < TS_W)
+            atomicAdd(&sh[lk * TS_W + li], val);
+        else
+            atomicAdd(&gl[v.idx(i, k)], val);
+    }
+    __device__ void jx(int i, int k, float val) { add(sjx, v.jx, i, k, val); }
+    __device__ void jy(int i, int k, float val) { add(sjy, v.jy, i, k, val); }
+    __device__ void jz(int i, int k, float val) { add(sjz, v.jz, i, k, val); }
+};
+
+static __global__ void k_push_deposit_tiled(MarkerViews p, KineticCfg c,
+                                            FieldViews2D v, Background2D bg,
+                                            float x0, float z0,
+                                            const uint32_t* cell_start,
+                                            unsigned long long* runaway) {
+    __shared__ float sjx[TS_W * TS_W], sjy[TS_W * TS_W], sjz[TS_W * TS_W];
+    __shared__ uint32_t rs[TS_TILE], re[TS_TILE];
+    __shared__ uint32_t total;
+    const int ti = blockIdx.x * TS_TILE, tk = blockIdx.y * TS_TILE;
+    const int wcols = min(TS_TILE, v.nx - ti);
+    const int wrows = min(TS_TILE, v.nz - tk);
+    if (threadIdx.x == 0) total = 0;
+    __syncthreads();
+    if (threadIdx.x < uint32_t(wrows)) {
+        const size_t c0 = size_t(tk + threadIdx.x) * v.nx + ti;
+        rs[threadIdx.x] = cell_start[c0];
+        re[threadIdx.x] = cell_start[c0 + wcols];
+        atomicAdd(&total, re[threadIdx.x] - rs[threadIdx.x]);
+    }
+    __syncthreads();
+    if (total == 0) return;
+    for (int i = threadIdx.x; i < TS_W * TS_W; i += blockDim.x)
+        sjx[i] = sjy[i] = sjz[i] = 0.f;
+    __syncthreads();
+
+    TileAcc acc{v, sjx, sjy, sjz, ti - TS_HALO, tk - TS_HALO};
+    for (int r = 0; r < wrows; ++r)
+        for (uint32_t m = rs[r] + threadIdx.x; m < re[r]; m += blockDim.x) {
+            const PushOut o = push_move_one(p, m, c, v, bg, x0, z0, runaway);
+            esirkepov_2d(o, v, acc);
+        }
+    __syncthreads();
+    for (int i = threadIdx.x; i < TS_W * TS_W; i += blockDim.x) {
+        const int gi = acc.wx0 + (i % TS_W), gk = acc.wz0 + (i / TS_W);
+        if (sjx[i] != 0.f) atomicAdd(&v.jx[v.idx(gi, gk)], sjx[i]);
+        if (sjy[i] != 0.f) atomicAdd(&v.jy[v.idx(gi, gk)], sjy[i]);
+        if (sjz[i] != 0.f) atomicAdd(&v.jz[v.idx(gi, gk)], sjz[i]);
+    }
 }
 
 // wd statistics (rms, max) for the δf validity monitor

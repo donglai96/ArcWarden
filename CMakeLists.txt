@@ -322,3 +322,7 @@ target_include_directories(test_ckpt2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(test_ckpt2d PRIVATE CUDA::cudart)
 add_test(NAME ckpt2d COMMAND test_ckpt2d)
 set_tests_properties(ckpt2d PROPERTIES LABELS "unit")
+
+add_executable(bench2d tools/bench2d.cu)
+target_include_directories(bench2d PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(bench2d PRIVATE CUDA::cudart)

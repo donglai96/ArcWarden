@@ -74,6 +74,7 @@ struct MarkerViews {
 struct MarkerStore {
     arc::DeviceArray<float>    x, z, ux, uy, uz, w, wd;
     arc::DeviceArray<uint32_t> cell;
+    arc::DeviceArray<uint32_t> cell_start;   // CSR (cells+1), filled by Sorter2D
     uint64_t n = 0;         // live markers
     uint64_t capacity = 0;
 

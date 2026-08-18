@@ -61,6 +61,8 @@ static __global__ void k_permute(const float* src, float* dst,
 }  // namespace s2d
 
 struct Sorter2D {
+    // CSR marker index per cell is preserved into mk.cell_start for the
+    // tiled deposit: markers of cell c = [cell_start[c], cell_start[c+1])
     arc::DeviceArray<uint32_t> count, offset, perm;
     arc::DeviceArray<float> tmp;
     arc::DeviceArray<uint8_t> scan_tmp;
@@ -99,6 +101,14 @@ struct Sorter2D {
         size_t b = scan_bytes;
         cub::DeviceScan::ExclusiveSum(scan_tmp.data(), b, count.data(),
                                       offset.data(), int(size_t(nx) * nz));
+        if (mk.cell_start.size() != size_t(nx) * nz + 1)
+            mk.cell_start = arc::DeviceArray<uint32_t>(size_t(nx) * nz + 1);
+        CUDA_CHECK(cudaMemcpyAsync(mk.cell_start.data(), offset.data(),
+                                   size_t(nx) * nz * 4,
+                                   cudaMemcpyDeviceToDevice));
+        const uint32_t nn = uint32_t(n);
+        CUDA_CHECK(cudaMemcpy(mk.cell_start.data() + size_t(nx) * nz, &nn, 4,
+                              cudaMemcpyHostToDevice));
         s2d::k_scatter<<<nb, tb>>>(p, offset.data(), perm.data(), n);
         // permute → temp → copy back. (A pointer swap would hand the shared
         // temp buffer to this species and leave a SMALLER one behind for the

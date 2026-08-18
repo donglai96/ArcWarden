@@ -40,6 +40,8 @@ struct Sim2D {
     arc::DeviceArray<unsigned long long> runaway;   // ucap clamp counter
     bool diag_on = false;
     long sort_every = 25;              // 0 = off (markers drift ~0.06 cells/step)
+    int deposit_tiled = 1;             // shared-window deposit (needs sort)
+    bool sorted_once = false;
     double time = 0;
     long nstep = 0;
     arc::DeviceArray<double> acc;      // small reduction scratch
@@ -143,22 +145,37 @@ struct Sim2D {
     }
 
     void step() {
-        if (sort_every > 0 && nstep % sort_every == 0)
+        if (sort_every > 0 && (nstep % sort_every == 0 || !sorted_once)) {
             for (auto& s : sp)
                 sorter.sort(*s.mk, float(F.x0), float(F.z0), float(F.dx),
                             float(F.dz), F.nx, F.nz);
+            sorted_once = true;
+        }
         FieldViews2D v = F.views();
         const Range r = F.full();
         const dim3 nb = f2d::blocks_for(r), tb(f2d::TX, f2d::TZ);
         f2d::k_faraday<<<nb, tb>>>(v, r, float(F.dt / 2));
-        F.zero_j();
-        for (auto& s : sp) {
-            MarkerViews mv = s.mk->views();
-            k2d::k_push_deposit<<<int((s.mk->n + 255) / 256), 256>>>(
-                mv, s.C, v, F.bg, float(F.x0), float(F.z0), s.mk->n,
-                runaway.data());
+        const bool tiled = deposit_tiled && sort_every > 0 && sorted_once;
+        if (tiled) {
+            F.jx.zero(); F.jy.zero(); F.jz.zero();
+            const dim3 tg((F.nx + k2d::TS_TILE - 1) / k2d::TS_TILE,
+                          (F.nz + k2d::TS_TILE - 1) / k2d::TS_TILE);
+            for (auto& s : sp) {
+                MarkerViews mv = s.mk->views();
+                k2d::k_push_deposit_tiled<<<tg, 256>>>(
+                    mv, s.C, v, F.bg, float(F.x0), float(F.z0),
+                    s.mk->cell_start.data(), runaway.data());
+            }
+        } else {
+            F.zero_j();
+            for (auto& s : sp) {
+                MarkerViews mv = s.mk->views();
+                k2d::k_push_deposit<<<int((s.mk->n + 255) / 256), 256>>>(
+                    mv, s.C, v, F.bg, float(F.x0), float(F.z0), s.mk->n,
+                    runaway.data());
+            }
+            F.reduce_j();
         }
-        F.reduce_j();
         F.filter_j();
         if (F.nc > 0.0) {
             f2d::k_cold_step<<<nb, tb>>>(v, r, F.bg, float(F.x0), float(F.z0));

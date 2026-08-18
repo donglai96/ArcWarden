@@ -207,6 +207,35 @@ static __global__ void k_filter_z(const float* src, float* dst, FieldViews2D v,
                        0.25f * src[v.idx(i, k + 1)];
 }
 
+// fused binomial^3: three 1-2-1 passes per axis == one separable 7-tap pass
+// ((1,6,15,20,15,6,1)/64). 18 kernels/~48 GB per step -> 3 kernels/~8 GB;
+// the ppc=1 probe showed the field pipeline was HALF the V4R step cost.
+static __global__ void k_filter7(const float* src, float* dst, FieldViews2D v,
+                                 Range r) {
+    __shared__ float tile[22][22];              // 16×16 block + halo 3
+    const int i0 = blockIdx.x * 16, k0 = blockIdx.y * 16;
+    for (int t = threadIdx.y * blockDim.x + threadIdx.x; t < 22 * 22;
+         t += blockDim.x * blockDim.y) {
+        const int li = t % 22, lk = t / 22;
+        tile[lk][li] = src[v.idx(i0 + li - 3, k0 + lk - 3)];
+    }
+    __syncthreads();
+    const int i = i0 + threadIdx.x, k = k0 + threadIdx.y;
+    if (i >= r.i1 || k >= r.k1) return;
+    const float c7[7] = {1.f / 64, 6.f / 64, 15.f / 64, 20.f / 64,
+                         15.f / 64, 6.f / 64, 1.f / 64};
+    float col[7];
+    for (int dz = 0; dz < 7; ++dz) {
+        float acc = 0.f;
+        for (int dx2 = 0; dx2 < 7; ++dx2)
+            acc += c7[dx2] * tile[threadIdx.y + dz][threadIdx.x + dx2];
+        col[dz] = acc;
+    }
+    float out = 0.f;
+    for (int dz = 0; dz < 7; ++dz) out += c7[dz] * col[dz];
+    dst[v.idx(i, k)] = out;
+}
+
 // ---- energy ledger (double accumulation) -----------------------------------
 // WEM = ½Σ(E² + c²B²)dV (ε0 = 1, 1/μ0 = c²); Wc = ½ nc Σ|Vc|² dV.
 
@@ -326,6 +355,15 @@ struct Fields2D {
         FieldViews2D v = views();
         const Range r = full();
         const dim3 nb = f2d::blocks_for(r), tb(f2d::TX, f2d::TZ);
+        if (jfilter == 3) {   // fused 7-tap; copy-back keeps captured views valid
+            for (auto* a : {&jx, &jy, &jz}) {
+                f2d::k_filter7<<<nb, tb, 0, s>>>(a->data(), jtmp.data(), v, r);
+                CUDA_CHECK(cudaMemcpyAsync(a->data(), jtmp.data(),
+                                           size_t(nx) * nz * 4,
+                                           cudaMemcpyDeviceToDevice, s));
+            }
+            return;
+        }
         for (int pass = 0; pass < jfilter; ++pass)
             for (auto* a : {&jx, &jy, &jz}) {
                 f2d::k_filter_x<<<nb, tb, 0, s>>>(a->data(), jtmp.data(), v, r);

@@ -46,12 +46,13 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string outdir = "warden2d_out";
-    long nsteps_cli = -1, ckpt_every = 0;
+    long nsteps_cli = -1, ckpt_every = 0, sort_cli = -1;
     bool preflight_only = false, resume = false;
     for (int i = 2; i < argc; ++i) {
         if (!std::strncmp(argv[i], "--nsteps=", 9)) nsteps_cli = atol(argv[i] + 9);
         else if (!std::strncmp(argv[i], "--ckpt=", 7)) ckpt_every = atol(argv[i] + 7);
         else if (!std::strcmp(argv[i], "--resume")) resume = true;
+        else if (!std::strncmp(argv[i], "--sort=", 7)) sort_cli = atol(argv[i] + 7);
         else if (!std::strcmp(argv[i], "--preflight")) preflight_only = true;
         else if (argv[i][0] != '-') outdir = argv[i];
     }
@@ -90,6 +91,7 @@ int main(int argc, char** argv) {
 
     std::filesystem::create_directories(outdir);
     Sim2D S;
+    if (sort_cli >= 0) S.sort_every = sort_cli;
     S.build(d);
     if (resume) load_checkpoint(S, outdir + "/ckpt.bin");
     std::printf("\nloaded %zu species:\n", S.sp.size());
