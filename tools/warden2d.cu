@@ -98,9 +98,62 @@ int main(int argc, char** argv) {
     for (auto& s : S.sp) std::fprintf(ecsv, ",wdrms_%s", s.name.c_str());
     std::fprintf(ecsv, "\n");
 
+    // meta: probe stations with LOCAL Omega_e (dual-normalization contract)
+    FILE* probes = nullptr;
+    std::vector<float> pline(size_t(6) * std::max(S.diag.ns, 1));
+    const long probe_every = 4, sline_every = std::max(1L, d.snap_every / 4),
+               fv_every = 20000;
+    if (S.diag_on) {
+        FILE* meta = std::fopen((outdir + "/meta.txt").c_str(), "w");
+        std::fprintf(meta, "deck %s\nL0 %.2f lam_w_deg %.1f B0eq %.4f\n"
+                           "line ns %d fields Epar,E1,Ey,Bpar,B1,By\n",
+                     argv[1], d.bg.L0, d.lam_w * 180 / M_PI, d.bg.B0eq, S.diag.ns);
+        std::fprintf(meta, "probe_every %ld dt %.4f\nprobes (lam_deg, wce_local):\n",
+                     probe_every, d.dt);
+        for (size_t i = 0; i < S.diag.probe_idx.size(); ++i)
+            std::fprintf(meta, "  %6.1f  %.5f\n",
+                         S.diag.lam_line[S.diag.probe_idx[i]], S.diag.probe_wce[i]);
+        std::fprintf(meta, "fv layout [%d][%d][%d][2] vmax %.2f uqmax %.2f\n"
+                           "ledger layout [%d][%d][2] every %ld\n",
+                     DIAG_NREG, S.diag.npar, S.diag.nperp, S.diag.vmax,
+                     S.diag.uqmax, DIAG_NREG, S.diag.nvb, 8L);
+        std::fclose(meta);
+        probes = std::fopen((outdir + "/probes.bin").c_str(), "wb");
+    }
+
     const auto t0 = std::chrono::steady_clock::now();
     for (long n = 0; n < d.nsteps; ++n) {
         S.step();
+        if (S.diag_on) {
+            if (n % 8 == 7) S.diag_ledger(float(8 * d.dt));
+            if (n % probe_every == probe_every - 1) {
+                S.diag_line();
+                CUDA_CHECK(cudaMemcpy(pline.data(), S.diag.line_out.data(),
+                                      size_t(6) * S.diag.ns * 4,
+                                      cudaMemcpyDeviceToHost));
+                for (int c = 0; c < 6; ++c)
+                    for (int pidx : S.diag.probe_idx)
+                        std::fwrite(&pline[size_t(c) * S.diag.ns + pidx], 4, 1,
+                                    probes);
+            }
+            if (d.snap_every > 0 && n % sline_every == sline_every - 1) {
+                char pth[512];
+                std::snprintf(pth, sizeof pth, "%s/sline_%07ld.bin",
+                              outdir.c_str(), n + 1);
+                S.diag.dump_line(pth);
+            }
+            if (n % fv_every == fv_every - 1) {
+                S.diag_fv();
+                for (size_t i = 0; i < S.sp.size(); ++i) {
+                    char lp[512], fp[512];
+                    std::snprintf(lp, sizeof lp, "%s/ledger_%s_%07ld.bin",
+                                  outdir.c_str(), S.sp[i].name.c_str(), n + 1);
+                    std::snprintf(fp, sizeof fp, "%s/fv_%s_%07ld.bin",
+                                  outdir.c_str(), S.sp[i].name.c_str(), n + 1);
+                    S.diag.dump_and_reset(int(i), lp, fp);
+                }
+            }
+        }
         if (d.snap_every > 0 && n % d.snap_every == d.snap_every - 1)
             snapshot(S.F, outdir, n + 1);
         if (n % d.energy_every == d.energy_every - 1) {
@@ -126,6 +179,7 @@ int main(int argc, char** argv) {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     std::fclose(ecsv);
+    if (probes) std::fclose(probes);
     snapshot(S.F, outdir, d.nsteps);
     std::printf("done: %ld steps, outputs in %s/\n", d.nsteps, outdir.c_str());
     return 0;

@@ -16,6 +16,7 @@
 #define ARC_PIC2D_SIM2D_HPP
 
 #include "pic2d/deck2d.hpp"
+#include "pic2d/diag2d.hpp"
 #include "pic2d/fields2d.hpp"
 #include "pic2d/kinetic2d.hpp"
 
@@ -33,6 +34,8 @@ struct Sim2D {
         std::unique_ptr<MarkerStore> mk;
     };
     std::vector<Sp> sp;
+    Diag2D diag;
+    bool diag_on = false;
     double time = 0;
     long nstep = 0;
     arc::DeviceArray<double> acc;      // small reduction scratch
@@ -108,6 +111,28 @@ struct Sim2D {
             CUDA_CHECK(cudaDeviceSynchronize());
             sp.push_back(std::move(s));
         }
+        if (dipole) {
+            diag.build_line(d.bg, d.bg.L0, d.lam_w * 180 / M_PI, 1.0,
+                            int(sp.size()));
+            diag_on = true;
+        }
+    }
+
+    // diagnostics passes (cadences owned by the runner)
+    void diag_line() {
+        if (diag_on) diag.sample_line(F.views(), float(F.x0), float(F.z0));
+    }
+    void diag_fv() {
+        if (!diag_on) return;
+        for (size_t i = 0; i < sp.size(); ++i)
+            diag.fv_accumulate(int(i), sp[i].mk->views(), F.bg, sp[i].mk->n);
+    }
+    void diag_ledger(float dt_eff) {
+        if (!diag_on) return;
+        for (size_t i = 0; i < sp.size(); ++i)
+            diag.ledger_accumulate(int(i), sp[i].mk->views(), sp[i].C,
+                                   F.views(), F.bg, float(F.x0), float(F.z0),
+                                   dt_eff, sp[i].mk->n);
     }
 
     void step() {
