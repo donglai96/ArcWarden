@@ -154,3 +154,28 @@ A=3——XVAL 已证明其在探针线上健康增长),目标:真饱和 + 干净
 偏差在,review 定位不变)。V4R10(修复版、冻结判据)设计输入:
 跑到饱和进入 + ~40k 步即停(元素最干净窗),wd_rms≲0.2 全程,
 探针加 L≈4020–4040 线。
+
+## 九、session 收尾状态(2026-08-19 深夜,用户指示停跑存档)
+
+**V4R10(冻结判据科学跑)停在 140k/195k**,checkpoint 完好在
+build/v4r10/ckpt.bin(step 140000,t=21000,W=4.3e-4,wd_rms 8.1e-3,
+runaway 0,全程健康)。恢复命令:
+```
+./build/warden2d decks/warden2d_v4r10_df_a3.ini build/v4r10 \
+    --nsteps=235000 --ckpt=20000 --resume
+```
+(235k = 按幅度对齐 V4R9 推算的饱和进入 ~185k + 50k 元素窗;
+94 ms/step,续跑约 2.5 h。)判据 C1–C4 冻结于 deck 头部,未动。
+
+**本 session 完成的全部工作**:sparse tile 池(S1 逐位 + 10/10)+
+loader 耗尽 bug 修复 + V4R5-A5 三项验证 + 元素时长定量账(REALISM
+补遗)+ δf/full-f 交叉验证(XVAL G1–G3)+ 方法分工 PDF 报告 +
+阈值阶梯发现(A=2 边缘 / A=2.5 外列选择 / 折减 45%→11%→2%)+
+V4R9 280k 完整 G4(δf 撑完整饱和周期,定量边界)+ 外部 review
+三阻断修复(gyrotropic loader / 时间居中权重 / gc_pos 动量契约)+
+重验证全绿 + 交界处定量分析(外缘超核心 → V4R10 加宽 shell
+dL=90/σ=15)+ probe_L2 副线 + wd 占比闸重设计。
+
+**待办**(优先级序):V4R10 续跑 → C1–C4 判定;checkpoint v3
+强校验(species 哈希 + tslot 校验和);多 L 站谱/WNA 产品;
+ppc 150 full-f 生产臂;D1(V3 修复版重跑)、D2(Nsight)。
