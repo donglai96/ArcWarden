@@ -336,6 +336,29 @@ inline void finalize_deck2d(Deck2D& d) {
         gate("gyro/" + s.name, pass, !s.deltaf, buf);
     }
 
+    // ---- cold nonlinear: parsed but NOT implemented — refuse, don't
+    // silently run the linearised fluid under a nonlinear label ---------
+    if (d.cold_nonlinear)
+        gate("cold/nonlinear", false, true,
+             "nonlinear cold fluid is unimplemented (deck asked for it)");
+
+    // ---- non-relativistic particle CFL: the Boris tail must not skip
+    // cells (rel=1 is self-limiting at c; rel=0 tails are unbounded) ----
+    for (const auto& s : d.species)
+        if (!s.rel) {
+            const double umax = 4.0 * std::max(s.uthpar, s.uthperp);
+            const double frac = umax * d.dt / std::min(d.dx, d.dz);
+            std::snprintf(buf, sizeof buf,
+                          "%s: 4σ tail moves %.2f cells/step (rel=0)",
+                          s.name.c_str(), frac);
+            gate("pcfl/" + s.name, frac < 1.0, true, buf);
+        }
+
+    for (const auto& sp : d.species)
+        if (sp.dist >= 2)
+            gate("dist/" + sp.name, false, true,
+                 "dist>=2 (losscone/prodkappa) has no analytic dln f0 yet");
+
     // ---- kappa mapping not implemented for curved backgrounds -----------
     for (const auto& sp : d.species)
         if (sp.dist == 1 && has_lines(d.bg))

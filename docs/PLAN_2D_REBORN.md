@@ -458,8 +458,14 @@ additive. Reductions and diagnostics funnel through per-slab partials.
   **The kinetic engine is now literature-anchored on the reborn stack.**
   Still open in P2: analytic ∂lnf₀ for losscone/prodkappa, multi-species
   orchestration + per-species ledgers (V3 ran two species inline).
-- **P3 production** (2–3 d): checkpoint (git-hash-embedded), diagnostics
-  pack (§2.5), deck-finalize gate battery, V4/V5; W10 first-light deck.
+- **P3 production — COMPLETE 2026-08-19** (status refresh per external
+  review: this section previously read as future work): checkpoint v2,
+  diagnostics pack, deck gate battery (now incl. cold-nonlinear refusal,
+  nonrel particle-CFL, dist>=2 refusal), sparse tile pool, V4R5 shakedown,
+  V4R6-XVAL delta-f cross-validation. Production background = dipole2d
+  (linedipole retained for legacy gates only). Post-review fixes landed:
+  gyrotropic loader (u_y local width), time-centred delta-f weights,
+  gc_pos momentum contract, wd_max monitoring + representation gate.
   **P3+ optimization detour (user-directed 2026-08-18, "算力没有集中在
   有效的区域")**: sparse tile-pool field storage implemented
   (PLAN_SPARSE_GRID §5) — pool + int32 tslot table, guarded+counted

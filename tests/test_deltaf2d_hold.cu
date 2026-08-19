@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
     auto wd_rms = [&]() {
         CUDA_CHECK(cudaMemset(dacc, 0, sizeof(double)));
         MarkerViews mv = mk.views();
-        k2d::k_wd_stats<<<int((NMARK + 255) / 256), 256>>>(mv, dacc, NMARK);
+        k2d::k_wd_stats<<<int((NMARK + 255) / 256), 256>>>(mv, dacc, nullptr, NMARK);
         double h;
         CUDA_CHECK(cudaMemcpy(&h, dacc, sizeof(double), cudaMemcpyDeviceToHost));
         return std::sqrt(h / double(NMARK));
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
             // outer-radial edge is not a wall — gc cannot cross L; gyro
             // excursions of the particle position are not escapes)
             float xg, zg;
-            k2d::gc_pos(hx[i], hz[i], b[i], 1.f, C, F.bg, xg, zg);
+            k2d::gc_pos(hx[i], hz[i], b[i], C, F.bg, xg, zg);
             if (xg < C.wx0 - 2 || zg < C.wz0 - 2 || zg > C.wz1 + 2 ||
                 hx[i] < float(X0) || hx[i] > float(X1) || hz[i] < float(Z0) ||
                 hz[i] > float(Z1))

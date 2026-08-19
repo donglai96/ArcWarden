@@ -129,28 +129,32 @@ __host__ __device__ inline float shell_dlnprof(float L, const KineticCfg& c) {
     return -(a / (c.edge * c.edge)) * copysignf(1.f, L - c.L0);
 }
 
-// guiding-center position (in-plane offset; only u_y enters)
-__host__ __device__ inline void gc_pos(float x, float z, float uy, float gam,
+// guiding-center position (in-plane offset; only u_y enters). u is
+// MOMENTUM (u = γv), so ρ = p⊥/(|q|B) = u_y/B with no extra γ — the
+// γ factor removed 2026-08-19 (review blocker 3: it was a velocity-
+// contract holdover; loader passed γ=1 and was numerically right,
+// runtime passed γ and overshot the offset by (γ−1)ρ ≈ 0.05 c/ωpe).
+__host__ __device__ inline void gc_pos(float x, float z, float uy,
                                        const KineticCfg& c,
                                        const Background2D& bg,
                                        float& xg, float& zg) {
     const Vec2<float> B = b0_field<float>(bg, x, z);
-    const float B2 = B.x * B.x + B.z * B.z;      // γ u_y b̂/|B| = γ u_y B/B²
+    const float B2 = B.x * B.x + B.z * B.z;      // u_y b̂/|B| = u_y B/B²
     const float s = c.qm < 0.f ? 1.f : -1.f;     // −sign(qm)
-    xg = x - s * gam * uy * B.z / B2;
-    zg = z + s * gam * uy * B.x / B2;
+    xg = x - s * uy * B.z / B2;
+    zg = z + s * uy * B.x / B2;
 }
 
 // local mapped density factor n/n0 = prof(L_gc)/ζ(λ); the profile argument
 // is the gc L (see header ruling), the ζ mapping uses the particle-position
 // B (legacy convention; anisotropy rung revisits)
 __host__ __device__ inline float density_factor(float x, float z, float uy,
-                                                float gam, const KineticCfg& c,
+                                                const KineticCfg& c,
                                                 const Background2D& bg) {
     if (!has_lines(bg))
         return 1.f;                     // uniform/tilted arms: no shell, ζ = 1
     float xg, zg;
-    gc_pos(x, z, uy, gam, c, bg, xg, zg);
+    gc_pos(x, z, uy, c, bg, xg, zg);
     const float Lg = lshell_of<float>(bg, xg, zg);
     const float L = lshell_of<float>(bg, x, z);
     const float Beq = float(beq_of(bg, L));
@@ -168,7 +172,7 @@ inline double shell_density_integral(const KineticCfg& c, const Background2D& bg
     double acc = 0;
     for (double z = z0 + 0.5 * h; z < z1; z += h)
         for (double x = x0 + 0.5 * h; x < x1; x += h)
-            acc += density_factor(float(x), float(z), 0.f, 1.f, c, bg);
+            acc += density_factor(float(x), float(z), 0.f, c, bg);
     return acc * h * h;
 }
 
@@ -208,7 +212,7 @@ static __global__ void k_load(MarkerViews p, KineticCfg c, Background2D bg,
         x = bx0 + (bx1 - bx0) * rng_u01(seed, uint32_t(i), s0);
         z = bz0 + (bz1 - bz0) * rng_u01(seed, uint32_t(i), s0 + 1u);
         accepted = rng_u01(seed, uint32_t(i), s0 + 2u) <=
-                   density_factor(x, z, u2, 1.f, c, bg);
+                   density_factor(x, z, u2, c, bg);
     }
     if (!accepted) {
         x = fminf(fmaxf(c.L0, bx0), bx1);
@@ -225,7 +229,12 @@ static __global__ void k_load(MarkerViews p, KineticCfg c, Background2D bg,
     }
     float upar = sqrtf(c.tpar) * rng_gauss(seed, uint32_t(i), 1u);
     float u1 = sqrtf(c.tperp / zeta) * rng_gauss(seed, uint32_t(i), 2u);
-    float u2f = u2;
+    // GYROTROPY (2026-08-19 review): rescale u_y to the same local width
+    // as u1. The pre-draw kept the equatorial width so the rejection could
+    // use u2's gyro offset; the offset-scale mismatch left behind is
+    // (1−ζ^{−1/2})ρ ≲ 0.5 L-units against the σ=8 edge — second order,
+    // unlike the (1−1/ζ) variance error this fixes.
+    float u2f = u2 / sqrtf(zeta);
     if (c.dist == 1) {                  // bi-kappa: shared sqrt(κ/W) factor
         const int ndof = int(2.f * c.kappa - 1.f + 0.5f);
         float W = 0.f;
@@ -294,34 +303,8 @@ __device__ inline PushOut push_move_one(MarkerViews& p, uint64_t m,
     const Vec2<float> B0 = b0_field<float>(bg, x, z);
 
     float ux = p.ux[m], uy = p.uy[m], uz = p.uz[m];
-    const float gam0 = c.rel ? sqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
-
-    if (c.deltaf) {
-        const float vx = ux / gam0, vy = uy / gam0, vz = uz / gam0;
-        const float ax = c.qm * (Ex + vy * Bzw - vz * Byw);
-        const float ay = c.qm * (Ey + vz * Bxw - vx * Bzw);
-        const float az = c.qm * (Ez + vx * Byw - vy * Bxw);
-        const float B0a = sqrtf(B0.x * B0.x + B0.z * B0.z);
-        const float bhx = B0.x / B0a, bhz = B0.z / B0a;
-        const float upar = ux * bhx + uz * bhz;
-        const float upx = ux - upar * bhx, upz = uz - upar * bhz;
-        float Beq = B0a;
-        if (has_lines(bg)) {
-            float xg, zg;
-            gc_pos(x, z, uy, gam0, c, bg, xg, zg);
-            Beq = float(beq_of(bg, lshell_of<float>(bg, xg, zg)));
-        }
-        const float dE = -1.f / c.tpar;
-        const float dMu = Beq * (1.f / c.tpar - 1.f / c.tperp);
-        const float udota = ux * ax + uy * ay + uz * az;
-        const float updota = upx * ax + uy * ay + upz * az;
-        const float dlnf = dE * udota + dMu * updota / B0a;
-        if (!c.wdfreeze) {
-            float wd = p.wd[m] + -(1.f - p.wd[m]) * dlnf * v.dt;
-            if (c.taud > 0.f) wd -= wd * v.dt / c.taud;
-            p.wd[m] = wd;
-        }
-    }
+    const float u0x = ux, u0y = uy, u0z = uz;   // pre-push momentum (for the
+                                                // time-centred weight update)
 
     {   // Boris with total B = wave + analytic background
         const float Bx = Bxw + B0.x, By = Byw, Bz = Bzw + B0.z;
@@ -350,12 +333,44 @@ __device__ inline PushOut push_move_one(MarkerViews& p, uint64_t m,
         }
     }
     const float gam1 = c.rel ? sqrtf(1.f + ux * ux + uy * uy + uz * uz) : 1.f;
+
+    // time-centred delta-f weight update at u_mid ~ u(t^n) (2026-08-19
+    // review: the old pre-Boris explicit-Euler form lagged the resonant
+    // phase by O(dt)); wave-force-only, P2 ruling on the dropped dL term
+    if (c.deltaf && !c.wdfreeze) {
+        const float mx = 0.5f * (u0x + ux), my = 0.5f * (u0y + uy),
+                    mz = 0.5f * (u0z + uz);
+        const float gm = c.rel ? sqrtf(1.f + mx * mx + my * my + mz * mz) : 1.f;
+        const float vx = mx / gm, vy = my / gm, vz = mz / gm;
+        const float ax = c.qm * (Ex + vy * Bzw - vz * Byw);
+        const float ay = c.qm * (Ey + vz * Bxw - vx * Bzw);
+        const float az = c.qm * (Ez + vx * Byw - vy * Bxw);
+        const float B0a = sqrtf(B0.x * B0.x + B0.z * B0.z);
+        const float bhx = B0.x / B0a, bhz = B0.z / B0a;
+        const float upar = mx * bhx + mz * bhz;
+        const float upx = mx - upar * bhx, upz = mz - upar * bhz;
+        float Beq = B0a;
+        if (has_lines(bg)) {
+            float xg, zg;
+            gc_pos(x, z, my, c, bg, xg, zg);
+            Beq = float(beq_of(bg, lshell_of<float>(bg, xg, zg)));
+        }
+        const float dE = -1.f / c.tpar;
+        const float dMu = Beq * (1.f / c.tpar - 1.f / c.tperp);
+        const float udota = mx * ax + my * ay + mz * az;
+        const float updota = upx * ax + my * ay + upz * az;
+        const float dlnf = dE * udota + dMu * updota / B0a;
+        float wd = p.wd[m] - (1.f - p.wd[m]) * dlnf * v.dt;
+        if (c.taud > 0.f) wd -= wd * v.dt / c.taud;
+        p.wd[m] = wd;
+    }
+
     float xn = x + ux / gam1 * v.dt;
     float zn = z + uz / gam1 * v.dt;
 
     {   // walls at the high-|λ| line ends only (P2 ruling)
         float xg, zg;
-        gc_pos(xn, zn, uy, gam1, c, bg, xg, zg);
+        gc_pos(xn, zn, uy, c, bg, xg, zg);
         if (xg < c.wx0 || zg < c.wz0 || zg > c.wz1) {
             const Vec2<float> bh = b0_bhat<float>(bg, xn, zn);
             const float up = ux * bh.x + uz * bh.z;
@@ -529,12 +544,15 @@ static __global__ void k_push_deposit_tiled(MarkerViews p, KineticCfg c,
     }
 }
 
-// wd statistics (rms, max) for the δf validity monitor
-static __global__ void k_wd_stats(MarkerViews p, double* acc, uint64_t n) {
+// wd statistics for the δf validity monitor: acc[0] += Σwd², and
+// acc[1] tracks max|wd| via the monotone float→uint encoding (review
+// 2026-08-19: G4 needs the max, rms alone hides a runaway tail)
+static __global__ void k_wd_stats(MarkerViews p, double* acc,
+                                  unsigned int* wmax, uint64_t n) {
     const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
     if (m >= n) return;
     atomicAdd(&acc[0], double(p.wd[m]) * p.wd[m]);
-    // max via integer-encoded atomicMax would need casts; rms suffices here
+    if (wmax) atomicMax(wmax, __float_as_uint(fabsf(p.wd[m])));
 }
 
 // finiteness scan (debug/validity): acc[0] += count of non-finite markers

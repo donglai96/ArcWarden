@@ -35,10 +35,12 @@
 
 namespace arc2d {
 
-// Distribution tags (analytic ∂lnf₀ REQUIRED for every member before a δf
-// run may use it — the prodkappa/conecut gap in the legacy code is a P2
-// deliverable, not an accepted restriction).
-enum class Dist : int { bimax = 0, losscone = 1, prodkappa = 2, conecut = 3 };
+// Distribution tags — renamed 2026-08-19 (review): the loader implements
+// dist=1 as BI-KAPPA (shared χ² speed factor) and always has; the old
+// enum labelled 1 "losscone", a naming landmine. Only bimax/bikappa are
+// implemented; anything else is refused by the deck gate until its
+// analytic ∂lnf₀ lands.
+enum class Dist : int { bimax = 0, bikappa = 1, losscone = 2, prodkappa = 3 };
 
 // Host-side description of one kinetic species (deck [species <name>]).
 struct SpeciesCfg {

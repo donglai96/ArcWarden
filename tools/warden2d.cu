@@ -232,9 +232,11 @@ int main(int argc, char** argv) {
             const double el = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - t0).count();
             const double per = el / double(n + 1 - n_start);
-            std::printf("  step %8ld/%ld  t=%9.1f  W_EM %.3e  wd %.2e  runaway %llu  "
-                        "%.2f ms/step  ETA %.0f min\n",
-                        n + 1, d.nsteps, S.time, W[0], S.wd_rms(0),
+            float wmx = 0;
+            const double wrms = S.wd_rms(0, &wmx);
+            std::printf("  step %8ld/%ld  t=%9.1f  W_EM %.3e  wd %.2e  "
+                        "wdmax %.2e  runaway %llu  %.2f ms/step  ETA %.0f min\n",
+                        n + 1, d.nsteps, S.time, W[0], wrms, wmx,
                         S.runaway_count(), 1e3 * per,
                         per * (d.nsteps - n) / 60);
         }

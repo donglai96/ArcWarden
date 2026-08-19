@@ -44,7 +44,8 @@ struct Sim2D {
     bool sorted_once = false;
     double time = 0;
     long nstep = 0;
-    arc::DeviceArray<double> acc;      // small reduction scratch
+    arc::DeviceArray<double> acc;
+    arc::DeviceArray<unsigned int> wdmax_dev;      // small reduction scratch
 
 #ifdef __CUDACC__
     void build(const Deck2D& d) {
@@ -65,6 +66,7 @@ struct Sim2D {
         }();
         if (size_t(d.nx) * d.nz < 1u << 20 && ppc_tot > 256) F.allocate_replicas(16);
         acc = arc::DeviceArray<double>(4);
+        wdmax_dev = arc::DeviceArray<unsigned int>(1);
         runaway = arc::DeviceArray<unsigned long long>(3);  // [0] ucap clamps,
         runaway.zero();               // [1] dropped deposits, [2] load exhausts
 
@@ -224,6 +226,16 @@ struct Sim2D {
         CUDA_CHECK(cudaMemcpy(rr, runaway.data(), 16, cudaMemcpyDeviceToHost));
         double W[2];
         F.energies(W);
+        // delta-f representation gate (review 2026-08-19): |wd|max beyond
+        // ~1 means delta-f/f0 O(1) somewhere — the linearised-weight
+        // representation is out of its validity region; die loudly with a
+        // resumable state rather than produce quietly wrong physics
+        for (size_t i = 0; i < sp.size(); ++i)
+            if (sp[i].C.deltaf) {
+                float wmx = 0;
+                wd_rms(int(i), &wmx);
+                if (wmx > 0.9f) return false;
+            }
         return bad == 0.0 && rr[1] == 0 && std::isfinite(W[0]) &&
                std::isfinite(W[1]);
     }
@@ -234,14 +246,23 @@ struct Sim2D {
         return h;
     }
 
-    double wd_rms(int is) {
+    double wd_rms(int is, float* wd_max = nullptr) {
         acc.zero();
+        wdmax_dev.zero();
         MarkerViews mv = sp[is].mk->views();
         k2d::k_wd_stats<<<int((sp[is].mk->n + 255) / 256), 256>>>(
-            mv, acc.data(), sp[is].mk->n);
+            mv, acc.data(), wdmax_dev.data(), sp[is].mk->n);
         double h;
         CUDA_CHECK(cudaMemcpy(&h, acc.data(), sizeof(double),
                               cudaMemcpyDeviceToHost));
+        if (wd_max) {
+            unsigned int u;
+            CUDA_CHECK(cudaMemcpy(&u, wdmax_dev.data(), 4,
+                                  cudaMemcpyDeviceToHost));
+            float f;
+            std::memcpy(&f, &u, 4);   // monotone encoding: uint max = float max
+            *wd_max = f;
+        }
         return std::sqrt(h / double(sp[is].mk->n));
     }
 #endif
