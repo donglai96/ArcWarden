@@ -552,6 +552,7 @@ static __global__ void k_wd_stats(MarkerViews p, double* acc,
     const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
     if (m >= n) return;
     atomicAdd(&acc[0], double(p.wd[m]) * p.wd[m]);
+    if (fabsf(p.wd[m]) > 3.f) atomicAdd(&acc[1], 1.0);
     if (wmax) atomicMax(wmax, __float_as_uint(fabsf(p.wd[m])));
 }
 

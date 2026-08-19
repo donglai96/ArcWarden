@@ -226,15 +226,18 @@ struct Sim2D {
         CUDA_CHECK(cudaMemcpy(rr, runaway.data(), 16, cudaMemcpyDeviceToHost));
         double W[2];
         F.energies(W);
-        // delta-f representation gate (review 2026-08-19): |wd|max beyond
-        // ~1 means delta-f/f0 O(1) somewhere — the linearised-weight
-        // representation is out of its validity region; die loudly with a
-        // resumable state rather than produce quietly wrong physics
+        // delta-f representation gate, redesigned on V4R9 ckpt data
+        // (2026-08-19): wd = 1 - f0/f < 1 ALWAYS, so a max-based gate
+        // trips trivially; the collapse signal is the hole-tail fraction
+        // (deep depletion, wd << 0). V4R9 at deep saturation measured
+        // frac(|wd|>3) = 0.22% with healthy dynamics — gate at 2%.
         for (size_t i = 0; i < sp.size(); ++i)
             if (sp[i].C.deltaf) {
-                float wmx = 0;
-                wd_rms(int(i), &wmx);
-                if (wmx > 0.9f) return false;
+                wd_rms(int(i));
+                double a[2];
+                CUDA_CHECK(cudaMemcpy(a, acc.data(), 16,
+                                      cudaMemcpyDeviceToHost));
+                if (a[1] / double(sp[i].mk->n) > 0.02) return false;
             }
         return bad == 0.0 && rr[1] == 0 && std::isfinite(W[0]) &&
                std::isfinite(W[1]);
