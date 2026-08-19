@@ -36,9 +36,11 @@ struct Sim2D {
     };
     std::vector<Sp> sp;
     Diag2D diag;
+    Diag2D diag2;                      // optional off-L0 probe line
     Sorter2D sorter;
     arc::DeviceArray<unsigned long long> runaway;   // ucap clamp counter
     bool diag_on = false;
+    bool diag2_on = false;
     long sort_every = 25;              // 0 = off (markers drift ~0.06 cells/step)
     int deposit_tiled = 1;             // shared-window deposit (needs sort)
     bool sorted_once = false;
@@ -141,12 +143,17 @@ struct Sim2D {
             diag.build_line(d.bg, d.bg.L0, d.lam_w * 180 / M_PI, 1.0,
                             int(sp.size()));
             diag_on = true;
+            if (d.probe_L2 > 0) {
+                diag2.build_line(d.bg, d.probe_L2, d.lam_w * 180 / M_PI, 1.0, 0);
+                diag2_on = true;
+            }
         }
     }
 
     // diagnostics passes (cadences owned by the runner)
     void diag_line() {
         if (diag_on) diag.sample_line(F.views(), float(F.x0), float(F.z0));
+        if (diag2_on) diag2.sample_line(F.views(), float(F.x0), float(F.z0));
     }
     void diag_fv() {
         if (!diag_on) return;

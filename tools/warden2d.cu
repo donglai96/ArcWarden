@@ -134,7 +134,9 @@ int main(int argc, char** argv) {
 
     // meta: probe stations with LOCAL Omega_e (dual-normalization contract)
     FILE* probes = nullptr;
+    FILE* probes2 = nullptr;
     std::vector<float> pline(size_t(6) * std::max(S.diag.ns, 1));
+    std::vector<float> pline2(size_t(6) * std::max(S.diag2.ns, 1));
     const long probe_every = d.probe_every,
                sline_every = std::max(1L, d.snap_every / 4),
                fv_every = d.fv_every;
@@ -163,8 +165,19 @@ int main(int argc, char** argv) {
                            "ledger layout [%d][%d][2] every %ld\n",
                      DIAG_NREG, S.diag.npar, S.diag.nperp, S.diag.vmax,
                      S.diag.uqmax, DIAG_NREG, S.diag.nvb, 8L);
+        if (S.diag2_on) {
+            std::fprintf(meta, "probe2_L %.1f ns2 %d\nprobes2 (lam_deg, wce_local):\n",
+                         d.probe_L2, S.diag2.ns);
+            for (size_t i = 0; i < S.diag2.probe_idx.size(); ++i)
+                std::fprintf(meta, "  L2 %6.1f  %.5f\n",
+                             S.diag2.lam_line[S.diag2.probe_idx[i]],
+                             S.diag2.probe_wce[i]);
+        }
         std::fclose(meta);
         probes = std::fopen((outdir + "/probes.bin").c_str(), resume ? "ab" : "wb");
+        if (S.diag2_on)
+            probes2 = std::fopen((outdir + "/probes2.bin").c_str(),
+                                 resume ? "ab" : "wb");
     }
 
     const long n_start = S.nstep;
@@ -187,6 +200,16 @@ int main(int argc, char** argv) {
                     for (int pidx : S.diag.probe_idx)
                         std::fwrite(&pline[size_t(c) * S.diag.ns + pidx], 4, 1,
                                     probes);
+                if (probes2) {
+                    CUDA_CHECK(cudaMemcpy(pline2.data(),
+                                          S.diag2.line_out.data(),
+                                          size_t(6) * S.diag2.ns * 4,
+                                          cudaMemcpyDeviceToHost));
+                    for (int c = 0; c < 6; ++c)
+                        for (int pidx : S.diag2.probe_idx)
+                            std::fwrite(&pline2[size_t(c) * S.diag2.ns + pidx],
+                                        4, 1, probes2);
+                }
             }
             if (d.snap_every > 0 && n % sline_every == sline_every - 1) {
                 char pth[512];
@@ -244,6 +267,7 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaDeviceSynchronize());
     std::fclose(ecsv);
     if (probes) std::fclose(probes);
+    if (probes2) std::fclose(probes2);
     snapshot(S.F, outdir, d.nsteps);
     std::printf("done: %ld steps, outputs in %s/\n", d.nsteps, outdir.c_str());
     return 0;

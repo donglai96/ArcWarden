@@ -74,6 +74,9 @@ struct Deck2D {
     long   probe_every = 4;                // probe-station sample cadence
     long   fv_every = 20000;               // f(v) + ledger dump cadence
     int    dens_init = 1;                  // dump per-species density at t=0
+    double probe_L2 = 0;                   // second probe line at this L (0=off;
+                                           // V4R8 lesson: modes can select
+                                           // off-L0 columns)
     // [species]
     std::vector<SpeciesCfg> species;
 
@@ -163,7 +166,7 @@ inline Deck2D load_deck2d(const std::string& path) {
             {"boundary", {"absorber_cells", "runway_lam_deg"}},
             {"diag", {"target_band_max", "target_wna_deg", "target_lam_deg",
                       "snap_every", "energy_every", "probe_every", "fv_every",
-                      "dens_init"}},
+                      "dens_init", "probe_L2"}},
         };
         const std::vector<std::string> sp_keys = {
             "deltaf", "rel", "dist", "n0", "uthpar", "uthperp", "kappa",
@@ -224,6 +227,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.probe_every = long(getd(m, "diag", "probe_every", 4));
     d.fv_every = long(getd(m, "diag", "fv_every", 20000));
     d.dens_init = int(getd(m, "diag", "dens_init", 1));
+    d.probe_L2 = getd(m, "diag", "probe_L2", 0.0);
 
     for (const auto& [sec, kv] : m) {
         if (sec.rfind("species", 0) != 0) continue;
