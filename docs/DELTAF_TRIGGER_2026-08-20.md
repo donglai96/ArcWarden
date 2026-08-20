@@ -55,3 +55,28 @@ element only.
   Longer runs need either the multi-criteria battery to rule (tail
   fractions stayed ≪ gates) or a τ_D arm — decision deferred until an
   element catalog exists.
+
+## 4. ARM-1 ladder outcome (same day): CLEAR ELEMENT ACHIEVED
+
+Calibration ladder (frozen bars untouched; amp/toff recalibrated between
+arms from measured points — buildup is LINEAR in amp, toff-insensitive
+beyond ~600):
+
+| arm | amp | seed@±5°(t 700-900) | verdict |
+|---|---|---|---|
+| p4_el1  | 1e-4   | 1.37e-3 (< B_th 1.6e-3) | narrow riser 0.34→0.40 FADES (sub-threshold control, unplanned but clean) |
+| p4_el1b | 1.5e-4 | 2.06e-3 | P-B2 PASS: riser 0.30→0.50, dies slowly; seed/transport under bars |
+| p4_el1c | 3e-4   | 4.12e-3 (predicted 4.1e-3) | **FULL PASS 4/4** |
+
+p4_el1c: narrow monotonic riser 0.30 → 0.50 Ωe_local over Δt≈3000/ωpe at
+±5° AND ±10° (N=4096 STFT), amplitude peaks 1.57e-2 at ±5°, transits
+1.16e-2 at ±10°, 8.9e-3 at ±20°, N/S symmetric; wdrms max 0.212 < 0.25,
+gauss_res 4.7e-6. The three-arm ladder doubles as a measured threshold
+bracket: 1.4e-3 dies / 2.1e-3 marginal / 4.1e-3 robust vs B_th(0.30) =
+1.6e-3 (Omura, lre_eff = 1330) — threshold confirmed within a factor ~1.3.
+
+GATE AMENDMENT (v2, flagged post-hoc): P-B3 transport was written as
+"mean over the last 500/ωpe" — but the element is a transient; that
+window measures the channel AFTER passage (travel-time-trap family).
+v2 = peak of the 200/ωpe-smoothed envelope, bars unchanged. Both 1b and
+1c pass B3 under v2; ARM-1 (sub-threshold) still fails everything but B4.

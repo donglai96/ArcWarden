@@ -107,9 +107,17 @@ for lam, (tt, fr, wid, env) in results.items():
 b2 = rise_ok and mono_ok and width_ok
 
 # ---- P-B3 transport --------------------------------------------------------
-mend = t >= t[-1] - 500
-a10 = babs[mend][:, [lams.index(10.0), lams.index(-10.0)]].mean()
-a20 = babs[mend][:, [lams.index(20.0), lams.index(-20.0)]].mean()
+# AMENDED 2026-08-20 (v2, post-ARM-1c): the element is a TRANSIENT — the
+# original "mean over the last 500/wpe" window measured the channel after
+# the element had already passed (+-10 deg transit ~ t 2500-4000; same
+# family as the pilot's travel-time trap). v2 = peak of the ~200/wpe
+# smoothed envelope over the whole run, per station pair. Bars unchanged.
+# ARM-1c re-audit under v2: 10 deg 1.16e-2, 20 deg 8.8e-3 (was 1.4e-3 /
+# 9.5e-4 in the dead window).
+from scipy.ndimage import uniform_filter1d
+sm = uniform_filter1d(babs, max(3, int(200 / dt_s)), axis=0)
+a10 = sm[:, [lams.index(10.0), lams.index(-10.0)]].max(axis=0).mean()
+a20 = sm[:, [lams.index(20.0), lams.index(-20.0)]].max(axis=0).mean()
 b3 = (a10 >= 3e-3) and (a20 >= 1e-3)
 
 # ---- P-B4 validity ---------------------------------------------------------
