@@ -80,3 +80,31 @@ GATE AMENDMENT (v2, flagged post-hoc): P-B3 transport was written as
 window measures the channel AFTER passage (travel-time-trap family).
 v2 = peak of the 200/ωpe-smoothed envelope, bars unchanged. Both 1b and
 1c pass B3 under v2; ARM-1 (sub-threshold) still fails everything but B4.
+
+## 5. ARM-2 train verdict: single elements robust, trains are FUEL-LIMITED
+
+p4_train (3 pulses, tper 2100): P-C1 FAIL — pulse 0 = clean riser
+(rise 0.15, Spearman 0.96, ARM-1c-like); pulses 1–2 show spread but NO
+monotonic sweep (ρ ≈ 0): the second and third triggers fire into a box
+whose birth-band resonant fuel the first element consumed, on top of
+2.2–2.9e-2 of accumulated wave clutter — no refill mechanism exists in
+the closed box (bounce period >> run). P-C2 PASS emphatically (inter-
+element separation 183x / 557x). P-C3 = the pre-registered BOUNDARY
+outcome: wdrms hit 0.25 at t ≈ 6000 → healthy() emergency checkpoint +
+abort at step 40000, exactly as designed (ckpt.bin resumable).
+
+Physics reading (consistent with the 1D gamma-race/refresh framework):
+repeated DISCRETE elements need source refresh (bath/refill or natural
+bounce refill at realistic T_b). In this compressed closed box, ONE clean
+element per fill is the physical budget. Options if a train is ever
+needed: refresh2d port (big), longer tper ≥ mixing time, or accept
+single-element runs with loader-seed ensembles.
+
+## 6. Goal status: ACHIEVED — money figure
+
+docs/figs/deltaf_element_2026-08-20.png (from p4_el1c): STFT at +5°/+10°,
+envelope birth→transit ordering vs B_th/B_opt lines, monotonic ridge
+track 0.30 → 0.50 Ωe_local. The δf 2D instrument produces a clear,
+threshold-calibrated, Gauss-cleaned, representation-valid chirping
+element, reproducibly (three amplitudes, deterministic morphology
+ordering: sub-threshold narrow-fading / marginal narrow-slow / robust).
