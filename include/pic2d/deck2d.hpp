@@ -62,6 +62,7 @@ struct Deck2D {
     double nc = 1.0;
     int    cold_nonlinear = 0;
     double cspeed = 1.0;                   // c in code units (mirror2d-family convention)
+    int    jfilter = 3;                    // binomial passes (0 = raw current)
     // [boundary]
     int    absorber_cells = 240;
     double runway_lam = 45.0 * M_PI / 180.0;
@@ -176,7 +177,7 @@ inline Deck2D load_deck2d(const std::string& path) {
             {"background", {"profile", "B0eq", "L0", "a", "theta_deg",
                             "prebalance"}},
             {"time", {"dt", "nsteps"}},
-            {"cold", {"nc", "nonlinear", "c"}},
+            {"cold", {"nc", "nonlinear", "c", "jfilter"}},
             {"boundary", {"absorber_cells", "runway_lam_deg"}},
             {"antenna", {"amp", "w0", "L0", "sigma_L", "sigma_z", "trmp",
                          "toff"}},
@@ -186,8 +187,8 @@ inline Deck2D load_deck2d(const std::string& path) {
         };
         const std::vector<std::string> sp_keys = {
             "deltaf", "rel", "dist", "n0", "uthpar", "uthperp", "kappa",
-            "lc_rho", "taud", "wdnoise", "wdrms_max", "shell_L0", "shell_dL",
-            "edge_dL", "ppc"};
+            "lc_rho", "taud", "wdnoise", "wdrms_max", "wdfreeze", "shell_L0",
+            "shell_dL", "edge_dL", "ppc"};
         for (const auto& [sec, kv] : m) {
             const bool is_sp = sec.rfind("species", 0) == 0;
             const auto* keys = is_sp ? &sp_keys
@@ -234,6 +235,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.nc = getd(m, "cold", "nc", 1.0);
     d.cold_nonlinear = int(getd(m, "cold", "nonlinear", 0));
     d.cspeed = getd(m, "cold", "c", 1.0);
+    d.jfilter = int(getd(m, "cold", "jfilter", 3));
     d.ant_amp = getd(m, "antenna", "amp", 0.0);
     d.ant_w0 = getd(m, "antenna", "w0", 0.05);
     d.ant_L0 = getd(m, "antenna", "L0", 0.0);
@@ -270,6 +272,7 @@ inline Deck2D load_deck2d(const std::string& path) {
         s.taud     = getd(m, sec, "taud", 0.0);
         s.wdnoise  = getd(m, sec, "wdnoise", 1e-3);
         s.wdrms_max = getd(m, sec, "wdrms_max", 0.0);
+        s.wdfreeze = int(getd(m, sec, "wdfreeze", 0));  // diagnostic: freeze wd
         s.shell_L0 = getd(m, sec, "shell_L0", d.bg.L0);
         s.shell_dL = getd(m, sec, "shell_dL", 40.0);
         s.edge_dL  = getd(m, sec, "edge_dL", 8.0);

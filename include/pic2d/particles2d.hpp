@@ -55,6 +55,7 @@ struct SpeciesCfg {
     double lc_rho   = 0.0;     // losscone depth parameter
     double taud     = 0.0;     // δf weight relaxation; DEFAULT 0 (H1/H2 arm knob)
     double wdrms_max = 0.0;
+    int    wdfreeze = 0;
     double wdnoise  = 1e-3;    // δf ignition knob (SCALES_REALISM)
     // shell-compact support in L (flat top + Gaussian edges of width edge_dL):
     double shell_L0 = 1330.5;

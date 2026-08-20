@@ -89,6 +89,7 @@ struct Sim2D {
         F.dx = d.dx; F.dz = d.dz; F.dt = d.dt;
         F.cspeed = d.cspeed; F.nc = d.nc;
         F.x0 = d.x0; F.z0 = d.z0;
+        F.jfilter = d.jfilter;
         F.bg = d.bg;
         if (d.active_Lmax > d.active_Lmin && d.active_Lmin > 0)
             F.build_tiles(d.active_Lmin, d.active_Lmax);  // BEFORE allocate
@@ -125,6 +126,7 @@ struct Sim2D {
             C.edge = float(q.edge_dL);
             C.wdnoise = float(q.wdnoise);
             C.wdrms_max = float(q.wdrms_max);
+            C.wdfreeze = q.wdfreeze;
             // walls at the high-|λ| line ends only (P2 ruling): inner-x and
             // ±z at the mask interior edge; NO outer-radial wall
             const double nd = d.absorber_cells;
