@@ -10,6 +10,10 @@
 //       dense nx·nz or pool nslots·256; must match the rebuilt deck)
 //   12 × field arrays [field_cells] f32 (ex..bz, jx..jz, vcx..vcz)
 //   per species: char[32] name, u64 n, 7 × [n] f32 (x,z,ux,uy,uz,w,wd)
+//   optional trailer (2026-08-20, Gauss closure): char[4] "RHOC" +
+//       [field_cells] f32 accumulated cold charge — written only when the
+//       run has gauss_clean_every != 0; absence on load is tolerated with
+//       a warning (the cold-charge ledger restarts from zero).
 // Written to <path>.tmp then atomically renamed (legacy convention: a
 // killed job never leaves a torn checkpoint). Device↔host streamed in
 // 64 MB chunks.
@@ -88,6 +92,10 @@ inline void save_checkpoint(Sim2D& S, const std::string& path) {
                         &s.mk->w, &s.mk->wd})
             ckpt::stream_out(f, a->data(), n);
     }
+    if (S.gauss_every != 0 && S.rho_c.size()) {
+        std::fwrite("RHOC", 1, 4, f);
+        ckpt::stream_out(f, S.rho_c.data(), nc);
+    }
     std::fclose(f);
     if (std::rename(tmp.c_str(), path.c_str()) != 0)
         throw std::runtime_error("ckpt: rename failed");
@@ -132,6 +140,18 @@ inline void load_checkpoint(Sim2D& S, const std::string& path) {
         for (auto* a : {&s.mk->x, &s.mk->z, &s.mk->ux, &s.mk->uy, &s.mk->uz,
                         &s.mk->w, &s.mk->wd})
             ckpt::stream_in(f, a->data(), n);
+    }
+    char tag[4];
+    if (std::fread(tag, 1, 4, f) == 4 && std::memcmp(tag, "RHOC", 4) == 0) {
+        if (S.rho_c.size())
+            ckpt::stream_in(f, S.rho_c.data(), nc);
+        else  // deck runs with gauss off: skip the ledger
+            std::fseek(f, long(nc) * 4, SEEK_CUR);
+    } else if (S.rho_c.size()) {
+        std::fprintf(stderr,
+                     "ckpt: no RHOC block in %s — cold-charge ledger "
+                     "restarts from zero (residual monitor will re-settle)\n",
+                     path.c_str());
     }
     std::fclose(f);
     std::printf("resumed from %s at step %ld (t = %.1f), written by git %.12s\n",

@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
     FILE* ecsv = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
     if (!ecsv) { std::fprintf(stderr, "warden2d: cannot open energy.csv\n"); return 4; }
     if (!resume) {
-        std::fprintf(ecsv, "t,W_EM,W_cold,W_ant");
+        std::fprintf(ecsv, "t,W_EM,W_cold,W_ant,gauss_res");
         for (auto& s : S.sp) std::fprintf(ecsv, ",wdrms_%s", s.name.c_str());
         std::fprintf(ecsv, "\n");
     }
@@ -260,8 +260,8 @@ int main(int argc, char** argv) {
         if (n % d.energy_every == d.energy_every - 1) {
             double W[2];
             S.F.energies(W);
-            std::fprintf(ecsv, "%.3f,%.6e,%.6e,%.6e", S.time, W[0], W[1],
-                         S.w_ant());
+            std::fprintf(ecsv, "%.3f,%.6e,%.6e,%.6e,%.6e", S.time, W[0], W[1],
+                         S.w_ant(), S.gauss_res_last);
             for (size_t i = 0; i < S.sp.size(); ++i)
                 std::fprintf(ecsv, ",%.6e", S.wd_rms(int(i)));
             std::fprintf(ecsv, "\n");

@@ -31,3 +31,32 @@ current correction / Gauss cleaning (WarpX-style) BEFORE E_par physics
 claims. P2-real remains pilot-only. Next: driven large-dwd live/frozen
 comparison + production divE-rho monitor + ppc(25/40/50 x3 seeds)/jfilter
 (1/2/3) scans per audit-3 plan.
+
+## GAUSS CLOSURE LANDED + GATED (2026-08-20 day-2)
+The mandated correction is implemented as production Marder-Langdon
+cleaning (deck `[diag] gauss_clean_every`, <0 = monitor-only):
+- cold-charge ledger rho_c integrated every step from the SAME face
+  stencil as k_cold_current; mask-damped alongside E/Vc (an undamped
+  rho_c in the absorber frame reads as fake residual); checkpointed
+  ("RHOC" trailer, absence tolerated with warning).
+- hot delta-f charge via k_rho_node, binomial-filtered with the SAME
+  passes as filter_j before the residual — divE pairs with the FILTERED
+  deposit (continuity_probe lesson); raw-rho pairing overstated the
+  residual ~11x (shot-noise mismatch, not real charge error).
+- one Marder pass at half the explicit-diffusion stability bound,
+  D = 0.25/(1/dx^2+1/dz^2) (Nyquist error exactly annihilated). First
+  cut used D = 0.25 dx^2/dt = 13x the bound at dt 0.15 and NaN'd in two
+  energy rows (gz_clean v1) — kept as the cautionary number.
+- residual scalar = interior-only rms(divE - rho_c - rho_h), logged as
+  `gauss_res` in energy.csv; guard: refuses full-f species (equilibrium
+  charge untracked).
+
+GATE (scripts/gauss_gate.py, decks/gauss_{mon,clean}.ini, 8000 steps
+driven delta-f at L0=1086 with antenna ON to t=1200, wdrms -> 8e-2):
+  G1 stability PASS; G2 end-residual ratio clean/mon = 0.47 PASS;
+  G3 W_EM + all 14 probe |B| envelopes ratio 1.000 PASS;
+  G4 wdrms ratio 1.000 PASS.
+Monitor arm: residual 2.8e-6 at t=1200, tracks wave amplitude (not
+secular) — the accumulated Gauss error of the live-weight deposit is
+bounded and now actively cleaned. Production delta-f decks run with
+gauss_clean_every = 20.

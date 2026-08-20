@@ -51,6 +51,10 @@ struct Sim2D {
     double time = 0;
     long nstep = 0;
     AntCfg ant{0, 0.05f, 0, 6, 8, 200, 0, 0};   // amp = 0: antenna off
+    arc::DeviceArray<float> rho_c, rho_h, gres;  // Gauss closure fields
+    arc::DeviceArray<double> gnorm;
+    long gauss_every = 0;
+    double gauss_res_last = 0;
     arc::DeviceArray<float> ant_H;     // H(z) table on z nodes
     arc::DeviceArray<double> ant_wacc; // cumulative W_ant
     arc::DeviceArray<double> acc;
@@ -102,6 +106,13 @@ struct Sim2D {
             return s;
         }();
         if (size_t(d.nx) * d.nz < 1u << 20 && ppc_tot > 256) F.allocate_replicas(16);
+        gauss_every = d.gauss_clean_every;
+        if (gauss_every != 0) {
+            rho_c = arc::DeviceArray<float>(F.field_cells); rho_c.zero();
+            rho_h = arc::DeviceArray<float>(F.field_cells);
+            gres = arc::DeviceArray<float>(F.field_cells);
+            gnorm = arc::DeviceArray<double>(2);   // [0] sum g^2, [1] cells
+        }
         acc = arc::DeviceArray<double>(4);
         wdmax_dev = arc::DeviceArray<unsigned int>(1);
         runaway = arc::DeviceArray<unsigned long long>(3);  // [0] ucap clamps,
@@ -159,11 +170,20 @@ struct Sim2D {
             MarkerViews mv = s.mk->views();
             k2d::k_load<<<int((N + 255) / 256), 256>>>(mv, C, d.bg, bx0, bx1,
                                                        bz0, bz1, wmark,
-                                                       20260817u + uint32_t(sp.size()),
+                                                       d.seed + uint32_t(sp.size()),
                                                        N, runaway.data() + 2);
             CUDA_CHECK(cudaDeviceSynchronize());
             sp.push_back(std::move(s));
         }
+        if (gauss_every != 0)
+            for (auto& s : sp)
+                if (!s.C.deltaf)
+                    throw std::runtime_error(
+                        "gauss_clean_every requires all-delta-f species: a "
+                        "full-f k_rho_node deposit carries the equilibrium "
+                        "charge with no neutralizing background tracked, so "
+                        "the residual (and the cleaner) would be wrong by "
+                        "O(n0)");
         {   // loader-exhaust report (fallback markers sit at the shell centre)
             unsigned long long rr[3];
             CUDA_CHECK(cudaMemcpy(rr, runaway.data(), 24, cudaMemcpyDeviceToHost));
@@ -180,6 +200,7 @@ struct Sim2D {
             // fv/ledger velocity ranges from the deck (O4 fix 2026-08-19:
             // the 0.35/0.5 defaults clip Lu-class u_perp — rms 0.49 —
             // and silently bias any A_eff read from the histograms)
+            diag.npar = d.fv_npar; diag.nperp = d.fv_nperp;
             diag.vmax = float(d.fv_vmax);
             diag.uqmax = float(d.fv_uqmax);
             diag.build_line(d.bg, d.bg.L0, d.lam_w * 180 / M_PI, 1.0,
@@ -245,6 +266,8 @@ struct Sim2D {
         F.filter_j();
         if (F.nc > 0.0) {
             f2d::k_cold_step<<<nb, tb>>>(v, r, F.bg, float(F.x0), float(F.z0));
+            if (gauss_every != 0)   // monitor mode needs the ledger too
+                f2d::k_cold_rho<<<nb, tb>>>(v, r, rho_c.data());
             f2d::k_cold_current<<<nb, tb>>>(v, r);
         }
         if (ant.amp != 0.f)
@@ -258,6 +281,30 @@ struct Sim2D {
         if (F.masks_on) {
             f2d::k_mask_e<<<nb, tb>>>(v, r);
             f2d::k_mask_b<<<nb, tb>>>(v, r);
+            if (gauss_every != 0)
+                f2d::k_mask_rho<<<nb, tb>>>(v, r, rho_c.data());
+        }
+        if (gauss_every != 0 && (nstep + 1) % std::labs(gauss_every) == 0) {
+            rho_h.zero(); gnorm.zero();
+            for (auto& sq : sp) {
+                MarkerViews mv = sq.mk->views();
+                k2d::k_rho_node<<<int((sq.mk->n + 255) / 256), 256>>>(
+                    mv, v, float(F.x0), float(F.z0),
+                    sq.C.qm > 0 ? 1.f : -1.f, rho_h.data(), sq.mk->n);
+            }
+            F.filter_scalar(rho_h);   // pair filtered rho with filtered J
+            f2d::k_gauss_res<<<nb, tb>>>(v, r, rho_c.data(), rho_h.data(),
+                                         gres.data(), gnorm.data());
+            if (gauss_every > 0) {   // negative cadence = monitor only
+                // one explicit Marder pass at half the stability bound
+                // (Nyquist-null); see the derivation at k_gauss_res
+                const float diff =
+                    0.25f / float(1.0 / (F.dx * F.dx) + 1.0 / (F.dz * F.dz));
+                f2d::k_marder<<<nb, tb>>>(v, r, gres.data(), diff);
+            }
+            double g2[2];
+            CUDA_CHECK(cudaMemcpy(g2, gnorm.data(), 16, cudaMemcpyDeviceToHost));
+            gauss_res_last = std::sqrt(g2[0] / std::max(1.0, g2[1]));
         }
         time += F.dt;
         ++nstep;

@@ -58,6 +58,7 @@ struct Deck2D {
     // [time]
     double dt = 0.05;
     long   nsteps = 0;
+    uint32_t seed = 20260817;              // loader RNG (ensembles: vary here)
     // [cold]
     double nc = 1.0;
     int    cold_nonlinear = 0;
@@ -76,6 +77,10 @@ struct Deck2D {
     long   energy_every = 1000;
     long   probe_every = 4;                // probe-station sample cadence
     long   fv_every = 20000;               // f(v) + ledger dump cadence
+    int    fv_npar = 96, fv_nperp = 48;    // fv bins (plateau needs >=4 bins!)
+    long   gauss_clean_every = 0;          // Marder divE-rho cleaning cadence
+                                           // (<0: monitor-only at |cadence|;
+                                           //  requires all-delta-f species)
     double fv_vmax = 0.35, fv_uqmax = 0.5; // fv/ledger velocity ranges — MUST
                                            // cover ~3.5x uth of the hottest
                                            // species (O4: defaults clip Lu f0)
@@ -176,14 +181,15 @@ inline Deck2D load_deck2d(const std::string& path) {
                         "active_Lmax", "x_min"}},
             {"background", {"profile", "B0eq", "L0", "a", "theta_deg",
                             "prebalance"}},
-            {"time", {"dt", "nsteps"}},
+            {"time", {"dt", "nsteps", "seed"}},
             {"cold", {"nc", "nonlinear", "c", "jfilter"}},
             {"boundary", {"absorber_cells", "runway_lam_deg"}},
             {"antenna", {"amp", "w0", "L0", "sigma_L", "sigma_z", "trmp",
                          "toff"}},
             {"diag", {"target_band_max", "target_wna_deg", "target_lam_deg",
                       "snap_every", "energy_every", "probe_every", "fv_every",
-                      "dens_init", "probe_L2", "fv_vmax", "fv_uqmax"}},
+                      "dens_init", "probe_L2", "fv_vmax", "fv_uqmax", "fv_npar",
+                      "fv_nperp", "gauss_clean_every"}},
         };
         const std::vector<std::string> sp_keys = {
             "deltaf", "rel", "dist", "n0", "uthpar", "uthperp", "kappa",
@@ -232,6 +238,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.dz = getd(m, "domain", "dz", 0.35);
     d.dt = getd(m, "time", "dt", 0.05);
     d.nsteps = long(getd(m, "time", "nsteps", 0));
+    d.seed = uint32_t(getd(m, "time", "seed", 20260817));
     d.nc = getd(m, "cold", "nc", 1.0);
     d.cold_nonlinear = int(getd(m, "cold", "nonlinear", 0));
     d.cspeed = getd(m, "cold", "c", 1.0);
@@ -254,6 +261,9 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.fv_every = long(getd(m, "diag", "fv_every", 20000));
     d.fv_vmax = getd(m, "diag", "fv_vmax", 0.35);
     d.fv_uqmax = getd(m, "diag", "fv_uqmax", 0.5);
+    d.fv_npar = int(getd(m, "diag", "fv_npar", 96));
+    d.fv_nperp = int(getd(m, "diag", "fv_nperp", 48));
+    d.gauss_clean_every = long(getd(m, "diag", "gauss_clean_every", 0));
     d.dens_init = int(getd(m, "diag", "dens_init", 1));
     d.probe_L2 = getd(m, "diag", "probe_L2", 0.0);
 

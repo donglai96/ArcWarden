@@ -173,6 +173,82 @@ static __global__ void k_cold_current(FieldViews2D v, Range r) {
     v.jy[c] += q * v.vcy[c];
 }
 
+// ---- Gauss closure (audit-3, 2026-08-20) -----------------------------------
+// The linearized cold fluid carries real charge (div Jc != 0) that no field
+// tracks, and the delta-f deposit carries the variable-weight residual R_w
+// (measured 350x the frozen floor). Production closure:
+//   rho_c field integrated every step:  rho_c -= dt * div Jc   (same stencil
+//   as k_cold_current, evaluated from Vc BEFORE Jc merges into J);
+//   Marder-Langdon pass every gauss_clean_every steps:
+//   E += D * grad(divE - rho_hot - rho_c).
+// One explicit pass has amplification 1 - D k'^2 on the longitudinal error,
+// k'^2 <= 4/dx^2 + 4/dz^2, so stability needs D <= 0.5/(1/dx^2 + 1/dz^2);
+// production uses half that (Nyquist error exactly annihilated).  The
+// first cut used D = 0.25 dx^2/dt (= 13x the bound at dt 0.15) and blew
+// up in one pass — gz_clean 2026-08-20, kept as the cautionary number.
+// rho_hot must be binomial-filtered with the SAME passes as filter_j:
+// divE pairs with the FILTERED deposit (continuity_probe lesson), so a
+// raw-rho target would drive the cleaner against grid-scale shot noise.
+// k_cold_rho must run BEFORE k_cold_current in the step (reads final Vc).
+static __global__ void k_cold_rho(FieldViews2D v, Range r, float* rhoc) {
+    const int i = r.i0 + blockIdx.x * blockDim.x + threadIdx.x;
+    const int k = r.k0 + blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= r.i1 || k >= r.k1) return;
+    if (tile_off(v)) return;
+    const int c = v.idx(i, k);
+    if (c < 0) return;
+    const float q = -v.nc;
+    const float jxr_ = q * 0.5f * (v.ld(v.vcx, i, k) + v.ld(v.vcx, i + 1, k));
+    const float jxl_ = q * 0.5f * (v.ld(v.vcx, i - 1, k) + v.ld(v.vcx, i, k));
+    const float jzu_ = q * 0.5f * (v.ld(v.vcz, i, k) + v.ld(v.vcz, i, k + 1));
+    const float jzd_ = q * 0.5f * (v.ld(v.vcz, i, k - 1) + v.ld(v.vcz, i, k));
+    rhoc[c] -= v.dt * ((jxr_ - jxl_) / v.dx + (jzu_ - jzd_) / v.dz);
+}
+
+// Marder pass: gr = divE - rho (node), then E += diff * grad(gr) at E sites.
+static __global__ void k_gauss_res(FieldViews2D v, Range r, const float* rhoc,
+                                   const float* rhoh, float* gr, double* nrm) {
+    const int i = r.i0 + blockIdx.x * blockDim.x + threadIdx.x;
+    const int k = r.k0 + blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= r.i1 || k >= r.k1) return;
+    if (tile_off(v)) return;
+    const int c = v.idx(i, k);
+    if (c < 0) return;
+    const float divE = (v.ld(v.ex, i, k) - v.ld(v.ex, i - 1, k)) / v.dx +
+                       (v.ld(v.ez, i, k) - v.ld(v.ez, i, k - 1)) / v.dz;
+    const float g = divE - (rhoc ? rhoc[c] : 0.f) - (rhoh ? rhoh[c] : 0.f);
+    gr[c] = g;
+    // the reported norm counts the physical interior only: inside the
+    // absorber frames E is mask-damped but hot rho is not, so the frame
+    // residual is by-construction and would swamp the health scalar.
+    // nrm[0] = sum g^2, nrm[1] = interior cell count.
+    if (nrm && v.maske[c] == 1.f) {
+        atomicAdd(&nrm[0], double(g) * g);
+        atomicAdd(&nrm[1], 1.0);
+    }
+}
+// tracked cold charge follows the mask-damped fields (k_mask_e damps E and
+// Vc; an undamped rho_c in the frame would read as fake Gauss residual and
+// make the cleaner rebuild E the mask just removed)
+static __global__ void k_mask_rho(FieldViews2D v, Range r, float* rho) {
+    if (tile_off(v)) return;
+    int i, k;
+    if (!in_range(r, i, k)) return;
+    const int c = v.idx(i, k);
+    rho[c] *= v.maske[c];
+}
+static __global__ void k_marder(FieldViews2D v, Range r, const float* gr,
+                                float diff) {
+    const int i = r.i0 + blockIdx.x * blockDim.x + threadIdx.x;
+    const int k = r.k0 + blockIdx.y * blockDim.y + threadIdx.y;
+    if (i >= r.i1 || k >= r.k1) return;
+    if (tile_off(v)) return;
+    const int c = v.idx(i, k);
+    if (c < 0) return;
+    v.ex[c] += diff * (v.ld(gr, i + 1, k) - gr[c]) / v.dx;
+    v.ez[c] += diff * (v.ld(gr, i, k + 1) - gr[c]) / v.dz;
+}
+
 // ---- Umeda masked damping (edge frame absorbers) ---------------------------
 
 static __global__ void k_mask_e(FieldViews2D v, Range r) {
@@ -498,6 +574,24 @@ struct Fields2D {
                 f2d::k_filter_x<<<nb, tb, 0, s>>>(a->data(), jtmp.data(), v, r);
                 f2d::k_filter_z<<<nb, tb, 0, s>>>(jtmp.data(), a->data(), v, r);
             }
+    }
+
+    // binomial-filter ONE scalar array in place with the same passes as
+    // filter_j (the Gauss residual pairs filtered rho with filtered J)
+    void filter_scalar(arc::DeviceArray<float>& a, cudaStream_t s = nullptr) {
+        FieldViews2D v = views();
+        const Range r = full();
+        const dim3 nb = f2d::blocks_for(r), tb(f2d::TX, f2d::TZ);
+        if (jfilter == 3) {
+            f2d::k_filter7<<<nb, tb, 0, s>>>(a.data(), jtmp.data(), v, r);
+            CUDA_CHECK(cudaMemcpyAsync(a.data(), jtmp.data(), field_cells * 4,
+                                       cudaMemcpyDeviceToDevice, s));
+            return;
+        }
+        for (int pass = 0; pass < jfilter; ++pass) {
+            f2d::k_filter_x<<<nb, tb, 0, s>>>(a.data(), jtmp.data(), v, r);
+            f2d::k_filter_z<<<nb, tb, 0, s>>>(jtmp.data(), a.data(), v, r);
+        }
     }
 
     // One field+fluid step (no kinetic species yet — P2 inserts the hot
