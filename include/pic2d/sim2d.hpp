@@ -16,6 +16,7 @@
 #define ARC_PIC2D_SIM2D_HPP
 
 #include "pic2d/deck2d.hpp"
+#include "pic2d/antenna2d.hpp"
 #include "pic2d/diag2d.hpp"
 #include "pic2d/fields2d.hpp"
 #include "pic2d/kinetic2d.hpp"
@@ -26,6 +27,9 @@
 #include <vector>
 
 namespace arc2d {
+
+
+
 
 struct Sim2D {
     Fields2D F;
@@ -46,11 +50,41 @@ struct Sim2D {
     bool sorted_once = false;
     double time = 0;
     long nstep = 0;
+    AntCfg ant{0, 0.05f, 0, 6, 8, 200, 0, 0};   // amp = 0: antenna off
+    arc::DeviceArray<float> ant_H;     // H(z) table on z nodes
+    arc::DeviceArray<double> ant_wacc; // cumulative W_ant
     arc::DeviceArray<double> acc;
     arc::DeviceArray<unsigned int> wdmax_dev;      // small reduction scratch
 
 #ifdef __CUDACC__
     void build(const Deck2D& d) {
+        {   // antenna v2: kpar from the cold parallel dispersion at w0,
+            // H(z) = cumulative int envz*cos(kpar z) dz on z nodes
+            const double w = d.ant_w0;
+            const double kpar = w / d.cspeed *
+                std::sqrt(1.0 + d.nc / (w * (d.bg.B0eq - w)));
+            ant = AntCfg{float(d.ant_amp), float(d.ant_w0),
+                         float(d.ant_L0 > 0 ? d.ant_L0 : d.bg.L0),
+                         float(d.ant_sigL), float(d.ant_sigz),
+                         float(d.ant_trmp), float(d.ant_toff), float(kpar)};
+            if (d.ant_amp != 0.0) {
+                std::vector<float> H(d.nz + 1);
+                double acc_ = 0;
+                for (int k = 0; k <= d.nz; ++k) {
+                    // midpoint sampling (audit: end-point prefix sums carry a
+                    // kpar*dz/2 ~ 0.07 rad carrier phase bias)
+                    const double zm = d.z0 + (k - 0.5) * d.dz;
+                    acc_ += std::exp(-zm * zm / (2.0 * d.ant_sigz * d.ant_sigz)) *
+                            std::cos(kpar * zm) * d.dz;
+                    H[k] = float(acc_);
+                }
+                ant_H = arc::DeviceArray<float>(H.size());
+                CUDA_CHECK(cudaMemcpy(ant_H.data(), H.data(), H.size() * 4,
+                                      cudaMemcpyHostToDevice));
+                ant_wacc = arc::DeviceArray<double>(1);
+                ant_wacc.zero();
+            }
+        }
         F.nx = d.nx; F.nz = d.nz;
         F.dx = d.dx; F.dz = d.dz; F.dt = d.dt;
         F.cspeed = d.cspeed; F.nc = d.nc;
@@ -90,6 +124,7 @@ struct Sim2D {
             C.dL = float(q.shell_dL);
             C.edge = float(q.edge_dL);
             C.wdnoise = float(q.wdnoise);
+            C.wdrms_max = float(q.wdrms_max);
             // walls at the high-|λ| line ends only (P2 ruling): inner-x and
             // ±z at the mask interior edge; NO outer-radial wall
             const double nd = d.absorber_cells;
@@ -140,6 +175,11 @@ struct Sim2D {
                             }()));
         }
         if (dipole) {
+            // fv/ledger velocity ranges from the deck (O4 fix 2026-08-19:
+            // the 0.35/0.5 defaults clip Lu-class u_perp — rms 0.49 —
+            // and silently bias any A_eff read from the histograms)
+            diag.vmax = float(d.fv_vmax);
+            diag.uqmax = float(d.fv_uqmax);
             diag.build_line(d.bg, d.bg.L0, d.lam_w * 180 / M_PI, 1.0,
                             int(sp.size()));
             diag_on = true;
@@ -205,6 +245,12 @@ struct Sim2D {
             f2d::k_cold_step<<<nb, tb>>>(v, r, F.bg, float(F.x0), float(F.z0));
             f2d::k_cold_current<<<nb, tb>>>(v, r);
         }
+        if (ant.amp != 0.f)
+            a2d::k_antenna2d<<<nb, tb>>>(v, F.bg, ant, float(F.x0),
+                                         float(F.z0), time + 0.5 * F.dt,
+                                         ant_H.data(), int(ant_H.size()),
+                                         float(F.z0), float(F.dz),
+                                         ant_wacc.data());
         f2d::k_faraday<<<nb, tb>>>(v, r, float(F.dt / 2));
         f2d::k_ampere<<<nb, tb>>>(v, r);
         if (F.masks_on) {
@@ -238,16 +284,102 @@ struct Sim2D {
         // trips trivially; the collapse signal is the hole-tail fraction
         // (deep depletion, wd << 0). V4R9 at deep saturation measured
         // frac(|wd|>3) = 0.22% with healthy dynamics — gate at 2%.
+        // HARDENED battery (user audit 2026-08-19): per delta-f species —
+        // hole-tail fraction, |wd|>1 fraction, tail share of sum(wd^2),
+        // rms ceiling (deck wdrms_max, 0 = off), wd>=1 bound violation;
+        // any ucap clamp, dropped deposit, or loader exhaustion = failure.
         for (size_t i = 0; i < sp.size(); ++i)
             if (sp[i].C.deltaf) {
-                wd_rms(int(i));
-                double a[2];
-                CUDA_CHECK(cudaMemcpy(a, acc.data(), 16,
+                const double rms = wd_rms(int(i));
+                double a[4];
+                CUDA_CHECK(cudaMemcpy(a, acc.data(), 32,
                                       cudaMemcpyDeviceToHost));
-                if (a[1] / double(sp[i].mk->n) > 0.02) return false;
+                const double N = double(sp[i].mk->n);
+                if (a[1] >= 1e12) return false;              // wd >= 1: broken
+                if (a[1] / N > 0.02) return false;           // hole tail
+                if (a[2] / N > 0.20) return false;           // |wd|>1 spread
+                if (a[0] > 0 && a[3] / a[0] > 0.5) return false;  // tail owns rms
+                if (sp[i].C.wdrms_max > 0 && rms > sp[i].C.wdrms_max)
+                    return false;
             }
-        return bad == 0.0 && rr[1] == 0 && std::isfinite(W[0]) &&
-               std::isfinite(W[1]);
+        unsigned long long rr3[3];
+        CUDA_CHECK(cudaMemcpy(rr3, runaway.data(), 24, cudaMemcpyDeviceToHost));
+        return bad == 0.0 && rr3[0] == 0 && rr3[1] == 0 && rr3[2] == 0 &&
+               std::isfinite(W[0]) && std::isfinite(W[1]);
+    }
+
+    // live delta-f continuity probe (user audit 2026-08-19): brackets ONE
+    // real step with node-charge deposits; returns L2 norms of
+    // R = (rho_new - rho_old)/dt + div J   vs   ||drho/dt||.
+    // Meaningful with nc = 0 and antenna off (cold/antenna currents carry
+    // their own — untracked — charge); jfilter commutes with div.
+    void continuity_probe(double out[3]) {
+        arc::DeviceArray<float> ra(F.field_cells), rb(F.field_cells);
+        ra.zero(); rb.zero();
+        FieldViews2D v = F.views();
+        for (auto& s : sp) {
+            MarkerViews mv = s.mk->views();
+            k2d::k_rho_node<<<int((s.mk->n + 255) / 256), 256>>>(
+                mv, v, float(F.x0), float(F.z0),
+                s.C.qm > 0 ? 1.f : -1.f, ra.data(), s.mk->n);
+        }
+        step();
+        for (auto& s : sp) {
+            MarkerViews mv = s.mk->views();
+            k2d::k_rho_node<<<int((s.mk->n + 255) / 256), 256>>>(
+                mv, v, float(F.x0), float(F.z0),
+                s.C.qm > 0 ? 1.f : -1.f, rb.data(), s.mk->n);
+        }
+        CUDA_CHECK(cudaDeviceSynchronize());
+        std::vector<float> h(F.field_cells), Ra, Rb, Jx, Jz;
+        auto grab = [&](arc::DeviceArray<float>& a, std::vector<float>& d) {
+            CUDA_CHECK(cudaMemcpy(h.data(), a.data(), F.field_cells * 4,
+                                  cudaMemcpyDeviceToHost));
+            F.unpack_host(h, d);
+        };
+        grab(ra, Ra); grab(rb, Rb); grab(F.jx, Jx); grab(F.jz, Jz);
+        // apply the SAME binomial smoothing to rho that filter_j applied to
+        // J (jfilter passes per axis) — the identity pairs filtered J with
+        // filtered rho; comparing filtered J against raw rho just measures
+        // grid-scale shot noise (first probe version's mistake).
+        auto smooth = [&](std::vector<float>& f) {
+            std::vector<float> t(f.size());
+            for (int pass = 0; pass < F.jfilter; ++pass) {
+                for (int k = 0; k < F.nz; ++k)
+                    for (int i = 0; i < F.nx; ++i) {
+                        const size_t c = size_t(k) * F.nx + i;
+                        const float l = i > 0 ? f[c - 1] : 0,
+                                    r = i + 1 < F.nx ? f[c + 1] : 0;
+                        t[c] = 0.25f * l + 0.5f * f[c] + 0.25f * r;
+                    }
+                for (int k = 0; k < F.nz; ++k)
+                    for (int i = 0; i < F.nx; ++i) {
+                        const size_t c = size_t(k) * F.nx + i;
+                        const float d = k > 0 ? t[c - F.nx] : 0,
+                                    u = k + 1 < F.nz ? t[c + F.nx] : 0;
+                        f[c] = 0.25f * d + 0.5f * t[c] + 0.25f * u;
+                    }
+            }
+        };
+        smooth(Ra); smooth(Rb);
+        double r2 = 0, d2 = 0, j2 = 0;
+        for (int k = 1; k < F.nz; ++k)
+            for (int i = 1; i < F.nx; ++i) {
+                const size_t c = size_t(k) * F.nx + i;
+                const double djx = (Jx[c] - Jx[c - 1]) / F.dx;
+                const double djz = (Jz[c] - Jz[c - F.nx]) / F.dz;
+                const double dr = (Rb[c] - Ra[c]) / F.dt;
+                const double R = dr + djx + djz;
+                r2 += R * R; d2 += dr * dr; j2 += (djx + djz) * (djx + djz);
+            }
+        out[0] = std::sqrt(r2); out[1] = std::sqrt(d2); out[2] = std::sqrt(j2);
+    }
+
+    double w_ant() {
+        if (ant.amp == 0.f) return 0.0;
+        double h;
+        CUDA_CHECK(cudaMemcpy(&h, ant_wacc.data(), 8, cudaMemcpyDeviceToHost));
+        return h;
     }
 
     unsigned long long runaway_count() {

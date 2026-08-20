@@ -208,7 +208,8 @@ int main() {
     std::printf("  W_EM dense %.3e | sparse-all %.3e | banded %.3e\n", w_d, w_a, w_b);
     std::printf("  cells dense %zu | sparse-all %zu | banded %zu (%.0f%%)\n",
                 c_d, c_a, c_b, 100.0 * c_b / c_d);
-    gate("B1 healthy x3", ok_d && ok_a && ok_b, ok_d + ok_a + ok_b, 2.5);
+    gate("B1 healthy x4", ok_d && ok_a && ok_b && ok_f,
+         ok_d + ok_a + ok_b + ok_f, 3.5);  // flat path counted (audit)
     gate("B2 dropped deposits", dr_a + dr_b == 0, double(dr_a + dr_b), 0.5);
     gate("B3 W_EM sparse-all/dense", w_a / w_d > 0.25 && w_a / w_d < 4.0,
          w_a / w_d, 4.0);

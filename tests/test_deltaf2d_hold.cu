@@ -98,9 +98,9 @@ int main(int argc, char** argv) {
     }
 
     double* dacc = nullptr;
-    CUDA_CHECK(cudaMalloc(&dacc, sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&dacc, 4 * sizeof(double)));  // k_wd_stats writes acc[0..3]
     auto wd_rms = [&]() {
-        CUDA_CHECK(cudaMemset(dacc, 0, sizeof(double)));
+        CUDA_CHECK(cudaMemset(dacc, 0, 4 * sizeof(double)));
         MarkerViews mv = mk.views();
         k2d::k_wd_stats<<<int((NMARK + 255) / 256), 256>>>(mv, dacc, nullptr, NMARK);
         double h;

@@ -54,6 +54,7 @@ struct SpeciesCfg {
     double kappa    = 0.0;     // prodkappa
     double lc_rho   = 0.0;     // losscone depth parameter
     double taud     = 0.0;     // δf weight relaxation; DEFAULT 0 (H1/H2 arm knob)
+    double wdrms_max = 0.0;
     double wdnoise  = 1e-3;    // δf ignition knob (SCALES_REALISM)
     // shell-compact support in L (flat top + Gaussian edges of width edge_dL):
     double shell_L0 = 1330.5;
@@ -83,7 +84,10 @@ struct MarkerStore {
     static constexpr double bytes_per_marker         = 32.0;
     static constexpr double sort_chunk_fraction      = 0.125;  // ≤ 1/8 in flight
     static constexpr double bytes_per_marker_effective =
-        bytes_per_marker * (1.0 + sort_chunk_fraction);        // 36 B
+        bytes_per_marker * (1.0 + sort_chunk_fraction) + 12.0; // 44 B eff:
+        // audit 2026-08-20 — the 36 B figure omitted the sorter key/index
+        // arrays and CSR cell_start; measured footprint is >= 40 B/marker
+        // plus grid CSR, folded here as a conservative +12 B/marker
 
     void allocate(uint64_t cap) {
         capacity = cap;

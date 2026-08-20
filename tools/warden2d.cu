@@ -12,6 +12,7 @@
 
 #include "pic2d/checkpoint2d.hpp"
 #include "pic2d/diag2d.hpp"
+#include "pic2d/prebalance2d.hpp"
 #include "pic2d/sim2d.hpp"
 
 #include <chrono>
@@ -70,13 +71,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string outdir = "warden2d_out";
-    long nsteps_cli = -1, ckpt_every = 0, sort_cli = -1;
+    long nsteps_cli = -1, ckpt_every = 0, sort_cli = -1, contcheck = 0;
     bool preflight_only = false, resume = false;
     for (int i = 2; i < argc; ++i) {
         if (!std::strncmp(argv[i], "--nsteps=", 9)) nsteps_cli = atol(argv[i] + 9);
         else if (!std::strncmp(argv[i], "--ckpt=", 7)) ckpt_every = atol(argv[i] + 7);
         else if (!std::strcmp(argv[i], "--resume")) resume = true;
         else if (!std::strncmp(argv[i], "--sort=", 7)) sort_cli = atol(argv[i] + 7);
+        else if (!std::strncmp(argv[i], "--contcheck=", 12)) contcheck = atol(argv[i] + 12);
         else if (!std::strcmp(argv[i], "--preflight")) preflight_only = true;
         else if (argv[i][0] != '-') outdir = argv[i];
     }
@@ -102,6 +104,12 @@ int main(int argc, char** argv) {
                     mfree / 1e9, mtotal / 1e9, need,
                     need < mfree / 1e9 ? "fits" : "DOES NOT FIT");
     }
+    if (!preflight_only && mfree > 0 &&
+        d.mem_fields_gb + d.mem_markers_gb >= mfree / 1e9) {
+        std::fprintf(stderr, "\nwarden2d: deck does not fit device memory — "
+                             "refused\n");
+        return 2;
+    }
     if (!d.ok()) {
         std::fprintf(stderr, "\nwarden2d: hard gate FAILED — deck refused "
                              "(fix the deck, not the gate)\n");
@@ -118,6 +126,7 @@ int main(int argc, char** argv) {
     if (sort_cli >= 0) S.sort_every = sort_cli;
     S.build(d);
     if (resume) load_checkpoint(S, outdir + "/ckpt.bin");
+    else if (d.prebalance) apply_prebalance(S, d);
     std::printf("\nloaded %zu species:\n", S.sp.size());
     for (size_t i = 0; i < S.sp.size(); ++i)
         std::printf("  %-10s %.2e markers  %s\n", S.sp[i].name.c_str(),
@@ -125,7 +134,7 @@ int main(int argc, char** argv) {
 
     FILE* ecsv = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
     if (!resume) {
-        std::fprintf(ecsv, "t,W_EM,W_cold");
+        std::fprintf(ecsv, "t,W_EM,W_cold,W_ant");
         for (auto& s : S.sp) std::fprintf(ecsv, ",wdrms_%s", s.name.c_str());
         std::fprintf(ecsv, "\n");
     }
@@ -183,7 +192,22 @@ int main(int argc, char** argv) {
     const long n_start = S.nstep;
     const auto t0 = std::chrono::steady_clock::now();
     for (long n = n_start; n < d.nsteps; ++n) {
-        S.step();
+        if (contcheck > 0 && n % contcheck == 0) {
+            // probe REPLACES the plain step (it advances one real step
+            // internally) but every diagnostic below still runs — the
+            // first version's `continue` silently dropped probe/energy/
+            // ckpt samples on probe steps (audit fix 2026-08-20)
+            double cc[3];
+            S.continuity_probe(cc);
+            std::printf("  contcheck step %ld: ||R|| %.3e  ||drho/dt|| %.3e  "
+                        "||divJ|| %.3e  R/drho %.3e\n",
+                        n, cc[0], cc[1], cc[2], cc[0] / std::max(cc[1], 1e-300));
+            FILE* cf = std::fopen((outdir + "/contcheck.csv").c_str(), "a");
+            if (cf) { std::fprintf(cf, "%ld,%.6e,%.6e,%.6e\n", n, cc[0],
+                                   cc[1], cc[2]); std::fclose(cf); }
+        } else {
+            S.step();
+        }
         if (ckpt_every > 0 && (n + 1) % ckpt_every == 0) {
             CUDA_CHECK(cudaDeviceSynchronize());
             save_checkpoint(S, outdir + "/ckpt.bin");
@@ -234,7 +258,8 @@ int main(int argc, char** argv) {
         if (n % d.energy_every == d.energy_every - 1) {
             double W[2];
             S.F.energies(W);
-            std::fprintf(ecsv, "%.3f,%.6e,%.6e", S.time, W[0], W[1]);
+            std::fprintf(ecsv, "%.3f,%.6e,%.6e,%.6e", S.time, W[0], W[1],
+                         S.w_ant());
             for (size_t i = 0; i < S.sp.size(); ++i)
                 std::fprintf(ecsv, ",%.6e", S.wd_rms(int(i)));
             std::fprintf(ecsv, "\n");

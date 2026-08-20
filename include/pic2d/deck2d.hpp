@@ -53,6 +53,8 @@ struct Deck2D {
     int    nx = 0, nz = 0;
     // [background]
     Background2D bg;
+    int prebalance = 0;                    // seed the diamagnetic dent at t=0
+                                           // (prebalance2d.hpp; full-f arms)
     // [time]
     double dt = 0.05;
     long   nsteps = 0;
@@ -73,10 +75,21 @@ struct Deck2D {
     long   energy_every = 1000;
     long   probe_every = 4;                // probe-station sample cadence
     long   fv_every = 20000;               // f(v) + ledger dump cadence
+    double fv_vmax = 0.35, fv_uqmax = 0.5; // fv/ledger velocity ranges — MUST
+                                           // cover ~3.5x uth of the hottest
+                                           // species (O4: defaults clip Lu f0)
     int    dens_init = 1;                  // dump per-species density at t=0
     double probe_L2 = 0;                   // second probe line at this L (0=off;
                                            // V4R8 lesson: modes can select
                                            // off-L0 columns)
+    // [antenna] — triggering current column (chirp2d port, 2026-08-19):
+    // rotating R-sense transverse current J = g(t)(e1 cos w0 t + y sin w0 t),
+    // Gaussian in L (sigma_L) x z (sigma_z) at the equator of ant_L0;
+    // trapezoidal envelope (ramp trmp, off at toff; hard cuts radiate
+    // broadband transients — the chirp2d lesson). amp = CURRENT amplitude
+    // (A-cal maps it to dB/B0); w0 in ABSOLUTE wpe units. amp = 0 = off.
+    double ant_amp = 0, ant_w0 = 0.05, ant_L0 = 0, ant_sigL = 6,
+           ant_sigz = 8, ant_trmp = 200, ant_toff = 0;
     // [species]
     std::vector<SpeciesCfg> species;
 
@@ -160,18 +173,21 @@ inline Deck2D load_deck2d(const std::string& path) {
         const std::map<std::string, std::vector<std::string>> known = {
             {"domain", {"lam_w_deg", "margin", "dx", "dz", "active_Lmin",
                         "active_Lmax", "x_min"}},
-            {"background", {"profile", "B0eq", "L0", "a", "theta_deg"}},
+            {"background", {"profile", "B0eq", "L0", "a", "theta_deg",
+                            "prebalance"}},
             {"time", {"dt", "nsteps"}},
             {"cold", {"nc", "nonlinear", "c"}},
             {"boundary", {"absorber_cells", "runway_lam_deg"}},
+            {"antenna", {"amp", "w0", "L0", "sigma_L", "sigma_z", "trmp",
+                         "toff"}},
             {"diag", {"target_band_max", "target_wna_deg", "target_lam_deg",
                       "snap_every", "energy_every", "probe_every", "fv_every",
-                      "dens_init", "probe_L2"}},
+                      "dens_init", "probe_L2", "fv_vmax", "fv_uqmax"}},
         };
         const std::vector<std::string> sp_keys = {
             "deltaf", "rel", "dist", "n0", "uthpar", "uthperp", "kappa",
-            "lc_rho", "taud", "wdnoise", "shell_L0", "shell_dL", "edge_dL",
-            "ppc"};
+            "lc_rho", "taud", "wdnoise", "wdrms_max", "shell_L0", "shell_dL",
+            "edge_dL", "ppc"};
         for (const auto& [sec, kv] : m) {
             const bool is_sp = sec.rfind("species", 0) == 0;
             const auto* keys = is_sp ? &sp_keys
@@ -203,6 +219,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.bg.L0    = getd(m, "background", "L0", 1330.5);
     d.bg.a     = getd(m, "background", "a", 0.0);
     d.bg.theta = getd(m, "background", "theta_deg", 0.0) * M_PI / 180.0;
+    d.prebalance = int(getd(m, "background", "prebalance", 0));
     d.bg.finalize();
 
     d.lam_w  = getd(m, "domain", "lam_w_deg", 50.0) * M_PI / 180.0;
@@ -217,6 +234,13 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.nc = getd(m, "cold", "nc", 1.0);
     d.cold_nonlinear = int(getd(m, "cold", "nonlinear", 0));
     d.cspeed = getd(m, "cold", "c", 1.0);
+    d.ant_amp = getd(m, "antenna", "amp", 0.0);
+    d.ant_w0 = getd(m, "antenna", "w0", 0.05);
+    d.ant_L0 = getd(m, "antenna", "L0", 0.0);
+    d.ant_sigL = getd(m, "antenna", "sigma_L", 6.0);
+    d.ant_sigz = getd(m, "antenna", "sigma_z", 8.0);
+    d.ant_trmp = getd(m, "antenna", "trmp", 200.0);
+    d.ant_toff = getd(m, "antenna", "toff", 0.0);
     d.absorber_cells = int(getd(m, "boundary", "absorber_cells", 240));
     d.runway_lam = getd(m, "boundary", "runway_lam_deg", 45.0) * M_PI / 180.0;
     d.target_band_max = getd(m, "diag", "target_band_max", 0.75);
@@ -226,6 +250,8 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.energy_every = long(getd(m, "diag", "energy_every", 1000));
     d.probe_every = long(getd(m, "diag", "probe_every", 4));
     d.fv_every = long(getd(m, "diag", "fv_every", 20000));
+    d.fv_vmax = getd(m, "diag", "fv_vmax", 0.35);
+    d.fv_uqmax = getd(m, "diag", "fv_uqmax", 0.5);
     d.dens_init = int(getd(m, "diag", "dens_init", 1));
     d.probe_L2 = getd(m, "diag", "probe_L2", 0.0);
 
@@ -243,6 +269,7 @@ inline Deck2D load_deck2d(const std::string& path) {
         s.lc_rho   = getd(m, sec, "lc_rho", 0.0);
         s.taud     = getd(m, sec, "taud", 0.0);
         s.wdnoise  = getd(m, sec, "wdnoise", 1e-3);
+        s.wdrms_max = getd(m, sec, "wdrms_max", 0.0);
         s.shell_L0 = getd(m, sec, "shell_L0", d.bg.L0);
         s.shell_dL = getd(m, sec, "shell_dL", 40.0);
         s.edge_dL  = getd(m, sec, "edge_dL", 8.0);
@@ -370,6 +397,16 @@ inline void finalize_deck2d(Deck2D& d) {
                  "bi-kappa (E,mu) mapping unimplemented: dist=1 requires "
                  "uniform/tilted background");
 
+    // ---- δf hard compatibility gates (user audit 2026-08-19) ------------
+    for (const auto& s : d.species) {
+        if (s.deltaf && s.dist != 0)
+            gate("dfdist/" + s.name, false, true,
+                 "delta-f weight derivative is bi-Maxwellian only (dist=0)");
+        if (s.deltaf && d.prebalance)
+            gate("dfprebal/" + s.name, false, true,
+                 "prebalance dent is invisible to the delta-f f0 — full-f only");
+    }
+
     // ---- δf discipline: τ_D forbidden by default (H1/H2 ruling) ---------
     for (const auto& s : d.species)
         if (s.deltaf && s.taud != 0.0)
@@ -435,7 +472,7 @@ inline void print_deck2d_report(const Deck2D& d, std::FILE* out = stdout) {
         std::fprintf(out, "  species  : %-10s %s dist=%d n0=%.4f shell L0=%.0f ΔL=%.0f ppc=%d → %.2e markers\n",
                      s.name.c_str(), s.deltaf ? "δf   " : "full-f", s.dist, s.n0,
                      s.shell_L0, s.shell_dL, s.ppc, double(s.nmax));
-    std::fprintf(out, "  memory   : fields %.2f GB%s + markers %.2f GB (36 B/marker eff) = %.2f GB\n",
+    std::fprintf(out, "  memory   : fields %.2f GB%s + markers %.2f GB (44 B/marker eff) = %.2f GB\n",
                  d.mem_fields_gb,
                  d.sparse_frac < 1.0
                      ? (" (sparse pool, " +
@@ -443,6 +480,12 @@ inline void print_deck2d_report(const Deck2D& d, std::FILE* out = stdout) {
                         "% of dense)").c_str()
                      : "",
                  d.mem_markers_gb, d.mem_fields_gb + d.mem_markers_gb);
+    if (d.ant_amp != 0.0)
+        std::fprintf(out, "  antenna  : amp %.2e  w0 %.3f wpe (%.2f We_eq)  "
+                          "L0 %.0f  sigL %.0f sigz %.0f  trmp %.0f toff %.0f\n",
+                     d.ant_amp, d.ant_w0, d.ant_w0 / d.bg.B0eq,
+                     d.ant_L0 > 0 ? d.ant_L0 : d.bg.L0, d.ant_sigL,
+                     d.ant_sigz, d.ant_trmp, d.ant_toff);
     std::fprintf(out, "  gates    :\n");
     for (const auto& g : d.gates)
         std::fprintf(out, "    [%s] %-16s %s\n",

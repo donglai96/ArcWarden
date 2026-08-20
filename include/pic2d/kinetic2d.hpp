@@ -76,6 +76,7 @@ struct KineticCfg {
                              // past |wd| ~ 1 and the deposit runs away
                              // (V4 first-run failure, imaged at step 46500).
     float wdnoise = 0.f;
+    float wdrms_max = 0.f;   // healthy(): fail if wd_rms exceeds (0 = off)
     float ucap    = 4.0f;    // runaway DISASTER guard only: |u| clamp with a
                              // reported count. Must sit far above the
                              // physical thermal tail — the first V4 rerun
@@ -360,8 +361,14 @@ __device__ inline PushOut push_move_one(MarkerViews& p, uint64_t m,
         const float udota = mx * ax + my * ay + mz * az;
         const float updota = upx * ax + my * ay + upz * az;
         const float dlnf = dE * udota + dMu * updota / B0a;
-        float wd = p.wd[m] - (1.f - p.wd[m]) * dlnf * v.dt;
-        if (c.taud > 0.f) wd -= wd * v.dt / c.taud;
+        // structure-preserving update (user audit 2026-08-19): the exact
+        // solution of dw/dt = -(1-w)*D over the step is
+        //   1 - w_new = (1 - w_old) * exp(D*dt)
+        // -> w_new = w_old - (1-w_old)*expm1(D*dt). Preserves wd < 1
+        // EXACTLY (no clamp), agrees with the old explicit Euler to O(dt),
+        // and is time-symmetric at the midpoint force used here.
+        float wd = p.wd[m] - (1.f - p.wd[m]) * expm1f(dlnf * v.dt);
+        if (c.taud > 0.f) wd *= expf(-v.dt / c.taud);
         p.wd[m] = wd;
     }
 
@@ -551,9 +558,34 @@ static __global__ void k_wd_stats(MarkerViews p, double* acc,
                                   unsigned int* wmax, uint64_t n) {
     const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
     if (m >= n) return;
-    atomicAdd(&acc[0], double(p.wd[m]) * p.wd[m]);
-    if (fabsf(p.wd[m]) > 3.f) atomicAdd(&acc[1], 1.0);
-    if (wmax) atomicMax(wmax, __float_as_uint(fabsf(p.wd[m])));
+    const float w = p.wd[m];
+    const double w2 = double(w) * w;
+    atomicAdd(&acc[0], w2);
+    if (fabsf(w) > 3.f) { atomicAdd(&acc[1], 1.0); atomicAdd(&acc[3], w2); }
+    if (fabsf(w) > 1.f) atomicAdd(&acc[2], 1.0);
+    if (w >= 1.f + 1e-3f) atomicAdd(&acc[1], 1e12);  // bound violation flag
+    if (wmax) atomicMax(wmax, __float_as_uint(fabsf(w)));
+}
+
+// node-centred charge deposit (q w wd, CIC S1 about NODES — the shape the
+// Esirkepov identity pairs with): the live delta-f continuity gate input
+// (user audit 2026-08-19: time-varying wd used as fixed segment charge
+// leaves residual R = q w (wd_new-wd_old) S/dt; this measures it).
+static __global__ void k_rho_node(MarkerViews p, FieldViews2D v, float x0,
+                                  float z0, float qsign, float* rho,
+                                  uint64_t n) {
+    const uint64_t m = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x;
+    if (m >= n) return;
+    const float gx = (p.x[m] - x0) / v.dx, gz = (p.z[m] - z0) / v.dz;
+    const int i0 = int(floorf(gx)), k0 = int(floorf(gz));
+    const float fx = gx - i0, fz = gz - k0;
+    const float qw = qsign * p.w[m] * p.wd[m] / (v.dx * v.dz);
+    for (int c = 0; c < 4; ++c) {
+        const int s = v.idx(i0 + (c & 1), k0 + (c >> 1));
+        if (s >= 0)
+            atomicAdd(&rho[s], qw * ((c & 1) ? fx : 1.f - fx) *
+                                   ((c >> 1) ? fz : 1.f - fz));
+    }
 }
 
 // finiteness scan (debug/validity): acc[0] += count of non-finite markers
