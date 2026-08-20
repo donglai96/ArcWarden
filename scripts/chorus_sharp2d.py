@@ -61,11 +61,15 @@ for i in range(nwin):
 P = np.abs(Sw)**2
 eps = P.max() * 1e-12
 
-# reassignment coordinates (rad/sample and samples)
+# reassignment coordinates (rad/sample and samples). SIGN FIX 2026-08-19
+# (user audit): with NumPy's e^{-i w t} forward-FFT convention the operators
+# are w_hat = F - Im(Sd conj(Sw))/P and t_hat = center + Re(St conj(Sw))/P;
+# the previous signs scattered energy AWAY from ridges — all reassigned
+# spectra/trajectories produced before this date must be recomputed.
 with np.errstate(divide="ignore", invalid="ignore"):
-    w_hat = F[:, None] + np.imag(Sd * np.conj(Sw)) / (P + eps)
+    w_hat = F[:, None] - np.imag(Sd * np.conj(Sw)) / (P + eps)
     t_hat = (np.arange(nwin) * HOP + NW / 2)[None, :] \
-        - np.real(St * np.conj(Sw)) / (P + eps)
+        + np.real(St * np.conj(Sw)) / (P + eps)
 
 # physical units
 om_grid = F / dt_s / wce                  # w/wce rows of the plain STFT

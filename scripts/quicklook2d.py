@@ -3,6 +3,11 @@
 and +10 degree probes, everything (cadence, dt, local Omega_e per probe)
 read from <outdir>/meta.txt. Safe to run while the simulation writes.
 
+MONITOR USE ONLY (user audit 2026-08-19): physics-grade spectra come from
+scripts/spec2d.py (frame check, detrend, B1+iBy circular, absolute PSD,
+dual N, dual axes). This tool now at least detrends B1 (post-prebalance
+static baseline is ~10x wave rms — raw-B1 windows leak badly).
+
 Usage: quicklook2d.py <outdir> [out.png]
 """
 import csv
@@ -29,7 +34,13 @@ dt_s = dt * pev
 
 raw = np.fromfile(f"{outdir}/probes.bin", dtype=np.float32)
 ns = raw.size // (NP * NC)
-pr = raw[:ns * NP * NC].reshape(ns, NC, NP)
+pr = raw[:ns * NP * NC].reshape(ns, NC, NP).copy()
+# detrend every channel (running mean over ~1200/wpe)
+from scipy.ndimage import uniform_filter1d
+for c in range(NC):
+    for p_ in range(NP):
+        pr[:, c, p_] -= uniform_filter1d(pr[:, c, p_].astype(np.float64),
+                                         2001).astype(np.float32)
 
 t, wem = [], []
 with open(f"{outdir}/energy.csv") as f:

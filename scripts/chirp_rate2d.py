@@ -26,7 +26,12 @@ wce = probes[pidx][1]
 b1, by = pr[:, 4, pidx], pr[:, 5, pidx]
 
 # ---- STFT ridge ----
-NW, HOP = 384, 24
+# NW=384 RETIRED (user audit 2026-08-19): at dt_s=0.6 it gave df=0.133 We
+# — only ~3 independent bins across the band while the sweep gate was
+# 0.05 We, so single-bin hops were scored as risers; every chirp-rate/Omura
+# ratio produced with NW=384 is non-quantitative. NW=1024 (df=0.05 We) and
+# the span gate below now requires >= 3 grid cells of genuine sweep.
+NW, HOP = 1024, 24
 w = np.hanning(NW)
 nwin = (ns - NW) // HOP
 fr = np.fft.rfftfreq(NW, dt_s) * 2 * np.pi          # omega in wpe units
@@ -70,7 +75,10 @@ for i0, j0 in segs:
         if rate <= 0:
             continue
         span = om[p].max() - om[p].min()
-        if span < 0.05 * wce:                         # require a real sweep
+        # a real sweep must exceed BOTH 0.05 We and 3 FFT grid cells
+        # (grid-hop immunity, user audit 2026-08-19)
+        dgrid = 2 * np.pi / (NW * dt_s)
+        if span < max(0.05 * wce, 3 * dgrid):
             continue
         # B_w in the same window: bandpassed transverse amplitude
         s0i, s1i = i0 * HOP + p[0] * HOP, i0 * HOP + p[-1] * HOP + NW
