@@ -133,6 +133,7 @@ int main(int argc, char** argv) {
                     double(S.sp[i].mk->n), S.sp[i].C.deltaf ? "δf" : "full-f");
 
     FILE* ecsv = std::fopen((outdir + "/energy.csv").c_str(), resume ? "a" : "w");
+    if (!ecsv) { std::fprintf(stderr, "warden2d: cannot open energy.csv\n"); return 4; }
     if (!resume) {
         std::fprintf(ecsv, "t,W_EM,W_cold,W_ant");
         for (auto& s : S.sp) std::fprintf(ecsv, ",wdrms_%s", s.name.c_str());
@@ -184,6 +185,7 @@ int main(int argc, char** argv) {
         }
         std::fclose(meta);
         probes = std::fopen((outdir + "/probes.bin").c_str(), resume ? "ab" : "wb");
+        if (!probes) { std::fprintf(stderr, "warden2d: cannot open probes.bin\n"); return 4; }
         if (S.diag2_on)
             probes2 = std::fopen((outdir + "/probes2.bin").c_str(),
                                  resume ? "ab" : "wb");
