@@ -24,6 +24,8 @@ namespace arc2d {
 // W_ant = -sum J_ant.E dV dt accumulated (wacc) for the energy ledger.
 struct AntCfg {
     float amp, w0, L0, sigL, sigz, trmp, toff, kpar;
+    float tper;   // >0: envelope repeats with this period (element trains);
+                  // trmp/toff apply within each cycle, carrier phase runs on
 };
 
 namespace a2d {
@@ -38,7 +40,10 @@ static __global__ void k_antenna2d(FieldViews2D v, Background2D bg, AntCfg a,
     const float zn = z0 + k * v.dz;
     if (fabsf(zn) > 6.f * a.sigz + 2.f * v.dz) return;  // 6σ: keeps the
     // discrete curl cancellation below 1e-7 (4σ truncation measured 4.3e-5)
-    if (a.toff > 0 && thalf >= a.toff) return;
+    // envelope time: cycles when tper > 0 (repeated triggering); the
+    // carrier phase below stays on thalf so cycles are phase-continuous
+    const double te = (a.tper > 0) ? fmod(thalf, double(a.tper)) : thalf;
+    if (a.toff > 0 && te >= a.toff) return;
     const float xn = x0 + i * v.dx;
     if (fabsf(lshell_of<float>(bg, xn, zn) - a.L0) > 6.f * a.sigL + 2.f * v.dx)
         return;
@@ -46,9 +51,9 @@ static __global__ void k_antenna2d(FieldViews2D v, Background2D bg, AntCfg a,
     if (c < 0) return;
     double ramp = 1.0;
     if (a.trmp > 0) {
-        if (thalf < a.trmp) ramp = thalf / a.trmp;
-        else if (a.toff > 0 && thalf > a.toff - a.trmp)
-            ramp = (a.toff - thalf) / a.trmp;
+        if (te < a.trmp) ramp = te / a.trmp;
+        else if (a.toff > 0 && te > a.toff - a.trmp)
+            ramp = (a.toff - te) / a.trmp;
     }
     const float g0 = float(a.amp * ramp);
     const float cph = cosf(float(a.w0 * thalf)), sph = sinf(float(a.w0 * thalf));

@@ -95,7 +95,8 @@ struct Deck2D {
     // broadband transients — the chirp2d lesson). amp = CURRENT amplitude
     // (A-cal maps it to dB/B0); w0 in ABSOLUTE wpe units. amp = 0 = off.
     double ant_amp = 0, ant_w0 = 0.05, ant_L0 = 0, ant_sigL = 6,
-           ant_sigz = 8, ant_trmp = 200, ant_toff = 0;
+           ant_sigz = 8, ant_trmp = 200, ant_toff = 0,
+           ant_tper = 0;   // >0: envelope repeats (triggered element train)
     // [species]
     std::vector<SpeciesCfg> species;
 
@@ -185,7 +186,7 @@ inline Deck2D load_deck2d(const std::string& path) {
             {"cold", {"nc", "nonlinear", "c", "jfilter"}},
             {"boundary", {"absorber_cells", "runway_lam_deg"}},
             {"antenna", {"amp", "w0", "L0", "sigma_L", "sigma_z", "trmp",
-                         "toff"}},
+                         "toff", "tper"}},
             {"diag", {"target_band_max", "target_wna_deg", "target_lam_deg",
                       "snap_every", "energy_every", "probe_every", "fv_every",
                       "dens_init", "probe_L2", "fv_vmax", "fv_uqmax", "fv_npar",
@@ -250,6 +251,7 @@ inline Deck2D load_deck2d(const std::string& path) {
     d.ant_sigz = getd(m, "antenna", "sigma_z", 8.0);
     d.ant_trmp = getd(m, "antenna", "trmp", 200.0);
     d.ant_toff = getd(m, "antenna", "toff", 0.0);
+    d.ant_tper = getd(m, "antenna", "tper", 0.0);
     d.absorber_cells = int(getd(m, "boundary", "absorber_cells", 240));
     d.runway_lam = getd(m, "boundary", "runway_lam_deg", 45.0) * M_PI / 180.0;
     d.target_band_max = getd(m, "diag", "target_band_max", 0.75);
@@ -495,10 +497,11 @@ inline void print_deck2d_report(const Deck2D& d, std::FILE* out = stdout) {
                  d.mem_markers_gb, d.mem_fields_gb + d.mem_markers_gb);
     if (d.ant_amp != 0.0)
         std::fprintf(out, "  antenna  : amp %.2e  w0 %.3f wpe (%.2f We_eq)  "
-                          "L0 %.0f  sigL %.0f sigz %.0f  trmp %.0f toff %.0f\n",
+                          "L0 %.0f  sigL %.0f sigz %.0f  trmp %.0f toff %.0f"
+                          "  tper %.0f\n",
                      d.ant_amp, d.ant_w0, d.ant_w0 / d.bg.B0eq,
                      d.ant_L0 > 0 ? d.ant_L0 : d.bg.L0, d.ant_sigL,
-                     d.ant_sigz, d.ant_trmp, d.ant_toff);
+                     d.ant_sigz, d.ant_trmp, d.ant_toff, d.ant_tper);
     std::fprintf(out, "  gates    :\n");
     for (const auto& g : d.gates)
         std::fprintf(out, "    [%s] %-16s %s\n",

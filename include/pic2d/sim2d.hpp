@@ -50,7 +50,7 @@ struct Sim2D {
     bool sorted_once = false;
     double time = 0;
     long nstep = 0;
-    AntCfg ant{0, 0.05f, 0, 6, 8, 200, 0, 0};   // amp = 0: antenna off
+    AntCfg ant{0, 0.05f, 0, 6, 8, 200, 0, 0, 0};   // amp = 0: antenna off
     arc::DeviceArray<float> rho_c, rho_h, gres;  // Gauss closure fields
     arc::DeviceArray<double> gnorm;
     long gauss_every = 0;
@@ -70,7 +70,8 @@ struct Sim2D {
             ant = AntCfg{float(d.ant_amp), float(d.ant_w0),
                          float(d.ant_L0 > 0 ? d.ant_L0 : d.bg.L0),
                          float(d.ant_sigL), float(d.ant_sigz),
-                         float(d.ant_trmp), float(d.ant_toff), float(kpar)};
+                         float(d.ant_trmp), float(d.ant_toff), float(kpar),
+                         float(d.ant_tper)};
             if (d.ant_amp != 0.0) {
                 std::vector<float> H(d.nz + 1);
                 double acc_ = 0;
